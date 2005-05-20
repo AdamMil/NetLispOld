@@ -51,7 +51,11 @@ public sealed class Ops
   public static object Car(Pair p) { return p.Car; }
   public static object Cdr(Pair p) { return p.Cdr; }
   public static Pair Cons(object car, object cdr) { return new Pair(car, cdr); }
-  public static object Eval(object obj) { return Eval(MacroExpand(obj), new Frame()); }
+
+  public static object Eval(object obj)
+  { return obj is Pair || obj is Symbol ? AST.Create(MacroExpand(obj)).Evaluate(new Frame()) : obj;
+  }
+
   public static object InexactToExact(object obj) { throw new NotImplementedException(); }
 
   public static bool IsTrue(object a)
@@ -102,11 +106,12 @@ public sealed class Ops
     return obj.ToString();
   }
 
-  public static Pair List(params object[] items)
-  { if(items.Length==0) return null;
-    Pair head=Cons(items[0], null), tail=head;
-    for(int i=1; i<items.Length; i++)
-    { Pair next=Cons(items[i], null);
+  internal static Pair List(params object[] items) { return List2(0, items); }
+  internal static Pair List2(int start, params object[] items)
+  { if(items.Length<=start) return null;
+    Pair head=Cons(items[start], null), tail=head;
+    for(; start<items.Length; start++)
+    { Pair next=Cons(items[start], null);
       tail.Cdr = next;
       tail     = next;
     }
@@ -124,51 +129,6 @@ public sealed class Ops
     return head;
   }
 
-  internal static object Eval(object obj, Frame frame)
-  { Symbol sym = obj as Symbol;
-    if(sym!=null) return frame.Get(sym.Name);
-
-    Pair pair = obj as Pair;
-    if(pair==null) return obj;
-
-    obj = pair.Car;
-    pair = (Pair)pair.Cdr;
-
-    sym = obj as Symbol;
-    if(sym!=null)
-    { if(sym==Symbol.If)
-      { if(IsTrue(Eval(pair.Car, frame))) return Eval(FastCadr(pair), frame);
-        else return EvalBody((Pair)FastCddr(pair), frame);
-      }
-      else if(sym==Symbol.Set)
-      { sym = pair.Car as Symbol;
-        if(sym==null) throw new NotImplementedException("setting non-variables");
-        frame.Set(sym.Name, Eval(FastCadr(pair), frame));
-      }
-      else if(sym==Symbol.Let)
-      { Pair vars = (Pair)pair.Car;
-        Frame child = new Frame(frame);
-        while(vars!=null)
-        { Pair var = (Pair)vars.Car;
-          child.Bind(((Symbol)var.Car).Name, Eval(FastCadr(var), frame));
-          vars = (Pair)vars.Cdr;
-        }
-        return EvalBody((Pair)pair.Cdr, child);
-      }
-    }
-    // TODO: function call
-    return null;
-  }
-  
-  internal static object EvalBody(Pair pair, Frame frame)
-  { object ret=null;
-    while(pair!=null)
-    { ret  = Eval(pair.Car, frame);
-      pair = (Pair)pair.Cdr;
-    }
-    return ret;
-  }
-
   internal static object FastCadr(Pair pair) { return ((Pair)pair.Cdr).Car; }
   internal static object FastCddr(Pair pair) { return ((Pair)pair.Cdr).Cdr; }
 
@@ -182,7 +142,9 @@ public sealed class Ops
     return head;
   }
 }
+#endregion
 
+#region Pair
 public sealed class Pair
 { public Pair(object car, object cdr) { Car=car; Cdr=cdr; }
 
