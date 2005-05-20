@@ -1,18 +1,24 @@
 using System;
-using NetLisp.AST;
+using NetLisp.Backend;
 
 namespace NetLisp.Frontend
 {
 
+/*
+(set! add (lambda (a b) (+ a b)))
+(set! sum (add 4 5))
+(set! code '(add 1 2))
+(set! sum (eval code))
+*/
+
 public class App
 { static void Main()
-  { Node[] prog = Parser.FromString(@"
-(define blah (a b)
-  (display (* a b 2)))
-(define 1+ (a) (+ a 1))
-(blah (1+ 5) 7)").Parse();
-
-    Console.WriteLine(prog.ToCode());
+  { Pair prog = Parser.FromString(@"
+(let ((a 5) (b 4))
+  (let ((b 6)) a))
+").Parse();
+    Console.WriteLine(prog.ToString());
+    Console.WriteLine(Ops.Eval(prog));
   }
 }
 
