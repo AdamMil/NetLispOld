@@ -79,17 +79,12 @@
                     BuildAction = "Compile"
                 />
                 <File
-                    RelPath = "AST\Node.cs"
+                    RelPath = "Parser.cs"
                     SubType = "Code"
                     BuildAction = "Compile"
                 />
                 <File
-                    RelPath = "AST\Parser.cs"
-                    SubType = "Code"
-                    BuildAction = "Compile"
-                />
-                <File
-                    RelPath = "Runtime\Ops.cs"
+                    RelPath = "Runtime.cs"
                     SubType = "Code"
                     BuildAction = "Compile"
                 />

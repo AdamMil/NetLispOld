@@ -3,12 +3,11 @@ using System.Collections;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
-using NetLisp.Runtime;
 
-namespace NetLisp.AST
+namespace NetLisp.Backend
 {
 
-public enum Token { None, EOF, Literal, Identifier, Vector, LParen, RParen, Quote, BackQuote, Comma, Splice, Period }
+public enum Token { None, EOF, Literal, Symbol, Vector, LParen, RParen, Quote, BackQuote, Comma, Splice, Period }
 
 public sealed class Parser
 { public Parser(Stream data) : this("<unknown>", data) { }
@@ -28,10 +27,16 @@ public sealed class Parser
   public static Parser FromStream(Stream stream) { return new Parser("<stream>", new StreamReader(stream)); }
   public static Parser FromString(string text) { return new Parser("<string>", text); }
 
-  public Node[] Parse()
-  { ArrayList items = new ArrayList();
-    while(token!=Token.EOF) items.Add(ParseOne());
-    return (Node[])items.ToArray(typeof(Node));
+  public Pair Parse()
+  { Pair tail=Ops.Cons(null, null), list=Ops.Cons(Symbol.If, Ops.Cons(false, tail));
+
+    while(token!=Token.EOF)
+    { object item = ParseOne();
+      Pair next = Ops.Cons(item, null);
+      tail.Cdr  = next;
+      tail      = next;
+    }
+    return list;
   }
   
   void Eat(Token type) { if(token!=type) Unexpected(token, type); NextToken(); }
@@ -111,41 +116,41 @@ public sealed class Parser
     return token;
   }
 
-  Node ParseOne()
+  object ParseOne()
   { switch(token)
     { case Token.LParen:
-        if(NextToken()==Token.RParen) return new LiteralNode(null);
+        if(NextToken()==Token.RParen) return null;
         else
         { ArrayList items = new ArrayList();
-          Node dot = null;
+          object dot = null;
           do
           { items.Add(ParseOne());
             if(TryEat(Token.Period)) { dot=ParseOne(); break; }
           }
           while(token!=Token.RParen && token!=Token.EOF);
+          if(items.Count==0 && dot!=null) SyntaxError("malformed dotted list");
           Eat(Token.RParen);
-          return new ListNode((Node[])items.ToArray(typeof(Node)), dot);
+          return Ops.DottedList(dot, (object[])items.ToArray(typeof(object)));
         }
-      case Token.Identifier:
+      case Token.Symbol:
       { object val=value;
         NextToken();
-        return new IdentifierNode((string)val);
+        return Symbol.Get((string)val);
       }
       case Token.Literal:
       { object val=value;
         NextToken();
-        return new LiteralNode(val);
+        return val;
       }
-      case Token.BackQuote: case Token.Comma: case Token.Quote: case Token.Splice:
-      { Token tok = token;
-        NextToken();
-        return new QuoteNode(tok, ParseOne());
-      }
+      case Token.BackQuote: NextToken(); return Ops.List(Symbol.Get("quasi-quote"), ParseOne());
+      case Token.Comma: NextToken(); return Ops.List(Symbol.Get("unquote"), ParseOne());
+      case Token.Quote: NextToken(); return Ops.List(Symbol.Get("quote"), ParseOne());
+      case Token.Splice: NextToken(); return Ops.List(Symbol.Get("unquote-splicing"), ParseOne());
       case Token.Vector:
       { ArrayList items = new ArrayList();
         NextToken();
         while(!TryEat(Token.RParen)) items.Add(ParseOne());
-        return new VectorNode((Node[])items.ToArray(typeof(Node)));
+        return Ops.List2(Symbol.Get("vector"), (object[])items.ToArray(typeof(object)));
       }
       default: SyntaxError("unexpected token: "+token); return null;
     }
@@ -220,7 +225,7 @@ public sealed class Parser
       
       if(char.IsDigit(c) || c=='.')
       { value = ReadNumber(c);
-        return value is Token ? (Token)value : value is string ? Token.Identifier : Token.Literal;
+        return value is Token ? (Token)value : value is string ? Token.Symbol : Token.Literal;
       }
       else if(c=='#')
       { c = ReadChar();
@@ -298,8 +303,9 @@ public sealed class Parser
             c = ReadChar();
           } while(c!=0 && !IsDelimiter(c));
           lastChar = c;
-          value = sb.ToString();
-          return Token.Identifier;
+          string str = sb.ToString();
+          if(str=="nil") { value=null; return Token.Literal; }
+          else { value=str; return Token.Symbol; }
         }
       }
     }
@@ -331,4 +337,4 @@ public sealed class Parser
   static readonly Regex fracRegex = new Regex(@"^(\d+)/(\d+)$", RegexOptions.Compiled|RegexOptions.Singleline);
 }
 
-} // namespace NetLisp.AST
+} // namespace NetLisp.Backend
