@@ -28,7 +28,7 @@ public sealed class Parser
   public static Parser FromString(string text) { return new Parser("<string>", text); }
 
   public Pair Parse()
-  { Pair tail=Ops.Cons(null, null), list=Ops.Cons(Symbol.If, Ops.Cons(false, tail));
+  { Pair tail=Ops.Cons(null, null), list=Ops.Cons(Symbol.If, Ops.Cons(null, tail));
 
     while(token!=Token.EOF)
     { object item = ParseOne();
@@ -119,7 +119,7 @@ public sealed class Parser
   object ParseOne()
   { switch(token)
     { case Token.LParen:
-        if(NextToken()==Token.RParen) return null;
+        if(NextToken()==Token.RParen) { NextToken(); return null; }
         else
         { ArrayList items = new ArrayList();
           object dot = null;
