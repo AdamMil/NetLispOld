@@ -28,11 +28,11 @@ public sealed class Parser
   public static Parser FromString(string text) { return new Parser("<string>", text); }
 
   public Pair Parse()
-  { Pair tail=Ops.Cons(null, null), list=Ops.Cons(Symbol.If, Ops.Cons(null, tail));
+  { Pair tail=Modules.Builtins.cons(null, null), list=Modules.Builtins.cons(Symbol.Get("if"), Modules.Builtins.cons(null, tail));
 
     while(token!=Token.EOF)
     { object item = ParseOne();
-      Pair next = Ops.Cons(item, null);
+      Pair next = Modules.Builtins.cons(item, null);
       tail.Cdr  = next;
       tail      = next;
     }
@@ -142,7 +142,7 @@ public sealed class Parser
         NextToken();
         return val;
       }
-      case Token.BackQuote: NextToken(); return Ops.List(Symbol.Get("quasi-quote"), ParseOne());
+      case Token.BackQuote: NextToken(); return Ops.List(Symbol.Get("quasiquote"), ParseOne());
       case Token.Comma: NextToken(); return Ops.List(Symbol.Get("unquote"), ParseOne());
       case Token.Quote: NextToken(); return Ops.List(Symbol.Get("quote"), ParseOne());
       case Token.Splice: NextToken(); return Ops.List(Symbol.Get("unquote-splicing"), ParseOne());
@@ -203,7 +203,7 @@ public sealed class Parser
     }
     else if(!m.Success) SyntaxError("invalid number");
 
-    if(str.IndexOf('.')!=-1) return exact=='e' ? Ops.InexactToExact(double.Parse(str)) : double.Parse(str);
+    if(str.IndexOf('.')!=-1) return exact=='e' ? Modules.Builtins.inexactToExact(double.Parse(str)) : double.Parse(str);
     else
     { m = fracRegex.Match(str);
       if(m.Success) throw new NotImplementedException("fractions");

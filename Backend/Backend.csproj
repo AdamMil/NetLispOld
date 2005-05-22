@@ -74,6 +74,11 @@
         <Files>
             <Include>
                 <File
+                    RelPath = "AssemblyGenerator.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
                     RelPath = "AssemblyInfo.cs"
                     SubType = "Code"
                     BuildAction = "Compile"
@@ -84,7 +89,27 @@
                     BuildAction = "Compile"
                 />
                 <File
+                    RelPath = "Builtins.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
+                    RelPath = "CodeGenerator.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
+                    RelPath = "Exceptions.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
                     RelPath = "Function.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
+                    RelPath = "Namespace.cs"
                     SubType = "Code"
                     BuildAction = "Compile"
                 />
@@ -94,7 +119,27 @@
                     BuildAction = "Compile"
                 />
                 <File
+                    RelPath = "ReflectedType.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
                     RelPath = "Runtime.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
+                    RelPath = "Slot.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
+                    RelPath = "SnippetMaker.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
+                    RelPath = "TypeGenerator.cs"
                     SubType = "Code"
                     BuildAction = "Compile"
                 />
