@@ -5,6 +5,51 @@ using System.Collections.Specialized;
 namespace NetLisp.Backend
 {
 
+#region Attributes
+public class DocStringAttribute : Attribute
+{ public DocStringAttribute(string docs) { Docs=docs.Replace("\r\n", "\n"); }
+  public string Docs;
+}
+
+[AttributeUsage(AttributeTargets.Parameter)]
+public class RestListAttribute : Attribute { }
+
+[AttributeUsage(AttributeTargets.Method)]
+public class WantListAttribute : Attribute { }
+
+public class SymbolNameAttribute : Attribute
+{ public SymbolNameAttribute(string name) { Name=name; }
+  public string Name;
+}
+#endregion
+
+#region Interfaces
+public interface ICallable
+{ object Call(params object[] args);
+}
+
+public interface IDescriptor
+{ object Get(object instance);
+}
+
+public interface IDataDescriptor : IDescriptor
+{ void Set(object instance, object value);
+}
+
+public interface IHasAttributes
+{ bool GetAttr(string name, out object value);
+  void SetAttr(string key, object value);
+}
+#endregion
+
+#region Enums
+[Flags]
+public enum Conversion
+{ Unsafe=1, Safe=3, Reference=5, Identity=7, None=8, Overflow=10,
+  Failure=8, Success=1
+}
+#endregion
+
 #region Frame
 public sealed class Frame
 { public Frame() { Locals=Globals=new HybridDictionary(); }
@@ -18,6 +63,8 @@ public sealed class Frame
 
   public void Bind(string name, object value) { Locals[name]=value; }
   public void Unbind(string name) { Locals.Remove(name); }
+
+  public bool Contains(string name) { return Locals.Contains(name) ? true : Parent==null ? Globals.Contains(name) : Parent.Contains(name); }
 
   public object Get(string name)
   { object obj = Locals[name];
@@ -41,6 +88,9 @@ public sealed class Frame
 
   public Frame Parent;
   public IDictionary Locals, Globals;
+  
+  [ThreadStatic]
+  public static Frame Current;
 }
 #endregion
 
@@ -48,15 +98,97 @@ public sealed class Frame
 public sealed class Ops
 { Ops() { }
 
-  public static object Car(Pair p) { return p.Car; }
-  public static object Cdr(Pair p) { return p.Cdr; }
-  public static Pair Cons(object car, object cdr) { return new Pair(car, cdr); }
-
-  public static object Eval(object obj)
-  { return obj is Pair || obj is Symbol ? AST.Create(MacroExpand(obj)).Evaluate(new Frame()) : obj;
+  public static AttributeErrorException AttributeError(string format, params object[] args)
+  { return new AttributeErrorException(string.Format(format, args));
   }
 
-  public static object InexactToExact(object obj) { throw new NotImplementedException(); }
+  public static object Call(string name) { return Call(Frame.Current.GetGlobal(name), EmptyArray); }
+  public static object Call(string name, params object[] args) { return Call(Frame.Current.GetGlobal(name), args); }
+
+  public static object Call(object func, object[] args)
+  { ICallable f = func as ICallable;
+    if(f==null) throw new Exception("not a function"); // FIXME: ex
+    return f.Call(args);
+  }
+
+  public static Snippet CompileRaw(object obj) { return SnippetMaker.Generate(AST.Create(obj)); }
+
+  public static object ConvertTo(object o, Type type)
+  { switch(ConvertTo(o==null ? null : o.GetType(), type))
+    { case Conversion.Identity: case Conversion.Reference: return o;
+      case Conversion.None: throw TypeError("object cannot be converted to '{0}'", type);
+      default:
+        if(type==typeof(bool)) return FromBool(IsTrue(o));
+        if(type.IsSubclassOf(typeof(Delegate))) return MakeDelegate(o, type);
+        try { return Convert.ChangeType(o, type); }
+        catch(OverflowException) { throw ValueError("large value caused overflow"); }
+    }
+  }
+
+  public static Conversion ConvertTo(Type from, Type to)
+  { if(from==null)
+      return !to.IsValueType ? Conversion.Reference : to==typeof(bool) ? Conversion.Safe : Conversion.None;
+    else if(to==from) return Conversion.Identity;
+    else if(to.IsAssignableFrom(from)) return Conversion.Reference;
+
+    // TODO: check whether it's faster to use IndexOf() or our own loop
+    // TODO: check whether it's possible to speed up this big block of checks up somehow
+    // TODO: add support for Integer, Complex, and Decimal
+    if(from.IsPrimitive && to.IsPrimitive)
+    { if(from==typeof(int))    return IsIn(typeConv[4], to)   ? Conversion.Safe : Conversion.Unsafe;
+      if(to  ==typeof(bool))   return IsIn(typeConv[9], from) ? Conversion.None : Conversion.Safe;
+      if(from==typeof(double)) return Conversion.None;
+      if(from==typeof(long))   return IsIn(typeConv[6], to) ? Conversion.Safe : Conversion.Unsafe;
+      if(from==typeof(char))   return IsIn(typeConv[8], to) ? Conversion.Safe : Conversion.Unsafe;
+      if(from==typeof(byte))   return IsIn(typeConv[1], to) ? Conversion.Safe : Conversion.Unsafe;
+      if(from==typeof(uint))   return IsIn(typeConv[5], to) ? Conversion.Safe : Conversion.Unsafe;
+      if(from==typeof(float))  return to==typeof(double) ? Conversion.Safe : Conversion.None;
+      if(from==typeof(short))  return IsIn(typeConv[2], to) ? Conversion.Safe : Conversion.Unsafe;
+      if(from==typeof(ushort)) return IsIn(typeConv[3], to) ? Conversion.Safe : Conversion.Unsafe;
+      if(from==typeof(sbyte))  return IsIn(typeConv[0], to) ? Conversion.Safe : Conversion.Unsafe;
+      if(from==typeof(ulong))  return IsIn(typeConv[7], to) ? Conversion.Safe : Conversion.Unsafe;
+    }
+    if(from.IsArray && to.IsArray && to.GetElementType().IsAssignableFrom(from.GetElementType()))
+      return Conversion.Reference;
+    if(to.IsSubclassOf(typeof(Delegate))) // we use None if both are delegates because we already checked above that it's not the right type of delegate
+      return from.IsSubclassOf(typeof(Delegate)) ? Conversion.None : Conversion.Unsafe;
+    return Conversion.None;
+  }
+
+  public static Pair DottedList(object last, params object[] items)
+  { Pair head=Modules.Builtins.cons(items[0], null), tail=head;
+    for(int i=1; i<items.Length; i++)
+    { Pair next=Modules.Builtins.cons(items[i], null);
+      tail.Cdr = next;
+      tail     = next;
+    }
+    tail.Cdr = last;
+    return head;
+  }
+
+  public static object FastCadr(Pair pair) { return ((Pair)pair.Cdr).Car; }
+  public static object FastCddr(Pair pair) { return ((Pair)pair.Cdr).Cdr; }
+
+  // TODO: check whether we can eliminate this (ie, "true is true" still works)
+  public static object FromBool(bool value) { return value ? TRUE : FALSE; }
+
+  public static object GetAttr(object o, string name)
+  { IHasAttributes iha = o as IHasAttributes;
+    if(iha!=null)
+    { object ret;
+      if(iha.GetAttr(name, out ret)) return ret;
+    }
+    throw AttributeError("object has no attribute '{0}'", name);
+  }
+
+  public static object GetDescriptor(object desc, object instance)
+  { if(Convert.GetTypeCode(desc)!=TypeCode.Object) return desc; // TODO: i'm not sure how much this optimization helps (if at all)
+
+    IDescriptor d = desc as IDescriptor;
+    return d==null ? desc : d.Get(instance);
+  }
+
+  public static object GetGlobal(string name) { return Frame.Current.GetGlobal(name); }
 
   public static bool IsTrue(object a)
   { switch(Convert.GetTypeCode(a))
@@ -84,21 +216,26 @@ public sealed class Ops
     return true;
   }
 
-  public static int Length(object obj)
-  { Pair pair = obj as Pair;
-    if(pair!=null)
-    { int total=1;
-      while(true)
-      { pair = pair.Cdr as Pair;
-        if(pair==null) break;
-        total++;
-      }
-      return total;
-    }
-    else throw new Exception("unhandled type"); // FIXME: use another exception
+  public static Pair List(params object[] items) { return ListSlice(0, items); }
+  public static Pair ListSlice(int start, params object[] items)
+  { if(items.Length<=start) return null;
+    Pair pair = null;
+    for(int i=items.Length-1; i>=0; i--) pair = Modules.Builtins.cons(items[i], pair);
+    return pair;
+  }
+  
+  public static Pair List2(object first, params object[] items) { return Modules.Builtins.cons(first, List(items)); }
+
+  public static object[] ListToArray(Pair pair)
+  { if(pair==null) return EmptyArray;
+    ArrayList items = new ArrayList();
+    while(pair!=null) { items.Add(pair.Car); pair = pair.Cdr as Pair; }
+    return (object[])items.ToArray(typeof(object));
   }
 
-  public static object MacroExpand(object obj) { return obj; }
+  public static Delegate MakeDelegate(object callable, Type delegateType)
+  { return Delegate.CreateDelegate(delegateType, DelegateProxy.Make(callable, delegateType), "Handle");
+  }
 
   public static string Repr(object obj)
   { if(obj==null) return "nil";
@@ -106,41 +243,69 @@ public sealed class Ops
     return obj.ToString();
   }
 
-  internal static Pair List(params object[] items) { return List2(0, items); }
-  internal static Pair List2(int start, params object[] items)
-  { if(items.Length<=start) return null;
-    Pair head=Cons(items[start], null), tail=head;
-    for(; start<items.Length; start++)
-    { Pair next=Cons(items[start], null);
-      tail.Cdr = next;
-      tail     = next;
-    }
-    return head;
-  }
-  
-  internal static Pair DottedList(object last, params object[] items)
-  { Pair head=Cons(items[0], null), tail=head;
-    for(int i=1; i<items.Length; i++)
-    { Pair next=Cons(items[i], null);
-      tail.Cdr = next;
-      tail     = next;
-    }
-    tail.Cdr = last;
-    return head;
+  public static void SetAttr(object value, object o, string name)
+  { IHasAttributes iha = o as IHasAttributes;
+    if(iha!=null) iha.SetAttr(name, value);
+    else throw AttributeError("object has no attribute '{0}'", name);
   }
 
-  internal static object FastCadr(Pair pair) { return ((Pair)pair.Cdr).Car; }
-  internal static object FastCddr(Pair pair) { return ((Pair)pair.Cdr).Cdr; }
-
-  internal static Pair List2(object first, params object[] items)
-  { Pair head=Cons(first, null), tail=head;
-    for(int i=0; i<items.Length; i++)
-    { Pair next=Cons(items[i], null);
-      tail.Cdr = next;
-      tail     = next;
-    }
-    return head;
+  public static bool SetDescriptor(object desc, object instance, object value)
+  { if(Convert.GetTypeCode(desc)!=TypeCode.Object) return false; // TODO: i'm not sure how much this optimization helps (if at all)
+    IDataDescriptor dd = desc as IDataDescriptor;
+    if(dd!=null) { dd.Set(instance, value); return true; }
+    else return false;
   }
+
+  static string Source(Node node) { throw new NotImplementedException(); }
+
+  public static TypeErrorException TypeError(string format, params object[] args)
+  { return new TypeErrorException(string.Format(format, args));
+  }
+  public static TypeErrorException TypeError(Node node, string format, params object[] args)
+  { return new TypeErrorException(Source(node)+string.Format(format, args));
+  }
+
+  public static string TypeName(object o) { return "TYPENAME - FIXME"; } // FIXME: return GetDynamicType(o).__name__.ToString(); }
+
+  public static ValueErrorException ValueError(string format, params object[] args)
+  { return new ValueErrorException(string.Format(format, args));
+  }
+  public static ValueErrorException ValueError(Node node, string format, params object[] args)
+  { return new ValueErrorException(Source(node)+string.Format(format, args));
+  }
+
+  public static readonly object Missing = "<Missing>";
+  public static readonly object FALSE=false, TRUE=true;
+  public static readonly object[] EmptyArray = new object[0];
+
+  static bool IsIn(Type[] typeArr, Type type)
+  { for(int i=0; i<typeArr.Length; i++) if(typeArr[i]==type) return true;
+    return false;
+  }
+
+  static readonly Type[][] typeConv = 
+  { // FROM
+    new Type[] { typeof(int), typeof(double), typeof(short), typeof(long), typeof(float) }, // sbyte
+    new Type[] // byte
+    { typeof(int), typeof(double), typeof(uint), typeof(short), typeof(ushort), typeof(long), typeof(ulong),
+      typeof(float)
+    },
+    new Type[] { typeof(int), typeof(double), typeof(long), typeof(float) }, // short
+    new Type[] { typeof(int), typeof(double), typeof(uint), typeof(long), typeof(ulong), typeof(float) }, // ushort
+    new Type[] { typeof(double), typeof(long), typeof(float) }, // int
+    new Type[] { typeof(double), typeof(long), typeof(ulong), typeof(float) }, // uint
+    new Type[] { typeof(double), typeof(float) }, // long
+    new Type[] { typeof(double), typeof(float) }, // ulong
+    new Type[] // char
+    { typeof(int), typeof(double), typeof(ushort), typeof(uint), typeof(long), typeof(ulong), typeof(float)
+    },
+
+    // TO
+    new Type[] // bool
+    { typeof(int), typeof(byte), typeof(char), typeof(sbyte), typeof(short), typeof(ushort), typeof(uint),
+      typeof(long), typeof(ulong)
+    }
+  };
 }
 #endregion
 
@@ -187,8 +352,6 @@ public sealed class Symbol
   }
   
   public override string ToString() { return Name; }
-
-  public static readonly Symbol If=Get("if"), Lambda=Get("lambda"), Let=Get("let"), Set=Get("set!");
 }
 #endregion
 

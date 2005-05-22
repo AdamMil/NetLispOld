@@ -1,14 +1,36 @@
 using System;
 using System.Collections;
 using System.Diagnostics;
+using System.Reflection;
+using System.Reflection.Emit;
 
 namespace NetLisp.Backend
 {
 
+public enum Scope : byte { Free, Local, Global, Temporary }
+
+public sealed class Name
+{ public Name(string name) { String=name; Scope=Scope.Free; }
+  public Name(string name, Scope scope) { String=name; Scope=scope; }
+
+  public override int GetHashCode() { return String.GetHashCode(); }
+
+  public string String;
+  public Scope  Scope;
+}
+
 public sealed class AST
 { public static Node Create(object obj)
+  { Node node = Parse(obj);
+    node.Preprocess();
+    return node;
+  }
+  
+  public static long NextIndex { get { lock(indexLock) return index++; } }
+
+  static Node Parse(object obj)
   { Symbol sym = obj as Symbol;
-    if(sym!=null) return new SymbolNode(sym.Name);
+    if(sym!=null) return new VariableNode(sym.Name);
 
     Pair pair = obj as Pair;
     if(pair==null) return new LiteralNode(obj);
@@ -17,26 +39,22 @@ public sealed class AST
     if(sym!=null)
       switch(sym.Name)
       { case "if":
-        { if(Ops.Length(pair)<3) throw new Exception("too few for if"); // FIXME: SyntaxException
+        { if(Modules.Builtins.length(pair)<3) throw new Exception("too few for if"); // FIXME: SyntaxException
           pair = (Pair)pair.Cdr;
-          return new IfNode(Create(pair.Car), Create(Ops.FastCadr(pair)), ParseBody(Ops.FastCddr(pair) as Pair));
+          return new IfNode(Parse(pair.Car), Parse(Ops.FastCadr(pair)), ParseBody(Ops.FastCddr(pair) as Pair));
         }
         case "lambda":
-        { if(Ops.Length(pair)<3) throw new Exception("too few for lambda"); // FIXME: SyntaxException
+        { if(Modules.Builtins.length(pair)<3) throw new Exception("too few for lambda"); // FIXME: SyntaxException
           pair = (Pair)pair.Cdr;
           bool hasList;
           return new LambdaNode(ParseLambaList((Pair)pair.Car, out hasList), hasList, ParseBody((Pair)pair.Cdr));
         }
-        case "let":
-        { if(Ops.Length(pair)<3) throw new Exception("too few for let"); // FIXME: SyntaxException
-          string[] names;
-          Node[] values;
-          pair = (Pair)pair.Cdr;
-          ParseLetList((Pair)pair.Car, out names, out values);
-          return new LetNode(names, values, ParseBody((Pair)pair.Cdr));
+        case "quote":
+        { if(Modules.Builtins.length(pair)!=2) throw new Exception("wrong number for quote"); // FIXME: ex
+          return Quote(Ops.FastCadr(pair));
         }
         case "set!":
-        { if(Ops.Length(pair)!=3) throw new Exception("wrong number for set!"); // FIXME: SyntaxException
+        { if(Modules.Builtins.length(pair)!=3) throw new Exception("wrong number for set!"); // FIXME: SyntaxException
           pair = (Pair)pair.Cdr;
           sym = pair.Car as Symbol;
           if(sym==null) throw new Exception("set must set symbol"); // FIXME: SyntaxException
@@ -44,12 +62,12 @@ public sealed class AST
         }
       }
 
-    Node func = Create(pair.Car);
+    Node func = Parse(pair.Car);
     ArrayList args = new ArrayList();
     while(true)
     { pair = pair.Cdr as Pair;
       if(pair==null) break;
-      args.Add(Create(pair.Car));
+      args.Add(Parse(pair.Car));
     }
     return new CallNode(func, (Node[])args.ToArray(typeof(Node)));
   }
@@ -58,12 +76,12 @@ public sealed class AST
   { if(start==null) return null;
     ArrayList items = new ArrayList();
     while(start!=null)
-    { items.Add(Create(start.Car));
+    { items.Add(Parse(start.Car));
       start = start.Cdr as Pair;
     }
     return new BodyNode((Node[])items.ToArray(typeof(Node)));
   }
-  
+
   static string[] ParseLambaList(Pair list, out bool hasList)
   { hasList = false;
 
@@ -84,41 +102,51 @@ public sealed class AST
     }
     return (string[])names.ToArray(typeof(string));
   }
-  
-  static void ParseLetList(Pair list, out string[] names, out Node[] values)
-  { if(list==null)
-    { names  = new string[0];
-      values = new Node[0];
+
+  static Node Quote(object obj)
+  { Pair pair = obj as Pair;
+    if(pair==null) return new LiteralNode(obj);
+    
+    ArrayList items = new ArrayList();
+    Node dot=null;
+    while(true)
+    { items.Add(Quote(pair.Car));
+      object next = pair.Cdr;
+      pair = next as Pair;
+      if(pair==null)
+      { if(next!=null) dot = Quote(next);
+        break;
+      }
     }
-    else
-    { ArrayList nams=new ArrayList(), vals=new ArrayList();
-      do
-      { Pair pair = list.Car as Pair;
-        if(pair==null) throw new Exception("expecting a list of lists"); // FIXME: SyntaxException
-        if(Ops.Length(pair)!=2) throw new Exception("expecting a list of length 2");
-        Symbol sym = pair.Car as Symbol;
-        if(sym==null) throw new Exception("can only bind symbols"); // FIXME: SyntaxException
-        nams.Add(sym.Name);
-        vals.Add(Create(Ops.FastCadr(pair)));
-        list = list.Cdr as Pair;
-      } while(list!=null);
-      names  = (string[])nams.ToArray(typeof(string));
-      values = (Node[])vals.ToArray(typeof(Node));
-    }
+    return new ListNode((Node[])items.ToArray(typeof(Node)), dot);
   }
+
+  static long index;
+  static readonly object indexLock = "<AST_INDEX_LOCK>";
 }
 
 public abstract class Node
-{ //public abstract void Emit(CodeGenerator cg);
-  public abstract object Evaluate(Frame frame);
+{ public abstract void Emit(CodeGenerator cg);
+  public abstract object Evaluate();
+
+  public virtual void Preprocess()
+  {
+  }
 }
 
 public sealed class BodyNode : Node
 { public BodyNode(Node[] forms) { Forms=forms; }
 
-  public override object Evaluate(Frame frame)
+  public override void Emit(CodeGenerator cg)
+  { for(int i=0; i<Forms.Length; i++)
+    { Forms[i].Emit(cg);
+      if(i!=Forms.Length-1) cg.ILG.Emit(OpCodes.Pop);
+    }
+  }
+
+  public override object Evaluate()
   { object ret=null;
-    foreach(Node n in Forms) ret = n.Evaluate(frame);
+    foreach(Node n in Forms) ret = n.Evaluate();
     return ret;
   }
 
@@ -128,12 +156,18 @@ public sealed class BodyNode : Node
 public sealed class CallNode : Node
 { public CallNode(Node func, Node[] args) { Function=func; Args=args; }
 
-  public override object Evaluate(Frame frame)
-  { Function func = Function.Evaluate(frame) as Function;
+  public override void Emit(CodeGenerator cg)
+  { Function.Emit(cg);
+    cg.EmitObjectArray(Args);
+    cg.EmitCall(typeof(Ops), "Call", new Type[] { typeof(object), typeof(object[]) });
+  }
+
+  public override object Evaluate()
+  { ICallable func = Function.Evaluate() as ICallable;
     if(func==null) throw new Exception("not a function"); // FIXME: use other exception
     
     object[] args = new object[Args.Length];
-    for(int i=0; i<args.Length; i++) args[i] = Args[i].Evaluate(frame);
+    for(int i=0; i<args.Length; i++) args[i] = Args[i].Evaluate();
     return func.Call(args);
   }
 
@@ -144,9 +178,20 @@ public sealed class CallNode : Node
 public sealed class IfNode : Node
 { public IfNode(Node test, Node iftrue, Node iffalse) { Test=test; IfTrue=iftrue; IfFalse=iffalse; }
 
-  public override object Evaluate(Frame frame)
-  { if(Ops.IsTrue(Test.Evaluate(frame))) return IfTrue.Evaluate(frame);
-    else if(IfFalse!=null) return IfFalse.Evaluate(frame);
+  public override void Emit(CodeGenerator cg)
+  { Label end=cg.ILG.DefineLabel(), falselbl=cg.ILG.DefineLabel();
+    cg.EmitIsTrue(Test);
+    cg.ILG.Emit(OpCodes.Brfalse, falselbl);
+    IfTrue.Emit(cg);
+    cg.ILG.Emit(OpCodes.Br, end);
+    cg.ILG.MarkLabel(falselbl);
+    cg.EmitExpression(IfFalse);
+    cg.ILG.MarkLabel(end);
+  }
+
+  public override object Evaluate()
+  { if(Ops.IsTrue(Test.Evaluate())) return IfTrue.Evaluate();
+    else if(IfFalse!=null) return IfFalse.Evaluate();
     else return null;
   }
 
@@ -154,51 +199,145 @@ public sealed class IfNode : Node
 }
 
 public sealed class LambdaNode : Node
-{ public LambdaNode(string[] names, bool hasList, Node body) { ParamNames=names; Body=body; HasList=hasList; }
-  public override object Evaluate(Frame frame) { return new LambdaFunction(frame, ParamNames, HasList, Body); }
+{ public LambdaNode(string[] names, bool hasList, Node body)
+  { Parameters = new Name[names.Length];
+    for(int i=0; i<names.Length; i++) Parameters[i] = new Name(names[i]);
+    this.names = names;
 
-  public readonly string[] ParamNames;
-  public readonly Node Body;
-  public readonly bool HasList;
-}
-
-public sealed class LetNode : Node
-{ public LetNode(string[] names, Node[] values, Node body) { Names=names; Values=values; Body=body; }
-
-  public override object Evaluate(Frame frame)
-  { Frame child = new Frame(frame);
-    for(int i=0; i<Names.Length; i++) child.Bind(Names[i], Values[i].Evaluate(frame));
-    return Body.Evaluate(child);
+    Body=body; HasList=hasList;
   }
 
-  public readonly string[] Names;
-  public readonly Node[] Values;
+  public override void Emit(CodeGenerator cg)
+  { index = AST.NextIndex;
+    CodeGenerator impl = MakeImplMethod(cg);
+    
+    string[] names = new string[Parameters.Length];
+    for(int i=0; i<names.Length; i++) names[i] = Parameters[i].String;
+
+    cg.EmitStringArray(names);
+    cg.EmitBool(HasList);
+    if(Inherit==null)
+    { cg.ILG.Emit(OpCodes.Ldnull); // create delegate
+      cg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)impl.MethodBase);
+      cg.EmitNew((ConstructorInfo)typeof(CallTargetN).GetMember(".ctor")[0]); // FIXME: make this more portable
+      cg.EmitNew(typeof(CompiledFunctionN), new Type[] { typeof(string[]), typeof(bool), typeof(CallTargetN) });
+    }
+    else
+    { Type type = impl.TypeGenerator.TypeBuilder;
+      cg.EmitNew(type, new Type[] { typeof(string[]), typeof(bool) });
+      for(int i=0; i<Inherit.Length; i++)
+      { cg.ILG.Emit(OpCodes.Dup);
+        cg.Namespace.GetSlotForGet(Inherit[i]).EmitGet(cg);
+        cg.EmitFieldSet(((FieldSlot)impl.Namespace.GetLocalSlot(Inherit[i])).Info);
+      }
+    }
+  }
+
+  public override object Evaluate() { return new LambdaFunction(Frame.Current, names, HasList, Body); }
+
+  public readonly Name[] Parameters, Inherit;
   public readonly Node Body;
+  public readonly bool HasList;
+
+  CodeGenerator MakeImplMethod(CodeGenerator cg)
+  { CodeGenerator icg;
+    Slot[] closedSlots=null;
+    if(Inherit==null || Inherit.Length==0)
+      icg = cg.TypeGenerator.DefineMethod("lambda$" + index, typeof(object), new Type[] { typeof(object[]) });
+    else
+    { closedSlots = new Slot[Inherit.Length];
+      TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
+                                                          "cfunc$"+index, typeof(CompiledFunction));
+      for(int i=0; i<Inherit.Length; i++) closedSlots[i] = tg.DefineField("cv$"+AST.NextIndex, typeof(object));
+
+      CodeGenerator ccg = tg.DefineChainedConstructor(typeof(CompiledFunction).GetConstructors()[0]);
+      ccg.EmitReturn();
+      ccg.Finish();
+
+      icg = tg.DefineMethodOverride(typeof(CompiledFunction), "DoCall", true);
+    }
+
+    LocalNamespace ns = new LocalNamespace(cg.Namespace, icg);
+    icg.Namespace = ns;
+    ns.SetArgs(Parameters, icg, new ArgSlot((MethodBuilder)icg.MethodBase, 0, "$names", typeof(object[])));
+    if(Inherit!=null) ns.AddClosedVars(Inherit, closedSlots);
+    Body.Emit(icg);
+    icg.EmitReturn();
+    icg.Finish();
+    if(Inherit!=null) icg.TypeGenerator.FinishType();
+    return icg;
+  }
+
+  readonly string[] names;
+  long index;
+}
+
+public sealed class ListNode : Node
+{ public ListNode(Node[] items, Node dot) { Items=items; Dot=dot; }
+
+  public override void Emit(CodeGenerator cg)
+  { Slot pair = cg.AllocLocalTemp(typeof(Pair));
+    MethodInfo cons = typeof(Modules.Builtins).GetMethod("cons");
+    cg.EmitExpression(Items[Items.Length-1]);
+    cg.EmitExpression(Dot);
+    cg.EmitCall(cons);
+    pair.EmitSet(cg);
+    for(int i=Items.Length-2; i>=0; i--)
+    { Items[i].Emit(cg);
+      pair.EmitGet(cg);
+      cg.EmitCall(cons);
+      pair.EmitSet(cg);
+    }
+    pair.EmitGet(cg);
+    cg.FreeLocalTemp(pair);
+  }
+
+  public override object Evaluate()
+  { object obj = Dot==null ? null : Dot.Evaluate();
+    for(int i=Items.Length-1; i>=0; i--) obj = Modules.Builtins.cons(Items[i].Evaluate(), obj);
+    return obj;
+  }
+  
+  public readonly Node[] Items;
+  public readonly Node Dot;
 }
 
 public sealed class LiteralNode : Node
 { public LiteralNode(object value) { Value=value; }
-  public override object Evaluate(Frame frame) { return Value; }
+  public override void Emit(CodeGenerator cg) { cg.EmitConstant(Value); }
+  public override object Evaluate() { return Value; }
   public readonly object Value;
 }
 
-public sealed class SetNode : Node
-{ public SetNode(string name, Node value) { Name=name; Value=value; }
+public sealed class Options
+{ private Options() { }
+  public static bool Debug, Optimize;
+}
 
-  public override object Evaluate(Frame frame)
-  { object value = Value.Evaluate(frame);
-    frame.Set(Name, value);
+public sealed class SetNode : Node
+{ public SetNode(string name, Node value) { Name=new Name(name); Value=value; }
+
+  public override void Emit(CodeGenerator cg)
+  { Value.Emit(cg);
+    cg.ILG.Emit(OpCodes.Dup);
+    cg.EmitSet(Name);
+  }
+
+  public override object Evaluate()
+  { object value = Value.Evaluate();
+    Frame.Current.Set(Name.String, value);
     return value;
   }
 
-  public readonly string Name;
+  public readonly Name Name;
   public readonly Node Value;
 }
 
-public sealed class SymbolNode : Node
-{ public SymbolNode(string name) { Name=name; }
-  public override object Evaluate(Frame frame) { return frame.Get(Name); }
-  public readonly string Name;
+public sealed class VariableNode : Node
+{ public VariableNode(string name) { Name=new Name(name); }
+  public override void Emit(CodeGenerator cg) { cg.EmitGet(Name); }
+  public override object Evaluate() { return Frame.Current.Get(Name.String); }
+  public readonly Name Name;
 }
 
 } // namespace NetLisp.Backend
