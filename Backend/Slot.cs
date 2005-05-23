@@ -113,7 +113,7 @@ public sealed class NamedFrameSlot : Slot
   public override void EmitGet(CodeGenerator cg)
   { Frame.EmitGet(cg);
     cg.EmitString(Name);
-    cg.EmitCall(typeof(Frame), "GetGlobal");
+    cg.EmitCall(typeof(Frame), "GetGlobal", new Type[] { typeof(string) });
   }
   
   public override void EmitGetAddr(CodeGenerator cg)

@@ -81,7 +81,6 @@ public sealed class CodeGenerator
   public void EmitFieldSet(Type type, string name) { EmitFieldSet(type.GetField(name)); }
   public void EmitFieldSet(FieldInfo field) { ILG.Emit(field.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, field); }
 
-  public void EmitDel(Name name) { Namespace.DeleteSlot(name); }
   public void EmitGet(Name name) { Namespace.GetSlotForGet(name).EmitGet(this); }
   public void EmitSet(Name name) { Namespace.GetSlotForSet(name).EmitSet(this); }
   

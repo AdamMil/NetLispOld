@@ -49,7 +49,6 @@ public abstract class Namespace
   }
 
   // TODO: make sure this works with closures, etc
-  public virtual void DeleteSlot(Name name) { slots.Remove(name.String); }
   public Slot GetLocalSlot(Name name) { return (Slot)slots[name.String]; } // does NOT make the slot!
   public Slot GetGlobalSlot(string name) { return GetGlobalSlot(new Name(name, Scope.Global)); }
   public Slot GetGlobalSlot(Name name) { return Parent==null ? GetSlot(name) : Parent.GetGlobalSlot(name); }
@@ -97,19 +96,6 @@ public sealed class FieldNamespace : Namespace
                                                                                  FieldAttributes.Public));
   }
 
-  public override void DeleteSlot(Name name)
-  { if(name.Scope==Scope.Global) // TODO: handle Free variables here?
-    { Namespace par = Parent;
-      while(par!=null && !(par is FrameNamespace)) par = par.Parent;
-      if(par==null) throw new InvalidOperationException("There is no FrameNamespace in the hierachy");
-      par.DeleteSlot(name);
-    }
-    else
-    { codeGen.ILG.Emit(OpCodes.Ldnull);
-      GetSlotForSet(name).EmitSet(codeGen);
-    }
-  }
-
   protected override Slot MakeSlot(Name name)
   { if(name.Scope==Scope.Global)
     { Namespace par = Parent;
@@ -137,12 +123,6 @@ public sealed class FieldNamespace : Namespace
 public sealed class FrameNamespace : Namespace
 { public FrameNamespace(CodeGenerator cg) : base(null, cg) { FrameSlot = new FrameObjectSlot(); }
 
-  public override void DeleteSlot(Name name)
-  { FrameSlot.EmitGet(codeGen);
-    codeGen.EmitString(name.String);
-    codeGen.EmitCall(typeof(Frame), "Delete");
-  }
-
   public override void SetArgs(Name[] names, int offset, MethodBase mb)
   { foreach(Name name in names) slots[name] = MakeSlot(name);
   }
@@ -159,19 +139,6 @@ public sealed class LocalNamespace : Namespace
 
   public void AddClosedVars(Name[] names, Slot[] slots)
   { for(int i=0; i<names.Length; i++) this.slots[names[i].String] = slots[i];
-  }
-
-  public override void DeleteSlot(Name name)
-  { if(name.Scope==Scope.Global) // TODO: handle Free variables here?
-    { Namespace par = Parent;
-      while(par!=null && !(par is FrameNamespace)) par = par.Parent;
-      if(par==null) throw new InvalidOperationException("There is no FrameNamespace in the hierachy");
-      par.DeleteSlot(name);
-    }
-    else
-    { codeGen.ILG.Emit(OpCodes.Ldnull);
-      GetSlotForSet(name).EmitSet(codeGen);
-    }
   }
 
   public void EmitLocalsDict(CodeGenerator cg)
