@@ -42,6 +42,16 @@ public interface IHasAttributes
 }
 #endregion
 
+#region Continuation
+public sealed class Continuation
+{ public Environment Environment;
+  public Continuation Parent;
+  public MethodInfo Method; // probably wrong
+  public int Index;
+  public EvalStack Stack;
+}
+#endregion
+
 #region Enums
 [Flags]
 public enum Conversion
@@ -50,47 +60,62 @@ public enum Conversion
 }
 #endregion
 
-#region Frame
-public sealed class Frame
-{ public Frame() { Locals=Globals=new HybridDictionary(); }
-  public Frame(Frame parent) : this(parent, new HybridDictionary()) { }
-  public Frame(Frame parent, IDictionary locals)
-  { Locals=locals;
-    if(parent!=null) { Parent=parent; Globals=parent.Globals; }
-    else Globals=locals;
-  }
-  public Frame(IDictionary locals, IDictionary globals) { Locals=locals; Globals=globals; }
+#region Environment
+public abstract class Environment
+{ public readonly Environment Parent;
 
-  public void Bind(string name, object value) { Locals[name]=value; }
-  public void Unbind(string name) { Locals.Remove(name); }
+  public static Environment Current;
+}
 
-  public bool Contains(string name) { return Locals.Contains(name) ? true : Parent==null ? Globals.Contains(name) : Parent.Contains(name); }
+public sealed class TopLevel : Environment
+{ public TopLevel() { Globals=new Hashtable(); }
+
+  public void Bind(string name, object value) { Globals[name] = value; }
+  public bool Contains(string name) { return Globals.Contains(name); }
 
   public object Get(string name)
-  { object obj = Locals[name];
-    if(obj!=null || Locals.Contains(name)) return obj;
-    return Parent==null ? GetGlobal(name) : Parent.Get(name);
-  }
-
-  public object GetGlobal(string name)
   { object obj = Globals[name];
     if(obj!=null || Globals.Contains(name)) return obj;
     throw new Exception("no such name"); // FIXME: use a different exception
   }
 
-  public void Set(string name, object value)
-  { if(Locals.Contains(name)) Locals[name]=value;
-    else if(Parent!=null) Parent.Set(name, value);
-    else Globals[name]=value;
+  public bool Get(string name, out object value)
+  { value = Globals[name];
+    return value!=null || Globals.Contains(name);
   }
 
-  public void SetGlobal(string name, object value) { Globals[name]=value; }
+  public void Set(string name, object value)
+  { if(!Globals.Contains(name)) throw new Exception("no such name"); // FIXME: ex
+    Globals[name]=value;
+  }
 
-  public Frame Parent;
-  public IDictionary Locals, Globals;
-  
-  [ThreadStatic]
-  public static Frame Current;
+  public void Unbind(string name) { Globals.Remove(name); }
+
+  public Hashtable Globals;
+}
+
+public sealed class LocalLevel : Environment
+{ public LocalLevel(Environment parent, int numSlots) { Parent=parent; Slots=new object[numSlots]; }
+
+  public object[] Slots;
+}
+#endregion
+
+#region EvalStack
+public sealed class EvalStack
+{ public EvalStack() { Objs=new object[8]; }
+
+  public void Push(object obj)
+  { if(Length==Objs.Length)
+    { object[] narr = new object[Length*2];
+      Array.Copy(Objs, narr, Length);
+      Objs = narr;
+    }
+    Objs[Length++] = obj;
+  }
+
+  public object[] Objs;
+  public int Length;
 }
 #endregion
 

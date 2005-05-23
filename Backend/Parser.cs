@@ -28,17 +28,17 @@ public sealed class Parser
   public static Parser FromString(string text) { return new Parser("<string>", text); }
 
   public Pair Parse()
-  { Pair tail=Modules.Builtins.cons(null, null), list=Modules.Builtins.cons(Symbol.Get("if"), Modules.Builtins.cons(null, tail));
+  { Pair list=null, tail=null;
 
     while(token!=Token.EOF)
     { object item = ParseOne();
       Pair next = Modules.Builtins.cons(item, null);
-      tail.Cdr  = next;
-      tail      = next;
+      if(tail==null) list=tail=next;
+      else { tail.Cdr=next; tail=next; }
     }
     return list;
   }
-  
+
   void Eat(Token type) { if(token!=type) Unexpected(token, type); NextToken(); }
   void Expect(Token type) { if(token!=type) Unexpected(token); }
 

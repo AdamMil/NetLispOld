@@ -25,10 +25,10 @@ public sealed class AST
     node.Preprocess();
     return node;
   }
-  
+
   public static long NextIndex { get { lock(indexLock) return index++; } }
 
-  static Node Parse(object obj)
+  static Node Parse(object obj, bool tail)
   { Symbol sym = obj as Symbol;
     if(sym!=null) return new VariableNode(sym.Name);
 
@@ -59,6 +59,22 @@ public sealed class AST
           sym = pair.Car as Symbol;
           if(sym==null) throw new Exception("set must set symbol"); // FIXME: SyntaxException
           return new SetNode(sym.Name, ParseBody((Pair)pair.Cdr));
+        }
+        case "define":
+        { if(Modules.Builtins.length(pair)!=3) throw new Exception("wrong number for define"); // FIXME: ex
+          pair = (Pair)pair.Cdr;
+          sym = pair.Car as Symbol;
+          if(sym!=null) return new DefineNode(sym.Name, ParseBody((Pair)pair.Cdr)); // (define name value)
+          Pair names = (Pair)pair.Car;
+          if(names.Cdr is Symbol) // (define (name . list) body ...)
+            return new DefineNode(((Symbol)names.Car).Name,
+                                  new LambdaNode(new string[] { ((Symbol)names.Cdr).Name },
+                                                 true, ParseBody((Pair)pair.Cdr)));
+          else // define (name a0 a1 ...) body ...)
+          { bool hasList;
+            return new DefineNode(sym.Name, new LambdaNode(ParseLambaList((Pair)names.Cdr, out hasList),
+                                                            hasList, ParseBody((Pair)pair.Cdr)));
+          }
         }
       }
 
@@ -130,8 +146,12 @@ public abstract class Node
   public abstract object Evaluate();
 
   public virtual void Preprocess()
-  {
+  { MarkTail();
   }
+  
+  public bool Tail;
+  
+  protected abstract void MarkTail();
 }
 
 public sealed class BodyNode : Node
@@ -151,6 +171,8 @@ public sealed class BodyNode : Node
   }
 
   public readonly Node[] Forms;
+  
+  protected override void MarkTail() { Forms[Forms.Length-1].MarkTail(); }
 }
 
 public sealed class CallNode : Node
@@ -173,6 +195,30 @@ public sealed class CallNode : Node
 
   public readonly Node Function;
   public readonly Node[] Args;
+
+  protected override void MarkTail() { }
+}
+
+public sealed class DefineNode : Node
+{ public DefineNode(string name, Node value) { Name=new Name(name, Scope.Global); Value=value; }
+
+  public override void Emit(CodeGenerator cg)
+  { cg.EmitFieldGet(typeof(Frame), "Current");
+    cg.EmitString(Name.String);
+    Value.Emit(cg);
+    cg.EmitCall(typeof(Frame), "BindGlobal");
+  }
+
+  public override object Evaluate()
+  { object value = Value.Evaluate();
+    Frame.Current.BindGlobal(Name.String, value);
+    return value;
+  }
+
+  public readonly Name Name;
+  public readonly Node Value;
+  
+  protected override void MarkTail() { Value.MarkTail(); }
 }
 
 public sealed class IfNode : Node
@@ -196,12 +242,17 @@ public sealed class IfNode : Node
   }
 
   public readonly Node Test, IfTrue, IfFalse;
+  
+  protected override void MarkTail()
+  { IfTrue.MarkTail();
+    if(IfFalse!=null) IfFalse.MarkTail();
+  }
 }
 
 public sealed class LambdaNode : Node
 { public LambdaNode(string[] names, bool hasList, Node body)
   { Parameters = new Name[names.Length];
-    for(int i=0; i<names.Length; i++) Parameters[i] = new Name(names[i]);
+    for(int i=0; i<names.Length; i++) Parameters[i] = new Name(names[i], Scope.Local);
     this.names = names;
 
     Body=body; HasList=hasList;
@@ -238,6 +289,8 @@ public sealed class LambdaNode : Node
   public readonly Name[] Parameters, Inherit;
   public readonly Node Body;
   public readonly bool HasList;
+
+  protected override void MarkTail() { Body.MarkTail(); }
 
   CodeGenerator MakeImplMethod(CodeGenerator cg)
   { CodeGenerator icg;
@@ -331,6 +384,8 @@ public sealed class SetNode : Node
 
   public readonly Name Name;
   public readonly Node Value;
+  
+  protected override void MarkTail() { Value.MarkTail(); }
 }
 
 public sealed class VariableNode : Node

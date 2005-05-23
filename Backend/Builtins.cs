@@ -30,6 +30,11 @@ public sealed class Builtins
     if(next==null) throw new Exception(); // FIXME: ex
     return next.Car;
   }
+  public static object cdar(Pair p)
+  { Pair next = p.Car as Pair;
+    if(next==null) throw new Exception(); // FIXME: ex
+    return next.Cdr;
+  }
   public static object cddr(Pair p)
   { Pair next = p.Cdr as Pair;
     if(next==null) throw new Exception(); // FIXME: ex
@@ -66,8 +71,11 @@ public sealed class Builtins
     if(pair==null) return form;
     Symbol sym = pair.Car as Symbol;
     if(sym!=null)
-    { Function func = Frame.Current.Globals[sym.Name] as Function;
-      if(func!=null && func.Macro) return func.Call(form, expander);
+    { object obj;
+      if(Frame.Current.Get(sym.Name, out obj))
+      { Function func = obj as Function;
+        if(func!=null && func.Macro) return func.Call(form, expander);
+      }
     }
     return map(new ixLambda((ICallable)expander), pair);
   }
@@ -75,7 +83,7 @@ public sealed class Builtins
   [SymbolName("install-expander")]
   public static object installExpander(Symbol sym, Function func)
   { func.Macro = true;
-    Frame.Current.Set(sym.Name, func);
+    Frame.Current.Bind(sym.Name, func);
     return sym;
   }
 
