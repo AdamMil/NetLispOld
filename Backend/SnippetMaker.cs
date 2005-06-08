@@ -22,7 +22,7 @@ public sealed class SnippetMaker
   public static Snippet Generate(Node body, string typeName)
   { TypeGenerator tg = Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed, typeName, typeof(Snippet));
     CodeGenerator cg = tg.DefineMethodOverride(typeof(Snippet).GetMethod("Run"), true);
-    cg.Namespace = new FrameNamespace(cg);
+    cg.Namespace = new TopLevelNamespace(cg);
     body.Emit(cg);
     cg.EmitReturn();
     cg.Finish();

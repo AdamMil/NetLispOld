@@ -12,6 +12,12 @@ public sealed class TypeGenerator
   { Assembly=assembly; TypeBuilder=typeBuilder;
   }
 
+  public CodeGenerator DefineConstructor(Type[] types) { return DefineConstructor(MethodAttributes.Public, types); }
+  public CodeGenerator DefineConstructor(MethodAttributes attrs, Type[] types)
+  { ConstructorBuilder cb = TypeBuilder.DefineConstructor(attrs, CallingConventions.Standard, types);
+    return new CodeGenerator(this, cb, cb.GetILGenerator());
+  }
+
   public CodeGenerator DefineChainedConstructor(ConstructorInfo parent)
   { ParameterInfo[] pi = parent.GetParameters();
     Type[] types = GetParamTypes(pi);
@@ -35,9 +41,9 @@ public sealed class TypeGenerator
     return new CodeGenerator(this, cb, cb.GetILGenerator());
   }
 
-  public Slot DefineField(string name, Type type) { return DefineField(name, type, FieldAttributes.Public); }
-  public Slot DefineField(string name, Type type, FieldAttributes access)
-  { return new FieldSlot(new ThisSlot(TypeBuilder), TypeBuilder.DefineField(name, type, access));
+  public Slot DefineField(string name, Type type) { return DefineField(FieldAttributes.Public, name, type); }
+  public Slot DefineField(FieldAttributes attrs, string name, Type type)
+  { return new FieldSlot(new ThisSlot(TypeBuilder), TypeBuilder.DefineField(name, type, attrs));
   }
 
   public CodeGenerator DefineMethod(string name, Type retType, Type[] paramTypes)
@@ -75,7 +81,10 @@ public sealed class TypeGenerator
   }
 
   public Slot DefineStaticField(string name, Type type)
-  { return new StaticSlot(TypeBuilder.DefineField(name, type, FieldAttributes.Public|FieldAttributes.Static));
+  { return DefineStaticField(FieldAttributes.Public, name, type);
+  }
+  public Slot DefineStaticField(FieldAttributes attrs, string name, Type type)
+  { return new StaticSlot(TypeBuilder.DefineField(name, type, attrs|FieldAttributes.Static));
   }
 
   public Type FinishType()
@@ -86,6 +95,15 @@ public sealed class TypeGenerator
     Type ret = TypeBuilder.CreateType();
     if(nestedTypes!=null) foreach(TypeGenerator tg in nestedTypes) tg.FinishType();
     return ret;
+  }
+
+  public bool GetNamedConstant(string name, Type type, out Slot slot)
+  { slot = (Slot)namedConstants[name];
+    if(slot==null)
+    { slot = new StaticSlot(TypeBuilder.DefineField("c$"+numConstants++, type, FieldAttributes.Static));
+      return false;
+    }
+    return true;
   }
 
   public Slot GetConstant(object value)
@@ -103,7 +121,7 @@ public sealed class TypeGenerator
     }
 
     if(slot==null)
-    { FieldBuilder fb = TypeBuilder.DefineField("c$"+constants.Count, typeof(object), FieldAttributes.Static);
+    { FieldBuilder fb = TypeBuilder.DefineField("c$"+numConstants++, typeof(object), FieldAttributes.Static);
       slot = new StaticSlot(fb);
       if(hash) constants[value] = slot;
       else { constobjs.Add(value); constslots.Add(slot); }
@@ -158,8 +176,9 @@ public sealed class TypeGenerator
     return paramTypes;
   }
 
-  HybridDictionary constants = new HybridDictionary();
+  HybridDictionary constants=new HybridDictionary(), namedConstants=new HybridDictionary();
   ArrayList nestedTypes, constobjs, constslots;
+  int numConstants;
   CodeGenerator initGen;
 }
 
