@@ -41,6 +41,41 @@ public sealed class ArgSlot : Slot
 }
 #endregion
 
+#region EnvironmentSlot
+public sealed class EnvironmentSlot : Slot
+{ public EnvironmentSlot(int pos) { this.pos=pos; }
+
+  public override Type Type { get { return typeof(object); } }
+
+  public override void EmitGet(CodeGenerator cg)
+  { cg.EmitFieldGet(typeof(LocalEnvironment), "Values");
+    cg.EmitInt(pos);
+    cg.ILG.Emit(OpCodes.Ldelem_Ref);
+  }
+  
+  public override void EmitGetAddr(CodeGenerator cg)
+  { cg.EmitFieldGet(typeof(LocalEnvironment), "Values");
+    cg.EmitInt(pos);
+    cg.ILG.Emit(OpCodes.Ldelema);
+  }
+
+  public override void EmitSet(CodeGenerator cg)
+  { Slot temp = cg.AllocLocalTemp(typeof(object));
+    temp.EmitSet(cg);
+    EmitSet(cg, temp);
+    cg.FreeLocalTemp(temp);
+  }
+
+  public override void EmitSet(CodeGenerator cg, Slot val)
+  { cg.EmitInt(pos);
+    val.EmitGet(cg);
+    cg.ILG.Emit(OpCodes.Stelem_Ref);
+  }
+
+  int pos;
+}
+#endregion
+
 #region FieldSlot
 public sealed class FieldSlot : Slot
 { public FieldSlot(FieldInfo fi) { Info=fi; }
@@ -76,13 +111,13 @@ public sealed class FieldSlot : Slot
 }
 #endregion
 
-#region FrameObjectSlot
-public sealed class FrameObjectSlot : Slot
-{ public override Type Type { get { return typeof(Frame); } }
+#region TopLevelSlot
+public sealed class TopLevelSlot : Slot
+{ public override Type Type { get { return typeof(TopLevel); } }
 
-  public override void EmitGet(CodeGenerator cg) { cg.EmitFieldGet(typeof(Frame), "Current"); }
-  public override void EmitGetAddr(CodeGenerator cg) { cg.EmitFieldGetAddr(typeof(Frame), "Current"); }
-  public override void EmitSet(CodeGenerator cg) { cg.EmitFieldSet(typeof(Frame), "Current"); }
+  public override void EmitGet(CodeGenerator cg) { cg.EmitPropGet(typeof(Environment), "Top"); }
+  public override void EmitGetAddr(CodeGenerator cg) { throw new NotSupportedException(); }
+  public override void EmitSet(CodeGenerator cg) { cg.EmitPropSet(typeof(Environment), "Top"); }
 }
 #endregion
 
@@ -113,7 +148,7 @@ public sealed class NamedFrameSlot : Slot
   public override void EmitGet(CodeGenerator cg)
   { Frame.EmitGet(cg);
     cg.EmitString(Name);
-    cg.EmitCall(typeof(Frame), "GetGlobal", new Type[] { typeof(string) });
+    cg.EmitCall(typeof(TopLevel), "Get", new Type[] { typeof(string) });
   }
   
   public override void EmitGetAddr(CodeGenerator cg)
@@ -131,7 +166,7 @@ public sealed class NamedFrameSlot : Slot
   { Frame.EmitGet(cg);
     cg.EmitString(Name);
     val.EmitGet(cg);
-    cg.EmitCall(typeof(Frame), "SetGlobal");
+    cg.EmitCall(typeof(TopLevel), "Set");
   }
 
   public Slot Frame;

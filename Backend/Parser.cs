@@ -36,8 +36,51 @@ public sealed class Parser
       if(tail==null) list=tail=next;
       else { tail.Cdr=next; tail=next; }
     }
-    return list;
+    return Modules.Builtins.cons(Symbol.Get("if"), Modules.Builtins.cons(null, Modules.Builtins.cons(null, list)));
   }
+
+  public object ParseOne()
+  { switch(token)
+    { case Token.LParen:
+        if(NextToken()==Token.RParen) { NextToken(); return null; }
+        else
+        { ArrayList items = new ArrayList();
+          object dot = null;
+          do
+          { items.Add(ParseOne());
+            if(TryEat(Token.Period)) { dot=ParseOne(); break; }
+          }
+          while(token!=Token.RParen && token!=Token.EOF);
+          if(items.Count==0 && dot!=null) SyntaxError("malformed dotted list");
+          Eat(Token.RParen);
+          return Ops.DottedList(dot, (object[])items.ToArray(typeof(object)));
+        }
+      case Token.Symbol:
+      { object val=value;
+        NextToken();
+        return Symbol.Get((string)val);
+      }
+      case Token.Literal:
+      { object val=value;
+        NextToken();
+        return val;
+      }
+      case Token.BackQuote: NextToken(); return Ops.List(Symbol.Get("quasiquote"), ParseOne());
+      case Token.Comma: NextToken(); return Ops.List(Symbol.Get("unquote"), ParseOne());
+      case Token.Quote: NextToken(); return Ops.List(Symbol.Get("quote"), ParseOne());
+      case Token.Splice: NextToken(); return Ops.List(Symbol.Get("unquote-splicing"), ParseOne());
+      case Token.Vector:
+      { ArrayList items = new ArrayList();
+        NextToken();
+        while(!TryEat(Token.RParen)) items.Add(ParseOne());
+        return Ops.List2(Symbol.Get("vector"), (object[])items.ToArray(typeof(object)));
+      }
+      case Token.EOF: return EOF;
+      default: SyntaxError("unexpected token: "+token); return null;
+    }
+  }
+  
+  public static readonly object EOF = "<EOF>";
 
   void Eat(Token type) { if(token!=type) Unexpected(token, type); NextToken(); }
   void Expect(Token type) { if(token!=type) Unexpected(token); }
@@ -116,46 +159,6 @@ public sealed class Parser
     return token;
   }
 
-  object ParseOne()
-  { switch(token)
-    { case Token.LParen:
-        if(NextToken()==Token.RParen) { NextToken(); return null; }
-        else
-        { ArrayList items = new ArrayList();
-          object dot = null;
-          do
-          { items.Add(ParseOne());
-            if(TryEat(Token.Period)) { dot=ParseOne(); break; }
-          }
-          while(token!=Token.RParen && token!=Token.EOF);
-          if(items.Count==0 && dot!=null) SyntaxError("malformed dotted list");
-          Eat(Token.RParen);
-          return Ops.DottedList(dot, (object[])items.ToArray(typeof(object)));
-        }
-      case Token.Symbol:
-      { object val=value;
-        NextToken();
-        return Symbol.Get((string)val);
-      }
-      case Token.Literal:
-      { object val=value;
-        NextToken();
-        return val;
-      }
-      case Token.BackQuote: NextToken(); return Ops.List(Symbol.Get("quasiquote"), ParseOne());
-      case Token.Comma: NextToken(); return Ops.List(Symbol.Get("unquote"), ParseOne());
-      case Token.Quote: NextToken(); return Ops.List(Symbol.Get("quote"), ParseOne());
-      case Token.Splice: NextToken(); return Ops.List(Symbol.Get("unquote-splicing"), ParseOne());
-      case Token.Vector:
-      { ArrayList items = new ArrayList();
-        NextToken();
-        while(!TryEat(Token.RParen)) items.Add(ParseOne());
-        return Ops.List2(Symbol.Get("vector"), (object[])items.ToArray(typeof(object)));
-      }
-      default: SyntaxError("unexpected token: "+token); return null;
-    }
-  }
-  
   char ReadChar()
   { char c;
     if(lastChar!=0) { c=lastChar; lastChar='\0'; return c; }
@@ -296,6 +299,7 @@ public sealed class Parser
         case ')': return Token.RParen;
         case '\'': return Token.Quote;
         case '\0': return Token.EOF;
+        case ';': while((c=ReadChar())!='\n' && c!=0); break;
         default:
         { StringBuilder sb = new StringBuilder();
           do

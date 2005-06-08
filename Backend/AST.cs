@@ -7,18 +7,6 @@ using System.Reflection.Emit;
 namespace NetLisp.Backend
 {
 
-public enum Scope : byte { Free, Local, Global, Temporary }
-
-public sealed class Name
-{ public Name(string name) { String=name; Scope=Scope.Free; }
-  public Name(string name, Scope scope) { String=name; Scope=scope; }
-
-  public override int GetHashCode() { return String.GetHashCode(); }
-
-  public string String;
-  public Scope  Scope;
-}
-
 public sealed class AST
 { public static Node Create(object obj)
   { Node node = Parse(obj);
@@ -28,7 +16,7 @@ public sealed class AST
 
   public static long NextIndex { get { lock(indexLock) return index++; } }
 
-  static Node Parse(object obj, bool tail)
+  static Node Parse(object obj)
   { Symbol sym = obj as Symbol;
     if(sym!=null) return new VariableNode(sym.Name);
 
@@ -72,8 +60,9 @@ public sealed class AST
                                                  true, ParseBody((Pair)pair.Cdr)));
           else // define (name a0 a1 ...) body ...)
           { bool hasList;
-            return new DefineNode(sym.Name, new LambdaNode(ParseLambaList((Pair)names.Cdr, out hasList),
-                                                            hasList, ParseBody((Pair)pair.Cdr)));
+            return new DefineNode(((Symbol)names.Car).Name,
+                                  new LambdaNode(ParseLambaList((Pair)names.Cdr, out hasList),
+                                                 hasList, ParseBody((Pair)pair.Cdr)));
           }
         }
       }
@@ -143,7 +132,7 @@ public sealed class AST
 
 public abstract class Node
 { public abstract void Emit(CodeGenerator cg);
-  public abstract object Evaluate();
+  public virtual object Evaluate() { throw new NotSupportedException(); }
 
   public virtual void Preprocess()
   { MarkTail();
@@ -151,7 +140,7 @@ public abstract class Node
   
   public bool Tail;
   
-  protected abstract void MarkTail();
+  internal virtual void MarkTail() { }
 }
 
 public sealed class BodyNode : Node
@@ -172,7 +161,7 @@ public sealed class BodyNode : Node
 
   public readonly Node[] Forms;
   
-  protected override void MarkTail() { Forms[Forms.Length-1].MarkTail(); }
+  internal override void MarkTail() { Forms[Forms.Length-1].MarkTail(); }
 }
 
 public sealed class CallNode : Node
@@ -180,8 +169,11 @@ public sealed class CallNode : Node
 
   public override void Emit(CodeGenerator cg)
   { Function.Emit(cg);
-    cg.EmitObjectArray(Args);
-    cg.EmitCall(typeof(Ops), "Call", new Type[] { typeof(object), typeof(object[]) });
+    cg.ILG.Emit(OpCodes.Castclass, typeof(ICallable));
+    if(Args.Length==0) cg.EmitFieldGet(typeof(Ops), "EmptyArray");
+    else cg.EmitObjectArray(Args);
+    if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
+    cg.EmitCall(typeof(ICallable), "Call", new Type[] { typeof(object[]) });
   }
 
   public override object Evaluate()
@@ -195,30 +187,27 @@ public sealed class CallNode : Node
 
   public readonly Node Function;
   public readonly Node[] Args;
-
-  protected override void MarkTail() { }
 }
 
 public sealed class DefineNode : Node
-{ public DefineNode(string name, Node value) { Name=new Name(name, Scope.Global); Value=value; }
+{ public DefineNode(string name, Node value) { Name=name; Value=value; }
 
   public override void Emit(CodeGenerator cg)
-  { cg.EmitFieldGet(typeof(Frame), "Current");
-    cg.EmitString(Name.String);
+  { cg.EmitPropGet(typeof(Environment), "Top");
+    cg.EmitString(Name);
     Value.Emit(cg);
-    cg.EmitCall(typeof(Frame), "BindGlobal");
+    cg.EmitCall(typeof(TopLevel), "Bind");
+
+    cg.Namespace.GetGlobalSlot(Name); // side effect of creating the slot
+
+    cg.EmitString(Name);
+    cg.EmitCall(typeof(Symbol), "Get");
   }
 
-  public override object Evaluate()
-  { object value = Value.Evaluate();
-    Frame.Current.BindGlobal(Name.String, value);
-    return value;
-  }
-
-  public readonly Name Name;
+  public readonly string Name;
   public readonly Node Value;
-  
-  protected override void MarkTail() { Value.MarkTail(); }
+
+  internal override void MarkTail() { Value.MarkTail(); }
 }
 
 public sealed class IfNode : Node
@@ -243,85 +232,65 @@ public sealed class IfNode : Node
 
   public readonly Node Test, IfTrue, IfFalse;
   
-  protected override void MarkTail()
+  internal override void MarkTail()
   { IfTrue.MarkTail();
     if(IfFalse!=null) IfFalse.MarkTail();
   }
 }
 
 public sealed class LambdaNode : Node
-{ public LambdaNode(string[] names, bool hasList, Node body)
-  { Parameters = new Name[names.Length];
-    for(int i=0; i<names.Length; i++) Parameters[i] = new Name(names[i], Scope.Local);
-    this.names = names;
-
-    Body=body; HasList=hasList;
-  }
+{ public LambdaNode(string[] names, bool hasList, Node body) { Parameters=names; Body=body; HasList=hasList; }
 
   public override void Emit(CodeGenerator cg)
   { index = AST.NextIndex;
     CodeGenerator impl = MakeImplMethod(cg);
-    
-    string[] names = new string[Parameters.Length];
-    for(int i=0; i<names.Length; i++) names[i] = Parameters[i].String;
 
-    cg.EmitStringArray(names);
-    cg.EmitBool(HasList);
-    if(Inherit==null)
-    { cg.ILG.Emit(OpCodes.Ldnull); // create delegate
-      cg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)impl.MethodBase);
-      cg.EmitNew((ConstructorInfo)typeof(CallTargetN).GetMember(".ctor")[0]); // FIXME: make this more portable
-      cg.EmitNew(typeof(CompiledFunctionN), new Type[] { typeof(string[]), typeof(bool), typeof(CallTargetN) });
+    Slot tmpl;
+    if(!cg.TypeGenerator.GetNamedConstant("template"+index, typeof(Template), out tmpl))
+    { CodeGenerator icg = cg.TypeGenerator.GetInitializer();
+      icg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)impl.MethodBase);
+      icg.EmitStringArray(Parameters);
+      icg.EmitBool(HasList);
+      icg.EmitNew(typeof(Template), new Type[] { typeof(IntPtr), typeof(string[]), typeof(bool) });
+      tmpl.EmitSet(icg);
     }
-    else
-    { Type type = impl.TypeGenerator.TypeBuilder;
-      cg.EmitNew(type, new Type[] { typeof(string[]), typeof(bool) });
-      for(int i=0; i<Inherit.Length; i++)
-      { cg.ILG.Emit(OpCodes.Dup);
-        cg.Namespace.GetSlotForGet(Inherit[i]).EmitGet(cg);
-        cg.EmitFieldSet(((FieldSlot)impl.Namespace.GetLocalSlot(Inherit[i])).Info);
-      }
-    }
+
+    tmpl.EmitGet(cg);
+    cg.EmitFieldGet(typeof(Environment), "Current");
+    cg.EmitNew(RG.ClosureType, new Type[] { typeof(Template), typeof(Environment) });
   }
 
-  public override object Evaluate() { return new LambdaFunction(Frame.Current, names, HasList, Body); }
-
-  public readonly Name[] Parameters, Inherit;
+  public readonly string[] Parameters;
   public readonly Node Body;
   public readonly bool HasList;
 
-  protected override void MarkTail() { Body.MarkTail(); }
+  internal override void MarkTail() { Body.MarkTail(); }
 
   CodeGenerator MakeImplMethod(CodeGenerator cg)
   { CodeGenerator icg;
-    Slot[] closedSlots=null;
-    if(Inherit==null || Inherit.Length==0)
-      icg = cg.TypeGenerator.DefineMethod("lambda$" + index, typeof(object), new Type[] { typeof(object[]) });
-    else
-    { closedSlots = new Slot[Inherit.Length];
-      TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
-                                                          "cfunc$"+index, typeof(CompiledFunction));
-      for(int i=0; i<Inherit.Length; i++) closedSlots[i] = tg.DefineField("cv$"+AST.NextIndex, typeof(object));
+    icg = cg.TypeGenerator.DefineMethod("lambda$" + index, typeof(object), new Type[] { typeof(object[]) });
 
-      CodeGenerator ccg = tg.DefineChainedConstructor(typeof(CompiledFunction).GetConstructors()[0]);
-      ccg.EmitReturn();
-      ccg.Finish();
-
-      icg = tg.DefineMethodOverride(typeof(CompiledFunction), "DoCall", true);
+    if(Parameters.Length!=0)
+    { icg.Namespace = new EnvironmentNamespace(cg.Namespace, icg, Parameters);
+      icg.EmitFieldGet(typeof(Environment), "Current");
+      icg.EmitArgGet(0);
+      icg.EmitNew(typeof(LocalEnvironment), new Type[] { typeof(Environment), typeof(object[]) });
+      icg.EmitFieldSet(typeof(Environment), "Current");
     }
 
-    LocalNamespace ns = new LocalNamespace(cg.Namespace, icg);
-    icg.Namespace = ns;
-    ns.SetArgs(Parameters, icg, new ArgSlot((MethodBuilder)icg.MethodBase, 0, "$names", typeof(object[])));
-    if(Inherit!=null) ns.AddClosedVars(Inherit, closedSlots);
     Body.Emit(icg);
+
+    if(Parameters.Length!=0)
+    { icg.EmitFieldGet(typeof(Environment), "Current");
+      icg.EmitFieldGet(typeof(Environment), "Parent");
+      icg.EmitFieldSet(typeof(Environment), "Current");
+    }
+
     icg.EmitReturn();
     icg.Finish();
-    if(Inherit!=null) icg.TypeGenerator.FinishType();
     return icg;
   }
 
-  readonly string[] names;
   long index;
 }
 
@@ -368,7 +337,7 @@ public sealed class Options
 }
 
 public sealed class SetNode : Node
-{ public SetNode(string name, Node value) { Name=new Name(name); Value=value; }
+{ public SetNode(string name, Node value) { Name=name; Value=value; }
 
   public override void Emit(CodeGenerator cg)
   { Value.Emit(cg);
@@ -376,23 +345,16 @@ public sealed class SetNode : Node
     cg.EmitSet(Name);
   }
 
-  public override object Evaluate()
-  { object value = Value.Evaluate();
-    Frame.Current.Set(Name.String, value);
-    return value;
-  }
-
-  public readonly Name Name;
+  public readonly string Name;
   public readonly Node Value;
   
-  protected override void MarkTail() { Value.MarkTail(); }
+  internal override void MarkTail() { Value.MarkTail(); }
 }
 
 public sealed class VariableNode : Node
-{ public VariableNode(string name) { Name=new Name(name); }
+{ public VariableNode(string name) { Name=name; }
   public override void Emit(CodeGenerator cg) { cg.EmitGet(Name); }
-  public override object Evaluate() { return Frame.Current.Get(Name.String); }
-  public readonly Name Name;
+  public readonly string Name;
 }
 
 } // namespace NetLisp.Backend

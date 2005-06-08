@@ -81,9 +81,18 @@ public sealed class CodeGenerator
   public void EmitFieldSet(Type type, string name) { EmitFieldSet(type.GetField(name)); }
   public void EmitFieldSet(FieldInfo field) { ILG.Emit(field.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, field); }
 
-  public void EmitGet(Name name) { Namespace.GetSlotForGet(name).EmitGet(this); }
-  public void EmitSet(Name name) { Namespace.GetSlotForSet(name).EmitSet(this); }
-  
+  public void EmitGet(string name)
+  { Namespace ns = EmitEnvironmentFor(name);
+    Slot slot = ns==null ? Namespace.GetSlotForGet(name) : ns.GetLocalSlot(name);
+    slot.EmitGet(this);
+  }
+
+  public void EmitSet(string name)
+  { Namespace ns = EmitEnvironmentFor(name);
+    Slot slot = ns==null ? Namespace.GetSlotForSet(name) : ns.GetLocalSlot(name);
+    slot.EmitSet(this);
+  }
+
   public void EmitPropGet(Type type, string name) { EmitPropGet(type.GetProperty(name)); }
   public void EmitPropGet(PropertyInfo pi) { EmitCall(pi.GetGetMethod()); }
   public void EmitPropSet(Type type, string name) { EmitPropSet(type.GetProperty(name)); }
@@ -196,8 +205,8 @@ public sealed class CodeGenerator
 
   public void FreeLocalTemp(Slot slot) { localTemps.Add(slot); }
 
-  public void SetArgs(Name[] names) { Namespace.SetArgs(names, 0, MethodBase); }
-  public void SetArgs(Name[] names, int offset) { Namespace.SetArgs(names, offset, MethodBase); }
+  public void SetArgs(string[] names) { Namespace.SetArgs(names, 0, MethodBase); }
+  public void SetArgs(string[] names, int offset) { Namespace.SetArgs(names, offset, MethodBase); }
 
   public Namespace Namespace;
   public bool IsGenerator;
@@ -205,6 +214,20 @@ public sealed class CodeGenerator
   public readonly TypeGenerator TypeGenerator;
   public readonly MethodBase MethodBase;
   public readonly ILGenerator   ILG;
+
+  Namespace EmitEnvironmentFor(string name)
+  { Namespace ns=Namespace;
+    int depth=0;
+    while(ns is EnvironmentNamespace && !ns.Contains(name)) { depth++; ns=ns.Parent; }
+
+    if(ns is EnvironmentNamespace)
+    { EmitFieldGet(typeof(Environment), "Current");
+      while(depth--!=0) EmitFieldGet(typeof(Environment), "Parent");
+      ILG.Emit(OpCodes.Castclass, typeof(LocalEnvironment));
+      return ns;
+    }
+    else return null;
+  }
 
   ArrayList localTemps;
 }

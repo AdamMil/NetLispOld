@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
 using System.Collections.Specialized;
+using System.Reflection;
+using System.Reflection.Emit;
 
 namespace NetLisp.Backend
 {
@@ -42,16 +44,6 @@ public interface IHasAttributes
 }
 #endregion
 
-#region Continuation
-public sealed class Continuation
-{ public Environment Environment;
-  public Continuation Parent;
-  public MethodInfo Method; // probably wrong
-  public int Index;
-  public EvalStack Stack;
-}
-#endregion
-
 #region Enums
 [Flags]
 public enum Conversion
@@ -60,15 +52,106 @@ public enum Conversion
 }
 #endregion
 
-#region Environment
-public abstract class Environment
-{ public readonly Environment Parent;
-
-  public static Environment Current;
+public abstract class Closure : ICallable
+{ public abstract object Call(params object[] args);
+  public Template Template;
+  public Environment Environment;
 }
 
-public sealed class TopLevel : Environment
-{ public TopLevel() { Globals=new Hashtable(); }
+#region RG (stuff that can't be written in C#)
+public sealed class RG
+{ static RG()
+  { TypeGenerator tg;
+    CodeGenerator cg;
+
+    #region Closure
+    { tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed, "ClosureF", typeof(Closure));
+
+      cg = tg.DefineConstructor(new Type[] { typeof(Template), typeof(Environment) });
+      cg.EmitThis();
+      cg.EmitArgGet(0);
+      cg.EmitFieldSet(typeof(Closure), "Template");
+      cg.EmitThis();
+      cg.EmitArgGet(1);
+      cg.EmitFieldSet(typeof(Closure), "Environment");
+      cg.EmitReturn();
+      cg.Finish();
+
+      cg = tg.DefineMethodOverride(typeof(Closure), "Call", true);
+      cg.EmitThis();
+      cg.EmitFieldGet(typeof(Closure), "Template");
+      cg.EmitArgGet(0);
+      cg.EmitCall(typeof(Template), "FixArgs");
+
+      cg.EmitThis();
+      cg.EmitFieldGet(typeof(Closure), "Template");
+      cg.EmitFieldGet(typeof(Template), "FuncPtr");
+      cg.ILG.Emit(OpCodes.Tailcall);
+      cg.ILG.EmitCalli(OpCodes.Calli, CallingConventions.Standard, typeof(object),
+                       new Type[] { typeof(object[]) }, null);
+      cg.EmitReturn();
+      cg.Finish();
+
+      ClosureType = tg.FinishType();
+    }
+    #endregion
+  }
+
+  public static readonly Type ClosureType;
+}
+#endregion
+
+#region Environment
+public abstract class Environment
+{ public Environment(Environment parent) { Parent=parent; }
+
+  public readonly Environment Parent;
+
+  public static TopLevel Top
+  { get
+    { Environment env = Current;
+      while(env.Parent!=null) env=env.Parent;
+      return (TopLevel)env;
+    }
+  }
+
+  [ThreadStatic] public static Environment Current;
+}
+
+public abstract class DynamicEnvironment : Environment
+{ protected DynamicEnvironment(Environment parent) : base(parent) { }
+  public abstract bool Get(string name, out object value);
+  public abstract void Set(string name, object value);
+}
+
+public sealed class CompileEnvironment : DynamicEnvironment
+{ public CompileEnvironment(Environment parent) : base(parent) { Dict=new HybridDictionary(); }
+
+  public void Bind(string name, object value) { Dict[name] = value; }
+  public bool Contains(string name) { return Dict.Contains(name); }
+
+  public object Get(string name)
+  { object ret;
+    if(!Get(name, out ret)) throw new Exception("no such name"); // FIXME: use a different exception
+    return ret;
+  }
+
+  public override bool Get(string name, out object value)
+  { value = Dict[name];
+    if(value!=null || Dict.Contains(name)) return true;
+    else return ((DynamicEnvironment)Parent).Get(name, out value);
+  }
+
+  public override void Set(string name, object value)
+  { if(Dict.Contains(name)) Dict[name]=value;
+    else ((DynamicEnvironment)Parent).Set(name, value);
+  }
+
+  public HybridDictionary Dict;
+}
+
+public sealed class TopLevel : DynamicEnvironment
+{ public TopLevel() : base(null) { Globals=new Hashtable(); }
 
   public void Bind(string name, object value) { Globals[name] = value; }
   public bool Contains(string name) { return Globals.Contains(name); }
@@ -79,12 +162,12 @@ public sealed class TopLevel : Environment
     throw new Exception("no such name"); // FIXME: use a different exception
   }
 
-  public bool Get(string name, out object value)
+  public override bool Get(string name, out object value)
   { value = Globals[name];
     return value!=null || Globals.Contains(name);
   }
 
-  public void Set(string name, object value)
+  public override void Set(string name, object value)
   { if(!Globals.Contains(name)) throw new Exception("no such name"); // FIXME: ex
     Globals[name]=value;
   }
@@ -94,28 +177,9 @@ public sealed class TopLevel : Environment
   public Hashtable Globals;
 }
 
-public sealed class LocalLevel : Environment
-{ public LocalLevel(Environment parent, int numSlots) { Parent=parent; Slots=new object[numSlots]; }
-
-  public object[] Slots;
-}
-#endregion
-
-#region EvalStack
-public sealed class EvalStack
-{ public EvalStack() { Objs=new object[8]; }
-
-  public void Push(object obj)
-  { if(Length==Objs.Length)
-    { object[] narr = new object[Length*2];
-      Array.Copy(Objs, narr, Length);
-      Objs = narr;
-    }
-    Objs[Length++] = obj;
-  }
-
-  public object[] Objs;
-  public int Length;
+public sealed class LocalEnvironment : Environment
+{ public LocalEnvironment(Environment parent, object[] values) : base(parent) { Values=values; }
+  public readonly object[] Values;
 }
 #endregion
 
@@ -127,8 +191,8 @@ public sealed class Ops
   { return new AttributeErrorException(string.Format(format, args));
   }
 
-  public static object Call(string name) { return Call(Frame.Current.GetGlobal(name), EmptyArray); }
-  public static object Call(string name, params object[] args) { return Call(Frame.Current.GetGlobal(name), args); }
+  public static object Call(string name) { return Call(GetGlobal(name), EmptyArray); }
+  public static object Call(string name, params object[] args) { return Call(GetGlobal(name), args); }
 
   public static object Call(object func, object[] args)
   { ICallable f = func as ICallable;
@@ -213,7 +277,8 @@ public sealed class Ops
     return d==null ? desc : d.Get(instance);
   }
 
-  public static object GetGlobal(string name) { return Frame.Current.GetGlobal(name); }
+  public static object GetGlobal(string name) { return Environment.Top.Get(name); }
+  public static bool GetGlobal(string name, out object value) { return Environment.Top.Get(name, out value); }
 
   public static bool IsTrue(object a)
   { switch(Convert.GetTypeCode(a))
@@ -377,6 +442,35 @@ public sealed class Symbol
   }
   
   public override string ToString() { return Name; }
+}
+#endregion
+
+#region Template
+public sealed class Template
+{ public Template(IntPtr func, string[] paramNames, bool hasList)
+  { FuncPtr=func; ParamNames=paramNames; HasList=hasList;
+  }
+
+  public object[] FixArgs(object[] args)
+  { if(HasList)
+    { int positional = ParamNames.Length-1;
+      if(args.Length<positional) throw new Exception("too few arguments"); // FIXME: use other exception
+      else if(args.Length!=positional)
+      { object[] nargs = new object[ParamNames.Length];
+        Array.Copy(args, nargs, positional);
+        nargs[positional] = Ops.ListSlice(positional, args);
+        args = nargs;
+      }
+      else args[positional] = Modules.Builtins.cons(args[positional], null);
+    }
+    else if(args.Length!=ParamNames.Length) throw new Exception("wrong number of arguments"); // FIXME: use other exception  }
+    return args;
+  }
+
+  public readonly string[] ParamNames;
+  public readonly IntPtr FuncPtr;
+  public readonly bool HasList;
+  public bool Macro;
 }
 #endregion
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using NetLisp.Backend;
 
 namespace NetLisp.Frontend
@@ -6,20 +7,20 @@ namespace NetLisp.Frontend
 
 public class App
 { static void Main()
-  { Frame.Current = new Frame(new System.Collections.Specialized.HybridDictionary(),
-                              new System.Collections.Hashtable(ReflectedType.FromType(typeof(NetLisp.Backend.Modules.Builtins)).Dict));
+  { Backend.Environment.Current = new TopLevel();
+    foreach(DictionaryEntry de in ReflectedType.FromType(typeof(NetLisp.Backend.Modules.Builtins)).Dict)
+      Backend.Environment.Top.Bind((string)de.Key, de.Value);
+
     try
-    { //Console.WriteLine(Ops.Repr(Ops.CompileRaw(Parser.FromString(syntax).Parse()).Run()));
-      //NetLisp.Backend.Modules.Builtins.eval(Parser.FromString(stdlib).Parse());
-      
+    { NetLisp.Backend.Modules.Builtins.eval(Parser.FromString(stdlib).Parse());
+
       string line;
-      //while((line=Console.ReadLine()) != null) Console.WriteLine(Ops.Repr(NetLisp.Backend.Modules.Builtins.eval(Parser.FromString(line).Parse())));
-      while((line=Console.ReadLine()) != null) Console.WriteLine(Ops.Repr(Ops.CompileRaw(Parser.FromString(syntax).Parse()).Run()));
+      while((line=Console.ReadLine()) != null) Console.WriteLine(Ops.Repr(NetLisp.Backend.Modules.Builtins.eval(Parser.FromString(line).Parse())));
     }
     finally /*catch(InvalidProgramException)*/ { SnippetMaker.DumpAssembly(); }
   }
 
-  static string syntax = @"
+  static string stdlib = @"
 (install-expander 'quasiquote
   (lambda (x e)
     ((lambda (_quasi _combine _isconst?)
@@ -48,9 +49,12 @@ public class App
                        (list 'cons lft rgt))))))
        (e (_quasi (cdr x)) e))
      nil nil (lambda (obj) (if (pair? obj) (eq? (car obj) 'quote) #f)))))
-";
 
-  static string stdlib = @"
+(define (caar x) (car (car x)))
+(define (cadr x) (car (cdr x)))
+(define (cdar x) (cdr (car x)))
+(define (cddr x) (cdr (cdr x)))
+
 (define (caaar x) (car (car (car x))))
 (define (caadr x) (car (car (cdr x))))
 (define (cadar x) (car (cdr (car x))))
@@ -132,8 +136,8 @@ public class App
       (if (not (pair? alist))
           (error ""2nd argument to assoc not a list: "" alist)
           (if (equal? (caar alist) obj) (car alist)
-              (assoc obj (cdr alist))))))
-
+              (assoc obj (cdr alist))))))";
+/*
 ; Numbers
 
 (define (number->string num . radix )
@@ -672,7 +676,7 @@ public class App
     (if (pair? objs) 
         (begin (#_display (car objs) port) (display** (cdr objs)))))
   (display** (if (output-port? first) rest (cons first rest))))
-";
+";*/
 }
 
 } // namespace NetLisp.Frontend

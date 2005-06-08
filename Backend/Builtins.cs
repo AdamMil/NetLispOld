@@ -57,8 +57,8 @@ public sealed class Builtins
 
   [SymbolName("expander?")]
   public static bool expanderP(object obj)
-  { Function func = obj as Function;
-    return func!=null && func.Macro;
+  { Closure clos = obj as Closure;
+    return clos!=null && clos.Template.Macro;
   }
 
   [SymbolName("inexact->exact")]
@@ -68,22 +68,22 @@ public sealed class Builtins
   public static object initialExpander(object form, ICallable expander)
   { if(expander==null) throw new ArgumentNullException("expander");
     Pair pair = form as Pair;
-    if(pair==null) return form;
+    if(pair==null || pair.Cdr!=null && !(pair.Cdr is Pair)) return form;
     Symbol sym = pair.Car as Symbol;
     if(sym!=null)
     { object obj;
-      if(Frame.Current.Get(sym.Name, out obj))
-      { Function func = obj as Function;
-        if(func!=null && func.Macro) return func.Call(form, expander);
+      if(Ops.GetGlobal(sym.Name, out obj))
+      { Closure clos = obj as Closure;
+        if(clos!=null && clos.Template.Macro) return clos.Call(form, expander);
       }
     }
     return map(new ixLambda((ICallable)expander), pair);
   }
 
   [SymbolName("install-expander")]
-  public static object installExpander(Symbol sym, Function func)
-  { func.Macro = true;
-    Frame.Current.Bind(sym.Name, func);
+  public static object installExpander(Symbol sym, Closure func)
+  { func.Template.Macro = true;
+    Environment.Top.Bind(sym.Name, func);
     return sym;
   }
 
@@ -140,6 +140,9 @@ public sealed class Builtins
   }
 
   public static bool not(object obj) { return !Ops.IsTrue(obj); }
+
+  [SymbolName("null?")]
+  public static bool nullP(object obj) { return obj==null; }
 
   [SymbolName("pair?")]
   public static bool pairP(object obj) { return obj is Pair; }
