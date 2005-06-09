@@ -52,6 +52,18 @@ public enum Conversion
 }
 #endregion
 
+public sealed class Binding
+{ public Binding(string name) { Value=Unbound; Name=name; }
+
+  public override bool Equals(object obj) { return this==obj; }
+  public override int GetHashCode() { return Name.GetHashCode(); }
+
+  public object Value;
+  public string Name;
+
+  public readonly static object Unbound = "<UNBOUND>";
+}
+
 public abstract class Closure : ICallable
 { public abstract object Call(LocalEnvironment unused, params object[] args);
   public Template Template;
@@ -107,26 +119,38 @@ public sealed class RG
 public sealed class TopLevel
 { public TopLevel() { Globals=new Hashtable(); }
 
-  public void Bind(string name, object value) { Globals[name] = value; }
+  public void Bind(string name, object value)
+  { Binding bind = (Binding)Globals[name];
+    if(bind==null) Globals[name] = bind = new Binding(name);
+    bind.Value = value;
+  }
+
   public bool Contains(string name) { return Globals.Contains(name); }
 
   public object Get(string name)
-  { object obj = Globals[name];
-    if(obj!=null || Globals.Contains(name)) return obj;
-    throw new Exception("no such name"); // FIXME: use a different exception
+  { Binding obj = (Binding)Globals[name];
+    if(obj==null || obj.Value==Binding.Unbound) throw new Exception("no such name"); // FIXME: use a different exception
+    return obj.Value;
   }
 
   public bool Get(string name, out object value)
-  { value = Globals[name];
-    return value!=null || Globals.Contains(name);
+  { Binding obj = (Binding)Globals[name];
+    if(obj==null || obj.Value==Binding.Unbound) { value=null; return false; }
+    value = obj.Value;
+    return true;
+  }
+
+  public Binding GetBinding(string name)
+  { Binding obj = (Binding)Globals[name];
+    if(obj==null) Globals[name] = obj = new Binding(name);
+    return obj;
   }
 
   public void Set(string name, object value)
-  { if(!Globals.Contains(name)) throw new Exception("no such name"); // FIXME: ex
-    Globals[name]=value;
+  { Binding obj = (Binding)Globals[name];
+    if(obj==null) throw new Exception("no such name"); // FIXME: ex
+    obj.Value = value;
   }
-
-  public void Unbind(string name) { Globals.Remove(name); }
 
   public Hashtable Globals;
   
@@ -205,9 +229,9 @@ public sealed class Ops
   }
 
   public static Pair DottedList(object last, params object[] items)
-  { Pair head=Modules.Builtins.cons(items[0], null), tail=head;
+  { Pair head=new Pair(items[0], null), tail=head;
     for(int i=1; i<items.Length; i++)
-    { Pair next=Modules.Builtins.cons(items[i], null);
+    { Pair next=new Pair(items[i], null);
       tail.Cdr = next;
       tail     = next;
     }
@@ -215,6 +239,26 @@ public sealed class Ops
     return head;
   }
 
+  public static void ExpectAtLeast(int num, object[] args)
+  { if(args.Length<num) throw new ArgumentException("Expected at least "+num.ToString()+" arguments");
+  }
+
+  public static void ExpectExactly(int num, object[] args)
+  { if(args.Length!=num) throw new ArgumentException("Expected "+num.ToString()+" arguments");
+  }
+
+  public static ICallable ExpectFunction(object obj)
+  { ICallable ret = obj as ICallable;
+    if(ret!=null) return ret;
+    throw new ArgumentException("Expected function");
+  }
+
+  public static Pair ExpectPair(object obj)
+  { Pair ret = obj as Pair;
+    if(ret!=null) return ret;
+    throw new ArgumentException("Expected pair");
+  }
+  
   public static object FastCadr(Pair pair) { return ((Pair)pair.Cdr).Car; }
   public static object FastCddr(Pair pair) { return ((Pair)pair.Cdr).Cdr; }
 
@@ -270,17 +314,27 @@ public sealed class Ops
   public static Pair ListSlice(int start, params object[] items)
   { if(items.Length<=start) return null;
     Pair pair = null;
-    for(int i=items.Length-1; i>=0; i--) pair = Modules.Builtins.cons(items[i], pair);
+    for(int i=items.Length-1; i>=0; i--) pair = new Pair(items[i], pair);
     return pair;
   }
   
-  public static Pair List2(object first, params object[] items) { return Modules.Builtins.cons(first, List(items)); }
+  public static Pair List2(object first, params object[] items) { return new Pair(first, List(items)); }
 
   public static object[] ListToArray(Pair pair)
   { if(pair==null) return EmptyArray;
     ArrayList items = new ArrayList();
     while(pair!=null) { items.Add(pair.Car); pair = pair.Cdr as Pair; }
     return (object[])items.ToArray(typeof(object));
+  }
+
+  public static int Length(Pair pair)
+  { int total=1;
+    while(true)
+    { pair = pair.Cdr as Pair;
+      if(pair==null) break;
+      total++;
+    }
+    return total;
   }
 
   public static Delegate MakeDelegate(object callable, Type delegateType)
@@ -421,7 +475,7 @@ public sealed class Template
         nargs[positional] = Ops.ListSlice(positional, args);
         args = nargs;
       }
-      else args[positional] = Modules.Builtins.cons(args[positional], null);
+      else args[positional] = new Pair(args[positional], null);
     }
     else if(args.Length!=ParamNames.Length) throw new Exception("wrong number of arguments"); // FIXME: use other exception  }
     return args;

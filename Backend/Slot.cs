@@ -146,13 +146,15 @@ public sealed class NamedFrameSlot : Slot
   public override Type Type { get { return typeof(object); } }
 
   public override void EmitGet(CodeGenerator cg)
-  { Frame.EmitGet(cg);
-    cg.EmitString(Name);
-    cg.EmitCall(typeof(TopLevel), "Get", new Type[] { typeof(string) });
+  { SetupBinding(cg);
+    Binding.EmitGet(cg);
+    cg.EmitFieldGet(typeof(Binding), "Value");
   }
   
   public override void EmitGetAddr(CodeGenerator cg)
-  { throw new NotSupportedException("address of frame slot");
+  { SetupBinding(cg);
+    Binding.EmitGet(cg);
+    cg.EmitFieldGetAddr(typeof(Binding), "Value");
   }
 
   public override void EmitSet(CodeGenerator cg)
@@ -163,14 +165,21 @@ public sealed class NamedFrameSlot : Slot
   }
 
   public override void EmitSet(CodeGenerator cg, Slot val)
-  { Frame.EmitGet(cg);
-    cg.EmitString(Name);
+  { SetupBinding(cg);
+    Binding.EmitGet(cg);
     val.EmitGet(cg);
-    cg.EmitCall(typeof(TopLevel), "Set");
+    cg.EmitFieldSet(typeof(Binding), "Value");
   }
 
-  public Slot Frame;
+  public Slot Frame, Binding;
   public string Name;
+
+  void SetupBinding(CodeGenerator cg)
+  { if(Binding==null)
+    { if(TopLevel.Current!=null) Binding = cg.TypeGenerator.GetConstant(TopLevel.Current.GetBinding(Name));
+      else Binding = cg.TypeGenerator.GetConstant(new Binding(Name));
+    }
+  }
 }
 #endregion
 
