@@ -50,7 +50,7 @@ public sealed class Builtins
   public static object eval(object obj)
   { Snippet snip = obj as Snippet;
     if(snip==null) snip = compile(obj);
-    return snip.Run();
+    return snip.Run(null);
   }
 
   public static object expand(object form) { return initialExpander(form, _initialExpander); }
@@ -74,7 +74,7 @@ public sealed class Builtins
     { object obj;
       if(Ops.GetGlobal(sym.Name, out obj))
       { Closure clos = obj as Closure;
-        if(clos!=null && clos.Template.Macro) return clos.Call(form, expander);
+        if(clos!=null && clos.Template.Macro) return clos.Call(clos.Environment, form, expander);
       }
     }
     return map(new ixLambda((ICallable)expander), pair);
@@ -83,7 +83,7 @@ public sealed class Builtins
   [SymbolName("install-expander")]
   public static object installExpander(Symbol sym, Closure func)
   { func.Template.Macro = true;
-    Environment.Top.Bind(sym.Name, func);
+    TopLevel.Current.Bind(sym.Name, func);
     return sym;
   }
 
@@ -125,15 +125,17 @@ public sealed class Builtins
   }
 
   public static Pair map(ICallable func, params Pair[] pairs)
-  { object[] args = new object[pairs.Length];
+  { Closure clos = func as Closure;
     Pair head=null, tail=null;
+    object[] args = new object[pairs.Length];
+
     while(true)
     { for(int i=0; i<pairs.Length; i++)
       { if(pairs[i]==null) return head;
         args[i] = pairs[i].Car;
         pairs[i] = pairs[i].Cdr as Pair;
       }
-      Pair next = cons(func.Call(args), null);
+      Pair next = cons(clos==null ? func.Call(null, args) : clos.Call(clos.Environment, args), null);
       if(head==null) head=tail=next;
       else { tail.Cdr=next; tail=next; }
     }
@@ -150,9 +152,9 @@ public sealed class Builtins
   sealed class ixLambda : ICallable
   { public ixLambda(ICallable expander) { this.expander=expander; }
     
-    public object Call(params object[] args)
+    public object Call(LocalEnvironment unused, params object[] args)
     { if(args.Length!=1) throw new Exception(); // FIXME: ex
-      return expander.Call(args[0], expander);
+      return Ops.Call(expander, args[0], expander);
     }
 
     ICallable expander;

@@ -7,6 +7,11 @@ using System.Reflection.Emit;
 namespace NetLisp.Backend
 {
 
+public interface IWalker
+{ void PostWalk(Node node);
+  bool Walk(Node node);
+}
+
 public sealed class AST
 { public static Node Create(object obj)
   { Node node = Parse(obj);
@@ -49,10 +54,14 @@ public sealed class AST
           return new SetNode(sym.Name, ParseBody((Pair)pair.Cdr));
         }
         case "define":
-        { if(Modules.Builtins.length(pair)!=3) throw new Exception("wrong number for define"); // FIXME: ex
+        { int length = Modules.Builtins.length(pair);
+          if(length<3) throw new Exception("wrong number for define"); // FIXME: ex
           pair = (Pair)pair.Cdr;
           sym = pair.Car as Symbol;
-          if(sym!=null) return new DefineNode(sym.Name, ParseBody((Pair)pair.Cdr)); // (define name value)
+          if(sym!=null)
+          { if(length!=3) throw new Exception("wrong number for define"); // FIXME: ex
+            return new DefineNode(sym.Name, ParseBody((Pair)pair.Cdr)); // (define name value)
+          }
           Pair names = (Pair)pair.Car;
           if(names.Cdr is Symbol) // (define (name . list) body ...)
             return new DefineNode(((Symbol)names.Car).Name,
@@ -135,12 +144,40 @@ public abstract class Node
   public virtual object Evaluate() { throw new NotSupportedException(); }
 
   public virtual void Preprocess()
-  { MarkTail();
+  { MarkTail(true);
+    Walk(new NodeDecorator());
+  }
+  
+  public virtual void Walk(IWalker w)
+  { w.Walk(this);
+    w.PostWalk(this);
   }
   
   public bool Tail;
+
+  internal virtual void MarkTail(bool tail) { Tail=tail; }
+
+  protected LambdaNode InFunc;
   
-  internal virtual void MarkTail() { }
+  sealed class NodeDecorator : IWalker
+  { public bool Walk(Node node)
+    { node.InFunc = func;
+
+      if(node is LambdaNode)
+      { LambdaNode old = func;
+        func = (LambdaNode)node;
+        func.Body.Walk(this);
+        func = old;
+      }
+      return true;
+    }
+    
+    public void PostWalk(Node node)
+    {
+    }
+    
+    LambdaNode func;
+  }
 }
 
 public sealed class BodyNode : Node
@@ -159,9 +196,16 @@ public sealed class BodyNode : Node
     return ret;
   }
 
+  public override void Walk(IWalker w)
+  { if(w.Walk(this)) foreach(Node n in Forms) n.Walk(w);
+    w.PostWalk(this);
+  }
+
   public readonly Node[] Forms;
   
-  internal override void MarkTail() { Forms[Forms.Length-1].MarkTail(); }
+  internal override void MarkTail(bool tail)
+  { for(int i=0; i<Forms.Length; i++) Forms[i].MarkTail(tail && i==Forms.Length-1);
+  }
 }
 
 public sealed class CallNode : Node
@@ -170,58 +214,78 @@ public sealed class CallNode : Node
   public override void Emit(CodeGenerator cg)
   { Function.Emit(cg);
     cg.ILG.Emit(OpCodes.Castclass, typeof(ICallable));
+    cg.EmitArgGet(0);
     if(Args.Length==0) cg.EmitFieldGet(typeof(Ops), "EmptyArray");
     else cg.EmitObjectArray(Args);
     if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
-    cg.EmitCall(typeof(ICallable), "Call", new Type[] { typeof(object[]) });
+    cg.EmitCall(typeof(ICallable), "Call");
+    // FIXME: if we call a non-lisp function, it won't do a proper return sequence
+    if(Tail) cg.EmitReturn();
   }
 
-  public override object Evaluate()
-  { ICallable func = Function.Evaluate() as ICallable;
-    if(func==null) throw new Exception("not a function"); // FIXME: use other exception
-    
-    object[] args = new object[Args.Length];
-    for(int i=0; i<args.Length; i++) args[i] = Args[i].Evaluate();
-    return func.Call(args);
+  public override void Walk(IWalker w)
+  { if(w.Walk(this))
+    { Function.Walk(w);
+      foreach(Node n in Args) n.Walk(w);
+    }
+    w.PostWalk(this);
   }
 
   public readonly Node Function;
   public readonly Node[] Args;
+  
+  internal override void MarkTail(bool tail)
+  { Tail=tail;
+    Function.MarkTail(false);
+    foreach(Node n in Args) n.MarkTail(false);
+  }
 }
 
 public sealed class DefineNode : Node
 { public DefineNode(string name, Node value) { Name=name; Value=value; }
 
   public override void Emit(CodeGenerator cg)
-  { cg.EmitPropGet(typeof(Environment), "Top");
+  { cg.EmitFieldGet(typeof(TopLevel), "Current");
     cg.EmitString(Name);
     Value.Emit(cg);
     cg.EmitCall(typeof(TopLevel), "Bind");
-
     cg.Namespace.GetGlobalSlot(Name); // side effect of creating the slot
+    cg.EmitConstant(Symbol.Get(Name));
+    if(Tail) cg.EmitReturn();
+  }
 
-    cg.EmitString(Name);
-    cg.EmitCall(typeof(Symbol), "Get");
+  public override void Walk(IWalker w)
+  { if(w.Walk(this)) Value.Walk(w);
+    w.PostWalk(this);
   }
 
   public readonly string Name;
   public readonly Node Value;
-
-  internal override void MarkTail() { Value.MarkTail(); }
+  
+  internal override void MarkTail(bool tail) { Tail=tail; Value.MarkTail(false); }
 }
 
 public sealed class IfNode : Node
 { public IfNode(Node test, Node iftrue, Node iffalse) { Test=test; IfTrue=iftrue; IfFalse=iffalse; }
 
   public override void Emit(CodeGenerator cg)
-  { Label end=cg.ILG.DefineLabel(), falselbl=cg.ILG.DefineLabel();
+  { Label end = IfFalse==null ? new Label() : cg.ILG.DefineLabel();
+    Label falselbl = cg.ILG.DefineLabel();
+
     cg.EmitIsTrue(Test);
     cg.ILG.Emit(OpCodes.Brfalse, falselbl);
     IfTrue.Emit(cg);
-    cg.ILG.Emit(OpCodes.Br, end);
-    cg.ILG.MarkLabel(falselbl);
-    cg.EmitExpression(IfFalse);
-    cg.ILG.MarkLabel(end);
+    if(IfFalse==null)
+    { cg.ILG.MarkLabel(falselbl);
+      if(Tail) cg.ILG.Emit(OpCodes.Ldnull);
+    }
+    else
+    { cg.ILG.Emit(OpCodes.Br, end);
+      cg.ILG.MarkLabel(falselbl);
+      cg.EmitExpression(IfFalse);
+      cg.ILG.MarkLabel(end);
+    }
+    if(Tail) cg.EmitReturn();
   }
 
   public override object Evaluate()
@@ -230,11 +294,22 @@ public sealed class IfNode : Node
     else return null;
   }
 
+  public override void Walk(IWalker w)
+  { if(w.Walk(this))
+    { Test.Walk(w);
+      IfTrue.Walk(w);
+      if(IfFalse!=null) IfFalse.Walk(w);
+    }
+    w.PostWalk(this);
+  }
+
   public readonly Node Test, IfTrue, IfFalse;
   
-  internal override void MarkTail()
-  { IfTrue.MarkTail();
-    if(IfFalse!=null) IfFalse.MarkTail();
+  internal override void MarkTail(bool tail)
+  { Tail=tail;
+    Test.MarkTail(false);
+    IfTrue.MarkTail(tail);
+    if(IfFalse!=null) IfFalse.MarkTail(tail);
   }
 }
 
@@ -249,44 +324,47 @@ public sealed class LambdaNode : Node
     if(!cg.TypeGenerator.GetNamedConstant("template"+index, typeof(Template), out tmpl))
     { CodeGenerator icg = cg.TypeGenerator.GetInitializer();
       icg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)impl.MethodBase);
-      icg.EmitStringArray(Parameters);
+      icg.EmitConstant(Parameters);
       icg.EmitBool(HasList);
       icg.EmitNew(typeof(Template), new Type[] { typeof(IntPtr), typeof(string[]), typeof(bool) });
       tmpl.EmitSet(icg);
     }
 
     tmpl.EmitGet(cg);
-    cg.EmitFieldGet(typeof(Environment), "Current");
-    cg.EmitNew(RG.ClosureType, new Type[] { typeof(Template), typeof(Environment) });
+    cg.EmitArgGet(0);
+    cg.EmitNew(RG.ClosureType, new Type[] { typeof(Template), typeof(LocalEnvironment) });
+    if(Tail) cg.EmitReturn();
+  }
+
+  public override void Walk(IWalker w)
+  { if(w.Walk(this)) Body.Walk(w);
+    w.PostWalk(this);
   }
 
   public readonly string[] Parameters;
   public readonly Node Body;
   public readonly bool HasList;
 
-  internal override void MarkTail() { Body.MarkTail(); }
+  internal override void MarkTail(bool tail)
+  { Tail=tail;
+    Body.MarkTail(true);
+  }
 
   CodeGenerator MakeImplMethod(CodeGenerator cg)
   { CodeGenerator icg;
-    icg = cg.TypeGenerator.DefineMethod("lambda$" + index, typeof(object), new Type[] { typeof(object[]) });
+    icg = cg.TypeGenerator.DefineMethod("lambda$" + index, typeof(object),
+                                        new Type[] { typeof(LocalEnvironment), typeof(object[]) });
 
-    if(Parameters.Length!=0)
+    if(Parameters.Length==0) icg.Namespace = cg.Namespace;
+    else
     { icg.Namespace = new EnvironmentNamespace(cg.Namespace, icg, Parameters);
-      icg.EmitFieldGet(typeof(Environment), "Current");
       icg.EmitArgGet(0);
-      icg.EmitNew(typeof(LocalEnvironment), new Type[] { typeof(Environment), typeof(object[]) });
-      icg.EmitFieldSet(typeof(Environment), "Current");
+      icg.EmitArgGet(1);
+      icg.EmitNew(typeof(LocalEnvironment), new Type[] { typeof(LocalEnvironment), typeof(object[]) });
+      icg.EmitArgSet(0);
     }
 
     Body.Emit(icg);
-
-    if(Parameters.Length!=0)
-    { icg.EmitFieldGet(typeof(Environment), "Current");
-      icg.EmitFieldGet(typeof(Environment), "Parent");
-      icg.EmitFieldSet(typeof(Environment), "Current");
-    }
-
-    icg.EmitReturn();
     icg.Finish();
     return icg;
   }
@@ -312,6 +390,8 @@ public sealed class ListNode : Node
     }
     pair.EmitGet(cg);
     cg.FreeLocalTemp(pair);
+
+    if(Tail) cg.EmitReturn();
   }
 
   public override object Evaluate()
@@ -319,14 +399,25 @@ public sealed class ListNode : Node
     for(int i=Items.Length-1; i>=0; i--) obj = Modules.Builtins.cons(Items[i].Evaluate(), obj);
     return obj;
   }
-  
+
+  public override void Walk(IWalker w)
+  { if(w.Walk(this))
+    { foreach(Node n in Items) n.Walk(w);
+      if(Dot!=null) Dot.Walk(w);
+    }
+    w.PostWalk(this);
+  }
+
   public readonly Node[] Items;
   public readonly Node Dot;
 }
 
 public sealed class LiteralNode : Node
 { public LiteralNode(object value) { Value=value; }
-  public override void Emit(CodeGenerator cg) { cg.EmitConstant(Value); }
+  public override void Emit(CodeGenerator cg)
+  { cg.EmitConstant(Value);
+    if(Tail) cg.EmitReturn();
+  }
   public override object Evaluate() { return Value; }
   public readonly object Value;
 }
@@ -343,17 +434,31 @@ public sealed class SetNode : Node
   { Value.Emit(cg);
     cg.ILG.Emit(OpCodes.Dup);
     cg.EmitSet(Name);
+    if(Tail) cg.EmitReturn();
+  }
+
+  public override void Walk(IWalker w)
+  { if(w.Walk(this)) Value.Walk(w);
+    w.PostWalk(this);
   }
 
   public readonly string Name;
   public readonly Node Value;
-  
-  internal override void MarkTail() { Value.MarkTail(); }
+
+  internal override void MarkTail(bool tail)
+  { Tail=tail;
+    Value.MarkTail(tail);
+  }
 }
 
 public sealed class VariableNode : Node
 { public VariableNode(string name) { Name=name; }
-  public override void Emit(CodeGenerator cg) { cg.EmitGet(Name); }
+
+  public override void Emit(CodeGenerator cg)
+  { cg.EmitGet(Name);
+    if(Tail) cg.EmitReturn();
+  }
+
   public readonly string Name;
 }
 

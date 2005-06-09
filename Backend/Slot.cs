@@ -115,9 +115,9 @@ public sealed class FieldSlot : Slot
 public sealed class TopLevelSlot : Slot
 { public override Type Type { get { return typeof(TopLevel); } }
 
-  public override void EmitGet(CodeGenerator cg) { cg.EmitPropGet(typeof(Environment), "Top"); }
-  public override void EmitGetAddr(CodeGenerator cg) { throw new NotSupportedException(); }
-  public override void EmitSet(CodeGenerator cg) { cg.EmitPropSet(typeof(Environment), "Top"); }
+  public override void EmitGet(CodeGenerator cg) { cg.EmitFieldGet(typeof(TopLevel), "Current"); }
+  public override void EmitGetAddr(CodeGenerator cg) { cg.EmitFieldGetAddr(typeof(TopLevel), "Current"); }
+  public override void EmitSet(CodeGenerator cg) { cg.EmitFieldSet(typeof(TopLevel), "Current"); }
 }
 #endregion
 

@@ -108,20 +108,35 @@ public sealed class TypeGenerator
 
   public Slot GetConstant(object value)
   { Slot slot;
-    bool hash = Convert.GetTypeCode(value)!=TypeCode.Object || !(value is Symbol || value is Pair);
+    bool hash = Convert.GetTypeCode(value)!=TypeCode.Object || value is Symbol;
 
     if(hash) slot = (Slot)constants[value];
     else
     { if(constobjs==null) { constobjs = new ArrayList(); constslots = new ArrayList(); }
       else
-      { int index = constobjs.IndexOf(value);
+      { int index=-1;
+        if(value is string[])
+        { string[] val = (string[])value;
+          for(int i=0; i<constobjs.Count; i++)
+          { string[] other = constobjs[i] as string[];
+            if(other!=null && val.Length==other.Length)
+            { for(int j=0; j<val.Length; j++) if(val[j] != other[j]) goto nextSA;
+              index = i;
+              break;
+            }
+            nextSA:;
+          }
+        }
+        else index = constobjs.IndexOf(value);
+
         if(index!=-1) return (Slot)constslots[index];
       }
       slot = null;
     }
 
     if(slot==null)
-    { FieldBuilder fb = TypeBuilder.DefineField("c$"+numConstants++, typeof(object), FieldAttributes.Static);
+    { Type type = Convert.GetTypeCode(value)==TypeCode.Object ? value.GetType() : typeof(object);
+      FieldBuilder fb = TypeBuilder.DefineField("c$"+numConstants++, type, FieldAttributes.Static);
       slot = new StaticSlot(fb);
       if(hash) constants[value] = slot;
       else { constobjs.Add(value); constslots.Add(slot); }
@@ -164,6 +179,7 @@ public sealed class TypeGenerator
           cg.EmitString(sym.Name);
           cg.EmitCall(typeof(Symbol), "Get");
         }
+        else if(value is string[]) cg.EmitStringArray((string[])value);
         else goto default;
         break;
       default: throw new NotImplementedException("constant: "+value.GetType());
