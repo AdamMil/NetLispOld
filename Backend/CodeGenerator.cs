@@ -205,6 +205,12 @@ public sealed class CodeGenerator
 
   public void FreeLocalTemp(Slot slot) { localTemps.Add(slot); }
 
+  public bool IsGlobal(string name)
+  { Namespace ns=Namespace;
+    while(ns is EnvironmentNamespace && !ns.Contains(name)) ns=ns.Parent;
+    return !(ns is EnvironmentNamespace);
+  }
+
   public void SetArgs(string[] names) { Namespace.SetArgs(names, 0, MethodBase); }
   public void SetArgs(string[] names, int offset) { Namespace.SetArgs(names, offset, MethodBase); }
 

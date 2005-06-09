@@ -8,17 +8,15 @@ namespace NetLisp.Frontend
 public class App
 { static void Main()
   { TopLevel.Current = new TopLevel();
-    foreach(DictionaryEntry de in ReflectedType.FromType(typeof(NetLisp.Backend.Modules.Builtins)).Dict)
+    foreach(DictionaryEntry de in Builtins.GetProcedureDict())
       TopLevel.Current.Bind((string)de.Key, de.Value);
 
-    NetLisp.Backend.Modules.Builtins.eval(Parser.FromString(stdlib).Parse());
+    Builtins.eval(Parser.FromString(stdlib).Parse());
     while(true)
     { Console.Write(">>> ");
       string line = Console.ReadLine();
       if(line==null) break;
-      try
-      { Console.WriteLine(Ops.Repr(NetLisp.Backend.Modules.Builtins.eval(Parser.FromString(line).Parse())));
-      }
+      try { Console.WriteLine(Ops.Repr(Builtins.eval(Parser.FromString(line).Parse()))); }
       catch(InvalidProgramException) { break; }
       catch(Exception e) { Console.WriteLine("ERROR: "+e.ToString()); }
     }

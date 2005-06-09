@@ -32,29 +32,29 @@ public sealed class AST
     if(sym!=null)
       switch(sym.Name)
       { case "if":
-        { if(Modules.Builtins.length(pair)<3) throw new Exception("too few for if"); // FIXME: SyntaxException
+        { if(Ops.Length(pair)<3) throw new Exception("too few for if"); // FIXME: SyntaxException
           pair = (Pair)pair.Cdr;
           return new IfNode(Parse(pair.Car), Parse(Ops.FastCadr(pair)), ParseBody(Ops.FastCddr(pair) as Pair));
         }
         case "lambda":
-        { if(Modules.Builtins.length(pair)<3) throw new Exception("too few for lambda"); // FIXME: SyntaxException
+        { if(Ops.Length(pair)<3) throw new Exception("too few for lambda"); // FIXME: SyntaxException
           pair = (Pair)pair.Cdr;
           bool hasList;
           return new LambdaNode(ParseLambaList((Pair)pair.Car, out hasList), hasList, ParseBody((Pair)pair.Cdr));
         }
         case "quote":
-        { if(Modules.Builtins.length(pair)!=2) throw new Exception("wrong number for quote"); // FIXME: ex
+        { if(Ops.Length(pair)!=2) throw new Exception("wrong number for quote"); // FIXME: ex
           return Quote(Ops.FastCadr(pair));
         }
         case "set!":
-        { if(Modules.Builtins.length(pair)!=3) throw new Exception("wrong number for set!"); // FIXME: SyntaxException
+        { if(Ops.Length(pair)!=3) throw new Exception("wrong number for set!"); // FIXME: SyntaxException
           pair = (Pair)pair.Cdr;
           sym = pair.Car as Symbol;
           if(sym==null) throw new Exception("set must set symbol"); // FIXME: SyntaxException
           return new SetNode(sym.Name, ParseBody((Pair)pair.Cdr));
         }
         case "define":
-        { int length = Modules.Builtins.length(pair);
+        { int length = Ops.Length(pair);
           if(length<3) throw new Exception("wrong number for define"); // FIXME: ex
           pair = (Pair)pair.Cdr;
           sym = pair.Car as Symbol;
@@ -377,15 +377,16 @@ public sealed class ListNode : Node
 
   public override void Emit(CodeGenerator cg)
   { Slot pair = cg.AllocLocalTemp(typeof(Pair));
-    MethodInfo cons = typeof(Modules.Builtins).GetMethod("cons");
+    ConstructorInfo cons = typeof(Pair).GetConstructor(new Type[] { typeof(object), typeof(object) });
+
     cg.EmitExpression(Items[Items.Length-1]);
     cg.EmitExpression(Dot);
-    cg.EmitCall(cons);
+    cg.EmitNew(cons);
     pair.EmitSet(cg);
     for(int i=Items.Length-2; i>=0; i--)
     { Items[i].Emit(cg);
       pair.EmitGet(cg);
-      cg.EmitCall(cons);
+      cg.EmitNew(cons);
       pair.EmitSet(cg);
     }
     pair.EmitGet(cg);
@@ -396,7 +397,7 @@ public sealed class ListNode : Node
 
   public override object Evaluate()
   { object obj = Dot==null ? null : Dot.Evaluate();
-    for(int i=Items.Length-1; i>=0; i--) obj = Modules.Builtins.cons(Items[i].Evaluate(), obj);
+    for(int i=Items.Length-1; i>=0; i--) obj = new Pair(Items[i].Evaluate(), obj);
     return obj;
   }
 
@@ -447,7 +448,7 @@ public sealed class SetNode : Node
 
   internal override void MarkTail(bool tail)
   { Tail=tail;
-    Value.MarkTail(tail);
+    Value.MarkTail(false);
   }
 }
 

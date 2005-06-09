@@ -32,12 +32,12 @@ public sealed class Parser
 
     while(token!=Token.EOF)
     { object item = ParseOne();
-      Pair next = Modules.Builtins.cons(item, null);
+      Pair next = new Pair(item, null);
       if(tail==null) list=tail=next;
       else { tail.Cdr=next; tail=next; }
     }
     if(list.Cdr==null) return list.Car;
-    else return Modules.Builtins.cons(Symbol.Get("if"), Modules.Builtins.cons(null, Modules.Builtins.cons(null, list)));
+    else return new Pair(Symbol.Get("if"), new Pair(null, new Pair(null, list)));
   }
 
   public object ParseOne()
@@ -207,7 +207,7 @@ public sealed class Parser
     }
     else if(!m.Success) SyntaxError("invalid number");
 
-    if(str.IndexOf('.')!=-1) return exact=='e' ? Modules.Builtins.inexactToExact(double.Parse(str)) : double.Parse(str);
+    if(str.IndexOf('.')!=-1) return exact=='e' ? Builtins.inexactToExact(double.Parse(str)) : double.Parse(str);
     else
     { m = fracRegex.Match(str);
       if(m.Success) throw new NotImplementedException("fractions");

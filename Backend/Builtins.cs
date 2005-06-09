@@ -1,51 +1,107 @@
 using System;
 using System.Collections;
+using System.Reflection;
 
-namespace NetLisp.Backend.Modules
+namespace NetLisp.Backend
 {
 
 public sealed class Builtins
-{ static Builtins()
-  { IDictionary dict = ReflectedType.FromType(typeof(Builtins)).Dict;
-    _append = (ICallable)dict["append"];
-    _initialExpander = (ICallable)dict["initial-expander"];
+{ public static Hashtable GetProcedureDict()
+  { Hashtable dict = new Hashtable(ReflectedType.FromType(typeof(Builtins)).Dict);
+
+    foreach(Type type in typeof(Builtins).GetNestedTypes(BindingFlags.Public))
+      if(typeof(ICallable).IsAssignableFrom(type))
+      { string name;
+        object[] attrs = type.GetCustomAttributes(typeof(SymbolNameAttribute), false);
+        name = attrs.Length==0 ? type.Name : ((SymbolNameAttribute)attrs[0]).Name;
+        dict[name] = type.GetConstructor(Type.EmptyTypes).Invoke(null);
+      }
+
+    return dict;
   }
 
-  public static object apply(object func, Pair args) { return Ops.Call(func, Ops.ListToArray(args)); }
-
-  public static Pair append(params Pair[] pairs)
-  { if(pairs.Length==0) return null;
-    for(int i=0; i<pairs.Length-1; i++)
-    { pairs[i] = listCopy(pairs[i]);
-      last(pairs[i]).Cdr = pairs[i+1];
+  #region and
+  public sealed class and : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectAtLeast(1, args);
+      for(int i=0; i<args.Length; i++) if(!Ops.IsTrue(args[i])) return null;
+      return args[args.Length-1];
     }
-    return pairs[0];
   }
+  #endregion
 
-  public static object car(Pair p) { return p.Car; }
-  public static object cdr(Pair p) { return p.Cdr; }
+  #region apply
+  public sealed class apply : ICallable
+  { public object Call(LocalEnvironment func, object[] args)
+    { Ops.ExpectExactly(2, args);
+      return Ops.Call(args[0], Ops.ListToArray(Ops.ExpectPair(args[1])));
+    }
+  }
+  #endregion
+  
+  #region append
+  public sealed class append : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectAtLeast(2, args);
+      Pair head=null, prev=null;
+      int i;
+      for(i=0; i<args.Length-1; i++)
+      { Pair pair=Ops.ExpectPair(args[i]), tail=new Pair(pair.Car, pair.Cdr);
+        if(prev==null) head = tail;
+        else prev.Cdr = tail;
+        while(true)
+        { pair = pair.Cdr as Pair;
+          if(pair==null) break;
+          Pair next = new Pair(pair.Car, pair.Cdr);
+          tail.Cdr = next;
+          tail = next;
+        }
+        prev = tail;
+      }
+      prev.Cdr = args[i];
+      return head;
+    }
+  }
+  #endregion
 
-  public static object cadr(Pair p)
-  { Pair next = p.Cdr as Pair;
-    if(next==null) throw new Exception(); // FIXME: ex
-    return next.Car;
+  #region car
+  public sealed class car : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectExactly(1, args);
+      return Ops.ExpectPair(args[0]).Car;
+    }
   }
-  public static object cdar(Pair p)
-  { Pair next = p.Car as Pair;
-    if(next==null) throw new Exception(); // FIXME: ex
-    return next.Cdr;
+  #endregion
+
+  #region cdr
+  public sealed class cdr : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectExactly(1, args);
+      return Ops.ExpectPair(args[0]).Cdr;
+    }
   }
-  public static object cddr(Pair p)
-  { Pair next = p.Cdr as Pair;
-    if(next==null) throw new Exception(); // FIXME: ex
-    return next.Cdr;
-  }
+  #endregion
 
   public static Snippet compile(object obj) { return Ops.CompileRaw(Ops.Call("expand", obj)); }
-  public static Pair cons(object car, object cdr) { return new Pair(car, cdr); }
 
+  #region cons
+  public sealed class cons : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectExactly(2, args);
+      return new Pair(args[0], args[1]);
+    }
+  }
+  #endregion
+
+  #region eq?
   [SymbolName("eq?")]
-  public static bool eqP(object a, object b) { return a==b; }
+  public sealed class _eqP : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectExactly(2, args);
+      return args[0]==args[1];
+    }
+  }
+  #endregion
 
   public static object eval(object obj)
   { Snippet snip = obj as Snippet;
@@ -53,7 +109,9 @@ public sealed class Builtins
     return snip.Run(null);
   }
 
-  public static object expand(object form) { return initialExpander(form, _initialExpander); }
+  public static object expand(object form)
+  { return Ops.Call(initialExpander.Instance, form, initialExpander.Instance);
+  }
 
   [SymbolName("expander?")]
   public static bool expanderP(object obj)
@@ -64,21 +122,29 @@ public sealed class Builtins
   [SymbolName("inexact->exact")]
   public static object inexactToExact(object obj) { throw new NotImplementedException(); }
 
+  #region initial-expander
   [SymbolName("initial-expander")]
-  public static object initialExpander(object form, ICallable expander)
-  { if(expander==null) throw new ArgumentNullException("expander");
-    Pair pair = form as Pair;
-    if(pair==null || pair.Cdr!=null && !(pair.Cdr is Pair)) return form;
-    Symbol sym = pair.Car as Symbol;
-    if(sym!=null)
-    { object obj;
-      if(Ops.GetGlobal(sym.Name, out obj))
-      { Closure clos = obj as Closure;
-        if(clos!=null && clos.Template.Macro) return clos.Call(clos.Environment, form, expander);
+  public sealed class initialExpander : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectExactly(2, args);
+      ICallable expander = Ops.ExpectFunction(args[1]);
+
+      Pair pair = args[0] as Pair;
+      if(pair==null || pair.Cdr!=null && !(pair.Cdr is Pair)) return args[0];
+      Symbol sym = pair.Car as Symbol;
+      if(sym!=null)
+      { object obj;
+        if(Ops.GetGlobal(sym.Name, out obj))
+        { Closure clos = obj as Closure;
+          if(clos!=null && clos.Template.Macro) return clos.Call(clos.Environment, args[0], expander);
+        }
       }
+      return map(new _ixLambda(expander), pair);
     }
-    return map(new ixLambda((ICallable)expander), pair);
+    
+    public static readonly initialExpander Instance = new initialExpander();
   }
+  #endregion
 
   [SymbolName("install-expander")]
   public static object installExpander(Symbol sym, Closure func)
@@ -95,30 +161,25 @@ public sealed class Builtins
     }
   }
 
-  public static int length(object obj)
-  { Pair pair = obj as Pair;
-    if(pair!=null)
-    { int total=1;
-      while(true)
-      { pair = pair.Cdr as Pair;
-        if(pair==null) break;
-        total++;
-      }
-      return total;
+  #region length
+  public sealed class length : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectExactly(1, args);
+      Pair pair = args[0] as Pair;
+      if(pair!=null) return Ops.Length(pair);
+      else throw new ArgumentException("length: expects pair");
     }
-    else throw new Exception("unhandled type"); // FIXME: use another exception
   }
-
-  public static Pair list(params object[] items) { return Ops.List(items); }
+  #endregion
 
   [SymbolName("list-copy")]
   public static Pair listCopy(Pair list)
   { if(list==null) return null;
-    Pair head=cons(list.Car, list.Cdr), tail=head;
+    Pair head=new Pair(list.Car, list.Cdr), tail=head;
     while(true)
     { list = list.Cdr as Pair;
       if(list==null) return head;
-      Pair next = cons(list.Car, list.Cdr);
+      Pair next = new Pair(list.Car, list.Cdr);
       tail.Cdr = next;
       tail = next;
     }
@@ -135,22 +196,53 @@ public sealed class Builtins
         args[i] = pairs[i].Car;
         pairs[i] = pairs[i].Cdr as Pair;
       }
-      Pair next = cons(clos==null ? func.Call(null, args) : clos.Call(clos.Environment, args), null);
+      Pair next = new Pair(clos==null ? func.Call(null, args) : clos.Call(clos.Environment, args), null);
       if(head==null) head=tail=next;
       else { tail.Cdr=next; tail=next; }
     }
   }
 
-  public static bool not(object obj) { return !Ops.IsTrue(obj); }
+  #region not
+  public sealed class not : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectExactly(1, args);
+      return Ops.FromBool(!Ops.IsTrue(args[0]));
+    }
+  }
+  #endregion
 
+  #region null?
   [SymbolName("null?")]
-  public static bool nullP(object obj) { return obj==null; }
+  public sealed class nullP : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectExactly(1, args);
+      return args[0]==null;
+    }
+  }
+  #endregion
 
+  #region or
+  public sealed class or : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectAtLeast(1, args);
+      for(int i=0; i<args.Length; i++) if(Ops.IsTrue(args[i])) return args[i];
+      return null;
+    }
+  }
+  #endregion
+
+  #region pair?
   [SymbolName("pair?")]
-  public static bool pairP(object obj) { return obj is Pair; }
+  public sealed class pairP : ICallable
+  { public object Call(LocalEnvironment unused, object[] args)
+    { Ops.ExpectExactly(1, args);
+      return args[0] is Pair;
+    }
+  }
+  #endregion
   
-  sealed class ixLambda : ICallable
-  { public ixLambda(ICallable expander) { this.expander=expander; }
+  sealed class _ixLambda : ICallable
+  { public _ixLambda(ICallable expander) { this.expander=expander; }
     
     public object Call(LocalEnvironment unused, params object[] args)
     { if(args.Length!=1) throw new Exception(); // FIXME: ex
@@ -159,8 +251,6 @@ public sealed class Builtins
 
     ICallable expander;
   }
-
-  static readonly ICallable _append, _initialExpander;
 }
 
-} // namespace NetLisp.Backend.Modules
+} // namespace NetLisp.Backend

@@ -108,7 +108,7 @@ public sealed class TypeGenerator
 
   public Slot GetConstant(object value)
   { Slot slot;
-    bool hash = Convert.GetTypeCode(value)!=TypeCode.Object || value is Symbol;
+    bool hash = Convert.GetTypeCode(value)!=TypeCode.Object || value is Symbol || value is Binding;
 
     if(hash) slot = (Slot)constants[value];
     else
@@ -178,6 +178,11 @@ public sealed class TypeGenerator
         { Symbol sym = (Symbol)value;
           cg.EmitString(sym.Name);
           cg.EmitCall(typeof(Symbol), "Get");
+        }
+        else if(value is Binding)
+        { cg.EmitFieldGet(typeof(TopLevel), "Current");
+          cg.EmitString(((Binding)value).Name);
+          cg.EmitCall(typeof(TopLevel), "GetBinding");
         }
         else if(value is string[]) cg.EmitStringArray((string[])value);
         else goto default;
