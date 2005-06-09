@@ -221,9 +221,8 @@ public sealed class CodeGenerator
     while(ns is EnvironmentNamespace && !ns.Contains(name)) { depth++; ns=ns.Parent; }
 
     if(ns is EnvironmentNamespace)
-    { EmitFieldGet(typeof(Environment), "Current");
-      while(depth--!=0) EmitFieldGet(typeof(Environment), "Parent");
-      ILG.Emit(OpCodes.Castclass, typeof(LocalEnvironment));
+    { EmitArgGet(0);
+      while(depth--!=0) EmitFieldGet(typeof(LocalEnvironment), "Parent");
       return ns;
     }
     else return null;

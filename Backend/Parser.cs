@@ -27,7 +27,7 @@ public sealed class Parser
   public static Parser FromStream(Stream stream) { return new Parser("<stream>", new StreamReader(stream)); }
   public static Parser FromString(string text) { return new Parser("<string>", text); }
 
-  public Pair Parse()
+  public object Parse()
   { Pair list=null, tail=null;
 
     while(token!=Token.EOF)
@@ -36,7 +36,8 @@ public sealed class Parser
       if(tail==null) list=tail=next;
       else { tail.Cdr=next; tail=next; }
     }
-    return Modules.Builtins.cons(Symbol.Get("if"), Modules.Builtins.cons(null, Modules.Builtins.cons(null, list)));
+    if(list.Cdr==null) return list.Car;
+    else return Modules.Builtins.cons(Symbol.Get("if"), Modules.Builtins.cons(null, Modules.Builtins.cons(null, list)));
   }
 
   public object ParseOne()

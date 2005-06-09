@@ -179,7 +179,7 @@ public abstract class ReflectedMethodBase : ReflectedMember, ICallable
   { this.sigs=sigs; this.instance=instance;
   }
 
-  public object Call(params object[] args)
+  public object Call(LocalEnvironment unused, params object[] args)
   { Type[] types  = new Type[args.Length];
     Match[] res   = new Match[sigs.Length];
     int bestMatch = -1;
@@ -354,7 +354,7 @@ public sealed class ReflectedProperty : ReflectedMember, IDataDescriptor
 
   public object __getitem__(params object[] args)
   { if(!state.canRead) throw Ops.TypeError("{0} is a non-readable attribute", state.info.Name);
-    return ((ReflectedMethod)state.get.Get(instance)).Call(args);
+    return ((ReflectedMethod)state.get.Get(instance)).Call(null, args);
   }
 
   public void Set(object instance, object value) { setitem(instance, value); }
@@ -377,7 +377,7 @@ public sealed class ReflectedProperty : ReflectedMember, IDataDescriptor
 
   void setitem(object instance, params object[] args)
   { if(!state.canWrite) throw Ops.TypeError("{0} is a non-writeable attribute", state.info.Name);
-    ((ReflectedMethod)state.set.Get(instance)).Call(args);
+    ((ReflectedMethod)state.set.Get(instance)).Call(null, args);
   }
 
   internal class State
@@ -401,9 +401,9 @@ public sealed class ReflectedType : ICallable, IHasAttributes
 
   public IDictionary Dict { get { Initialize(); return dict; } }
 
-  public object Call(params object[] args)
+  public object Call(LocalEnvironment unused, params object[] args)
   { Initialize();
-    return cons.Call(args);
+    return cons.Call(null, args);
   }
 
   public bool GetAttr(string name, out object value)

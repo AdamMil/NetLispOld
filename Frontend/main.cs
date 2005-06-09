@@ -7,17 +7,22 @@ namespace NetLisp.Frontend
 
 public class App
 { static void Main()
-  { Backend.Environment.Current = new TopLevel();
+  { TopLevel.Current = new TopLevel();
     foreach(DictionaryEntry de in ReflectedType.FromType(typeof(NetLisp.Backend.Modules.Builtins)).Dict)
-      Backend.Environment.Top.Bind((string)de.Key, de.Value);
+      TopLevel.Current.Bind((string)de.Key, de.Value);
 
-    try
-    { NetLisp.Backend.Modules.Builtins.eval(Parser.FromString(stdlib).Parse());
-
-      string line;
-      while((line=Console.ReadLine()) != null) Console.WriteLine(Ops.Repr(NetLisp.Backend.Modules.Builtins.eval(Parser.FromString(line).Parse())));
+    NetLisp.Backend.Modules.Builtins.eval(Parser.FromString(stdlib).Parse());
+    while(true)
+    { Console.Write(">>> ");
+      string line = Console.ReadLine();
+      if(line==null) break;
+      try
+      { Console.WriteLine(Ops.Repr(NetLisp.Backend.Modules.Builtins.eval(Parser.FromString(line).Parse())));
+      }
+      catch(InvalidProgramException) { break; }
+      catch(Exception e) { Console.WriteLine("ERROR: "+e.ToString()); }
     }
-    finally /*catch(InvalidProgramException)*/ { SnippetMaker.DumpAssembly(); }
+    SnippetMaker.DumpAssembly();
   }
 
   static string stdlib = @"

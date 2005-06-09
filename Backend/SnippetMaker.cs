@@ -6,7 +6,7 @@ namespace NetLisp.Backend
 {
 
 public abstract class Snippet
-{ public abstract object Run();
+{ public abstract object Run(LocalEnvironment env);
 }
 
 public sealed class SnippetMaker
@@ -24,7 +24,6 @@ public sealed class SnippetMaker
     CodeGenerator cg = tg.DefineMethodOverride(typeof(Snippet).GetMethod("Run"), true);
     cg.Namespace = new TopLevelNamespace(cg);
     body.Emit(cg);
-    cg.EmitReturn();
     cg.Finish();
     return (Snippet)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
   }

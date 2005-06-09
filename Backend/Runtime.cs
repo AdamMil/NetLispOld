@@ -27,7 +27,7 @@ public class SymbolNameAttribute : Attribute
 
 #region Interfaces
 public interface ICallable
-{ object Call(params object[] args);
+{ object Call(LocalEnvironment env, params object[] args);
 }
 
 public interface IDescriptor
@@ -53,9 +53,9 @@ public enum Conversion
 #endregion
 
 public abstract class Closure : ICallable
-{ public abstract object Call(params object[] args);
+{ public abstract object Call(LocalEnvironment unused, params object[] args);
   public Template Template;
-  public Environment Environment;
+  public LocalEnvironment Environment;
 }
 
 #region RG (stuff that can't be written in C#)
@@ -67,7 +67,7 @@ public sealed class RG
     #region Closure
     { tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed, "ClosureF", typeof(Closure));
 
-      cg = tg.DefineConstructor(new Type[] { typeof(Template), typeof(Environment) });
+      cg = tg.DefineConstructor(new Type[] { typeof(Template), typeof(LocalEnvironment) });
       cg.EmitThis();
       cg.EmitArgGet(0);
       cg.EmitFieldSet(typeof(Closure), "Template");
@@ -78,9 +78,11 @@ public sealed class RG
       cg.Finish();
 
       cg = tg.DefineMethodOverride(typeof(Closure), "Call", true);
+      cg.EmitArgGet(0);
+
       cg.EmitThis();
       cg.EmitFieldGet(typeof(Closure), "Template");
-      cg.EmitArgGet(0);
+      cg.EmitArgGet(1);
       cg.EmitCall(typeof(Template), "FixArgs");
 
       cg.EmitThis();
@@ -88,7 +90,7 @@ public sealed class RG
       cg.EmitFieldGet(typeof(Template), "FuncPtr");
       cg.ILG.Emit(OpCodes.Tailcall);
       cg.ILG.EmitCalli(OpCodes.Calli, CallingConventions.Standard, typeof(object),
-                       new Type[] { typeof(object[]) }, null);
+                       new Type[] { typeof(LocalEnvironment), typeof(object[]) }, null);
       cg.EmitReturn();
       cg.Finish();
 
@@ -102,56 +104,8 @@ public sealed class RG
 #endregion
 
 #region Environment
-public abstract class Environment
-{ public Environment(Environment parent) { Parent=parent; }
-
-  public readonly Environment Parent;
-
-  public static TopLevel Top
-  { get
-    { Environment env = Current;
-      while(env.Parent!=null) env=env.Parent;
-      return (TopLevel)env;
-    }
-  }
-
-  [ThreadStatic] public static Environment Current;
-}
-
-public abstract class DynamicEnvironment : Environment
-{ protected DynamicEnvironment(Environment parent) : base(parent) { }
-  public abstract bool Get(string name, out object value);
-  public abstract void Set(string name, object value);
-}
-
-public sealed class CompileEnvironment : DynamicEnvironment
-{ public CompileEnvironment(Environment parent) : base(parent) { Dict=new HybridDictionary(); }
-
-  public void Bind(string name, object value) { Dict[name] = value; }
-  public bool Contains(string name) { return Dict.Contains(name); }
-
-  public object Get(string name)
-  { object ret;
-    if(!Get(name, out ret)) throw new Exception("no such name"); // FIXME: use a different exception
-    return ret;
-  }
-
-  public override bool Get(string name, out object value)
-  { value = Dict[name];
-    if(value!=null || Dict.Contains(name)) return true;
-    else return ((DynamicEnvironment)Parent).Get(name, out value);
-  }
-
-  public override void Set(string name, object value)
-  { if(Dict.Contains(name)) Dict[name]=value;
-    else ((DynamicEnvironment)Parent).Set(name, value);
-  }
-
-  public HybridDictionary Dict;
-}
-
-public sealed class TopLevel : DynamicEnvironment
-{ public TopLevel() : base(null) { Globals=new Hashtable(); }
+public sealed class TopLevel
+{ public TopLevel() { Globals=new Hashtable(); }
 
   public void Bind(string name, object value) { Globals[name] = value; }
   public bool Contains(string name) { return Globals.Contains(name); }
@@ -162,12 +116,12 @@ public sealed class TopLevel : DynamicEnvironment
     throw new Exception("no such name"); // FIXME: use a different exception
   }
 
-  public override bool Get(string name, out object value)
+  public bool Get(string name, out object value)
   { value = Globals[name];
     return value!=null || Globals.Contains(name);
   }
 
-  public override void Set(string name, object value)
+  public void Set(string name, object value)
   { if(!Globals.Contains(name)) throw new Exception("no such name"); // FIXME: ex
     Globals[name]=value;
   }
@@ -175,10 +129,13 @@ public sealed class TopLevel : DynamicEnvironment
   public void Unbind(string name) { Globals.Remove(name); }
 
   public Hashtable Globals;
+  
+  [ThreadStatic] public static TopLevel Current;
 }
 
-public sealed class LocalEnvironment : Environment
-{ public LocalEnvironment(Environment parent, object[] values) : base(parent) { Values=values; }
+public sealed class LocalEnvironment
+{ public LocalEnvironment(LocalEnvironment parent, object[] values) { Parent=parent; Values=values; }
+  public readonly LocalEnvironment Parent;
   public readonly object[] Values;
 }
 #endregion
@@ -194,10 +151,13 @@ public sealed class Ops
   public static object Call(string name) { return Call(GetGlobal(name), EmptyArray); }
   public static object Call(string name, params object[] args) { return Call(GetGlobal(name), args); }
 
-  public static object Call(object func, object[] args)
-  { ICallable f = func as ICallable;
+  public static object Call(object func, params object[] args)
+  { Closure clos = func as Closure;
+    if(clos!=null) return clos.Call(clos.Environment, args);
+
+    ICallable f = func as ICallable;
     if(f==null) throw new Exception("not a function"); // FIXME: ex
-    return f.Call(args);
+    return f.Call(null, args);
   }
 
   public static Snippet CompileRaw(object obj) { return SnippetMaker.Generate(AST.Create(obj)); }
@@ -258,7 +218,7 @@ public sealed class Ops
   public static object FastCadr(Pair pair) { return ((Pair)pair.Cdr).Car; }
   public static object FastCddr(Pair pair) { return ((Pair)pair.Cdr).Cdr; }
 
-  // TODO: check whether we can eliminate this (ie, "true is true" still works)
+  // TODO: check whether we can eliminate this (ie, "(eq? #t #t)" still works)
   public static object FromBool(bool value) { return value ? TRUE : FALSE; }
 
   public static object GetAttr(object o, string name)
@@ -277,8 +237,8 @@ public sealed class Ops
     return d==null ? desc : d.Get(instance);
   }
 
-  public static object GetGlobal(string name) { return Environment.Top.Get(name); }
-  public static bool GetGlobal(string name, out object value) { return Environment.Top.Get(name, out value); }
+  public static object GetGlobal(string name) { return TopLevel.Current.Get(name); }
+  public static bool GetGlobal(string name, out object value) { return TopLevel.Current.Get(name, out value); }
 
   public static bool IsTrue(object a)
   { switch(Convert.GetTypeCode(a))
