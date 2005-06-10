@@ -8,8 +8,8 @@ namespace NetLisp.Backend
 {
 
 public sealed class TypeGenerator
-{ public TypeGenerator(AssemblyGenerator assembly, TypeBuilder typeBuilder)
-  { Assembly=assembly; TypeBuilder=typeBuilder;
+{ public TypeGenerator(AssemblyGenerator assembly, TypeBuilder typeBuilder, Type parent)
+  { Assembly=assembly; TypeBuilder=typeBuilder; parentType=parent;
   }
 
   public CodeGenerator DefineConstructor(Type[] types) { return DefineConstructor(MethodAttributes.Public, types); }
@@ -54,6 +54,11 @@ public sealed class TypeGenerator
     return new CodeGenerator(this, mb, mb.GetILGenerator());
   }
 
+  public CodeGenerator DefineMethodOverride(string name) { return DefineMethodOverride(parentType, name, false); }
+  public CodeGenerator DefineMethodOverride(string name, bool final)
+  { return DefineMethodOverride(parentType.GetMethod(name, BindingFlags.Instance|BindingFlags.NonPublic|BindingFlags.Public),
+                                final);
+  }
   public CodeGenerator DefineMethodOverride(Type type, string name) { return DefineMethodOverride(type, name, false); }
   public CodeGenerator DefineMethodOverride(Type type, string name, bool final)
   { return DefineMethodOverride(type.GetMethod(name, BindingFlags.Instance|BindingFlags.NonPublic|BindingFlags.Public),
@@ -78,6 +83,41 @@ public sealed class TypeGenerator
     TypeGenerator ret = new TypeGenerator(Assembly, TypeBuilder.DefineNestedType(name, ta, parent));
     nestedTypes.Add(ret);
     return ret;
+  }
+
+  public CodeGenerator DefineProperty(string name, Type type)
+  { return DefineProperty(MethodAttributes.Public, name, type, Type.EmptyTypes);
+  }
+  public CodeGenerator DefineProperty(MethodAttributes attrs, string name, Type type)
+  { return DefineProperty(attrs, name, type, Type.EmptyTypes);
+  }
+  public CodeGenerator DefineProperty(string name, Type type, Type[] paramTypes)
+  { return DefineProperty(MethodAttributes.Public, name, type, paramTypes);
+  }
+  public CodeGenerator DefineProperty(MethodAttributes attrs, string name, Type type, Type[] paramTypes)
+  { PropertyBuilder pb = TypeBuilder.DefineProperty(name, attrs, type, paramTypes);
+    CodeGenerator cg = DefineMethod(attrs, "get_"+name, type, paramTypes);
+    pb.SetGetMethod((MethodBuilder)cg.MethodBase);
+    return cg;
+  }
+
+  public void DefineProperty(string name, Type type, out CodeGenerator get, out CodeGenerator set)
+  { DefineProperty(MethodAttributes.Public, name, type, Type.EmptyTypes, out get, out set);
+  }
+  public void DefineProperty(MethodAttributes attrs, string name, Type type,
+                             out CodeGenerator get, out CodeGenerator set)
+  { DefineProperty(attrs, name, type, Type.EmptyTypes, out get, out set);
+  }
+  public void DefineProperty(string name, Type type, Type[] paramTypes, out CodeGenerator get, out CodeGenerator set)
+  { DefineProperty(MethodAttributes.Public, name, type, paramTypes, out get, out set);
+  }
+  public void DefineProperty(MethodAttributes attrs, string name, Type type, Type[] paramTypes,
+                             out CodeGenerator get, out CodeGenerator set)
+  { PropertyBuilder pb = TypeBuilder.DefineProperty(name, attrs, type, paramTypes);
+    get = DefineMethod(attrs, "get_"+name, type, paramTypes);
+    set = DefineMethod(attrs, "set_"+name, null, paramTypes);
+    pb.SetGetMethod((MethodBuilder)get.MethodBase);
+    pb.SetSetMethod((MethodBuilder)set.MethodBase);
   }
 
   public Slot DefineStaticField(string name, Type type)
@@ -161,18 +201,12 @@ public sealed class TypeGenerator
   { CodeGenerator cg = GetInitializer();
 
     switch(Convert.GetTypeCode(value))
-    { case TypeCode.Double:
-        cg.ILG.Emit(OpCodes.Ldc_R8, (double)value);
-        cg.ILG.Emit(OpCodes.Box, typeof(double));
-        break;
-      case TypeCode.Int32:
-        cg.EmitInt((int)value);
-        cg.ILG.Emit(OpCodes.Box, typeof(int));
-        break;
-      case TypeCode.Int64:
-        cg.ILG.Emit(OpCodes.Ldc_I8, (long)value);
-        cg.ILG.Emit(OpCodes.Box, typeof(long));
-        break;
+    { case TypeCode.Byte:   cg.EmitInt((int)(byte)value); goto box;
+      case TypeCode.Char:   cg.EmitInt((int)(char)value); goto box;
+      case TypeCode.Double: cg.ILG.Emit(OpCodes.Ldc_R8, (double)value); goto box;
+      case TypeCode.Int16:  cg.EmitInt((int)(short)value); goto box;
+      case TypeCode.Int32:  cg.EmitInt((int)value); goto box;
+      case TypeCode.Int64:  cg.ILG.Emit(OpCodes.Ldc_I8, (long)value); goto box;
       case TypeCode.Object:
         if(value is Symbol)
         { Symbol sym = (Symbol)value;
@@ -186,9 +220,16 @@ public sealed class TypeGenerator
         }
         else if(value is string[]) cg.EmitStringArray((string[])value);
         else goto default;
-        break;
+        return;
+      case TypeCode.SByte:  cg.EmitInt((int)(sbyte)value); goto box;
+      case TypeCode.Single: cg.ILG.Emit(OpCodes.Ldc_R4, (float)value); goto box;
+      case TypeCode.UInt16: cg.EmitInt((int)(ushort)value); goto box;
+      case TypeCode.UInt32: cg.EmitInt((int)(uint)value); goto box;
+      case TypeCode.UInt64: cg.ILG.Emit(OpCodes.Ldc_I8, (long)(ulong)value); goto box;
       default: throw new NotImplementedException("constant: "+value.GetType());
     }
+
+    box: cg.ILG.Emit(OpCodes.Box, value.GetType());
   }
 
   Type[] GetParamTypes(ParameterInfo[] pi)
@@ -199,8 +240,9 @@ public sealed class TypeGenerator
 
   HybridDictionary constants=new HybridDictionary(), namedConstants=new HybridDictionary();
   ArrayList nestedTypes, constobjs, constslots;
-  int numConstants;
   CodeGenerator initGen;
+  Type parentType;
+  int numConstants;
 }
 
 } // namespace NetLisp.Backend

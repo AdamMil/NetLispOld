@@ -37,7 +37,7 @@ public sealed class Parser
       else { tail.Cdr=next; tail=next; }
     }
     if(list.Cdr==null) return list.Car;
-    else return new Pair(Symbol.Get("if"), new Pair(null, new Pair(null, list)));
+    else return new Pair(Symbol.Get("begin"), list);
   }
 
   public object ParseOne()
@@ -237,7 +237,7 @@ public sealed class Parser
         { case 't': value=true; return Token.Literal;
           case 'f': value=false; return Token.Literal;
           case '\\':
-          { c = ReadChar();
+          { value = c = ReadChar();
             if(char.IsLetter(c))
             { StringBuilder sb = new StringBuilder();
               do
@@ -245,8 +245,7 @@ public sealed class Parser
                 c = ReadChar();
               } while(c!=0 && !IsDelimiter(c));
               lastChar=c;
-              if(sb.Length==1) value=sb[0];
-              else if(sb.Length==3 && char.ToLower(sb[0])=='c' && sb[1]=='-' && char.IsLetter(sb[2])) c = (char)(char.ToLower(sb[2])-'a'+1);
+              if(sb.Length==3 && char.ToLower(sb[0])=='c' && sb[1]=='-' && char.IsLetter(sb[2])) c = (char)(char.ToLower(sb[2])-'a'+1);
               else switch(sb.ToString().ToLower())
               { case "bs": case "backspace": value='\b'; break;
                 case "esc": case "escape": value=(char)27; break;
@@ -274,6 +273,7 @@ public sealed class Parser
             break;
           case 'b': case 'o': case 'd': case 'x': case 'i': case 'e':
             value=ReadNumber(c); return Token.Literal;
+          case '<': SyntaxError("unable to read: #<..."); break;
           default: SyntaxError("unknown notation: #"+c); break;
         }
       }

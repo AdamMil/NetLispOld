@@ -26,10 +26,6 @@ public class SymbolNameAttribute : Attribute
 #endregion
 
 #region Interfaces
-public interface ICallable
-{ object Call(LocalEnvironment env, params object[] args);
-}
-
 public interface IDescriptor
 { object Get(object instance);
 }
@@ -42,16 +38,26 @@ public interface IHasAttributes
 { bool GetAttr(string name, out object value);
   void SetAttr(string key, object value);
 }
+
+public interface IProcedure
+{ int MinArgs { get; }
+  int MaxArgs { get; }
+
+  object Call(params object[] args);
+}
 #endregion
 
 #region Enums
 [Flags]
 public enum Conversion
-{ Unsafe=1, Safe=3, Reference=5, Identity=7, None=8, Overflow=10,
-  Failure=8, Success=1
+{ None=-1,
+  // 4/6 are chosen to make it clear that those are mutually exclusive
+  Safe=0, Unsafe=1, Reference=4, Identity=6, UnsafeAPA=8, SafeAPA=16, RefAPA=24,
+  QualityMask=7, APAMask=24
 }
 #endregion
 
+#region Binding
 public sealed class Binding
 { public Binding(string name) { Value=Unbound; Name=name; }
 
@@ -63,12 +69,22 @@ public sealed class Binding
 
   public readonly static object Unbound = "<UNBOUND>";
 }
+#endregion
 
-public abstract class Closure : ICallable
-{ public abstract object Call(LocalEnvironment unused, params object[] args);
+// FIXME: if closure accesses top-level environment (by calling EVAL), it will get the TL of the caller,
+//        not of where it was defined
+#region Closure
+public abstract class Closure : IProcedure
+{ public int MinArgs { get { return Template.ParamNames.Length; } }
+  public int MaxArgs { get { return Template.HasList ? -1 : Template.ParamNames.Length; } }
+  public string Name { get { return "#<lambda>"; } }
+
+  public abstract object Call(params object[] args);
+
   public Template Template;
   public LocalEnvironment Environment;
 }
+#endregion
 
 #region RG (stuff that can't be written in C#)
 public sealed class RG
@@ -90,11 +106,12 @@ public sealed class RG
       cg.Finish();
 
       cg = tg.DefineMethodOverride(typeof(Closure), "Call", true);
-      cg.EmitArgGet(0);
+      cg.EmitThis();
+      cg.EmitFieldGet(typeof(Closure), "Environment");
 
       cg.EmitThis();
       cg.EmitFieldGet(typeof(Closure), "Template");
-      cg.EmitArgGet(1);
+      cg.EmitArgGet(0);
       cg.EmitCall(typeof(Template), "FixArgs");
 
       cg.EmitThis();
@@ -161,6 +178,18 @@ public sealed class LocalEnvironment
 { public LocalEnvironment(LocalEnvironment parent, object[] values) { Parent=parent; Values=values; }
   public readonly LocalEnvironment Parent;
   public readonly object[] Values;
+
+  public override string ToString()
+  {
+    return base.ToString ();
+  }
+}
+#endregion
+
+#region MultipleValues
+public sealed class MultipleValues
+{ public MultipleValues(object[] values) { Values=values; }
+  public object[] Values;
 }
 #endregion
 
@@ -174,17 +203,16 @@ public sealed class Ops
 
   public static object Call(string name) { return Call(GetGlobal(name), EmptyArray); }
   public static object Call(string name, params object[] args) { return Call(GetGlobal(name), args); }
-
-  public static object Call(object func, params object[] args)
-  { Closure clos = func as Closure;
-    if(clos!=null) return clos.Call(clos.Environment, args);
-
-    ICallable f = func as ICallable;
-    if(f==null) throw new Exception("not a function"); // FIXME: ex
-    return f.Call(null, args);
-  }
+  public static object Call(object func, params object[] args) { return ExpectProcedure(func).Call(args); }
 
   public static Snippet CompileRaw(object obj) { return SnippetMaker.Generate(AST.Create(obj)); }
+
+  public static object ConsAll(object[] args)
+  { int i = args.Length-1;
+    object obj = args[i];
+    while(i-- != 0) obj = new Pair(args[i], obj);
+    return obj;
+  }
 
   public static object ConvertTo(object o, Type type)
   { switch(ConvertTo(o==null ? null : o.GetType(), type))
@@ -239,26 +267,48 @@ public sealed class Ops
     return head;
   }
 
-  public static void ExpectAtLeast(int num, object[] args)
-  { if(args.Length<num) throw new ArgumentException("Expected at least "+num.ToString()+" arguments");
-  }
-
-  public static void ExpectExactly(int num, object[] args)
-  { if(args.Length!=num) throw new ArgumentException("Expected "+num.ToString()+" arguments");
-  }
-
-  public static ICallable ExpectFunction(object obj)
-  { ICallable ret = obj as ICallable;
-    if(ret!=null) return ret;
-    throw new ArgumentException("Expected function");
-  }
+  public static char ExpectChar(object obj) { return (char)obj; } // FIXME: bad
+  public static int ExpectInt(object obj) { return (int)obj; } // FIXME: bad
+  public static string ExpectString(object obj) { return (string)obj; } // FIXME: bad
 
   public static Pair ExpectPair(object obj)
   { Pair ret = obj as Pair;
     if(ret!=null) return ret;
-    throw new ArgumentException("Expected pair");
+    throw new ArgumentException("expected pair, but received "+Repr(obj));
   }
-  
+
+  public static IProcedure ExpectProcedure(object obj)
+  { IProcedure ret = obj as IProcedure;
+    if(ret!=null) return ret;
+    throw new ArgumentException("expected function, but received"+Repr(obj));
+  }
+
+  public static bool Equal(object a, object b)
+  { if(Eqv(a, b)) return true;
+
+    Pair pa=a as Pair;
+    if(pa!=null)
+    { Pair pb=b as Pair;
+      if(pb!=null)
+      { do
+        { if(!Equal(pa.Car, pb.Car)) return false;
+          Pair next=pa.Cdr as Pair;
+          if(next==null && pa.Cdr!=null) return Equal(pa.Cdr, pb.Cdr);
+          pa = next;
+          pb = pb.Cdr as Pair;
+        } while(pa!=null && pb!=null);
+        return pa==pb;
+      }
+    }
+    return false;
+  }
+
+  public static bool Eqv(object a, object b)
+  { if(a==b) return true;
+    if(a is bool && b is bool) return (bool)a==(bool)b;
+    return OpEquals(a, b);
+  }
+
   public static object FastCadr(Pair pair) { return ((Pair)pair.Cdr).Car; }
   public static object FastCddr(Pair pair) { return ((Pair)pair.Cdr).Cdr; }
 
@@ -338,8 +388,10 @@ public sealed class Ops
   }
 
   public static Delegate MakeDelegate(object callable, Type delegateType)
-  { return Delegate.CreateDelegate(delegateType, DelegateProxy.Make(callable, delegateType), "Handle");
+  { return Delegate.CreateDelegate(delegateType, Old.DelegateProxy.Make(callable, delegateType), "Handle");
   }
+
+  public static bool OpEquals(object a, object b) { throw new NotImplementedException(); }
 
   public static string Repr(object obj)
   { if(obj==null) return "nil";
@@ -442,6 +494,34 @@ public sealed class Pair
 }
 #endregion
 
+#region Primitive
+public abstract class Primitive : IProcedure
+{ public Primitive(string name, int min, int max) { this.name=name; this.min=min; this.max=max; }
+
+  public int MinArgs { get { return min; } }
+  public int MaxArgs { get { return max; } }
+  public string Name { get { return name; } }
+
+  public abstract object Call(object[] args);
+
+  public override string ToString() { return string.Format("#<primitive procedure '{0}'>", name); }
+  
+  protected void CheckArity(object[] args)
+  { int num = args.Length;
+    if(max==-1)
+    { if(num<min) throw new ArgumentException(name+": expects at least "+min.ToString()+
+                                              " arguments, but received "+args.Length.ToString());
+    }
+    else if(num<min || num>max)
+      throw new ArgumentException(name+": expects "+(min==max ? min.ToString() : min.ToString()+"-"+max.ToString())+
+                                  " arguments, but received "+num.ToString());
+  }
+
+  protected string name;
+  protected int min, max;
+}
+#endregion
+
 #region Symbol
 public sealed class Symbol
 { Symbol(string name) { Name=name; }
@@ -485,6 +565,13 @@ public sealed class Template
   public readonly IntPtr FuncPtr;
   public readonly bool HasList;
   public bool Macro;
+}
+#endregion
+
+#region Void
+public sealed class Void
+{ Void() { }
+  public static readonly Void Value = new Void();
 }
 #endregion
 

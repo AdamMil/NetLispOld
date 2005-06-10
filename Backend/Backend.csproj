@@ -99,6 +99,11 @@
                     BuildAction = "Compile"
                 />
                 <File
+                    RelPath = "DotNetInterop.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
                     RelPath = "Exceptions.cs"
                     SubType = "Code"
                     BuildAction = "Compile"
