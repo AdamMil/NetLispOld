@@ -4,7 +4,7 @@ using System.Collections.Specialized;
 using System.Reflection;
 using System.Reflection.Emit;
 
-namespace NetLisp.Backend
+namespace NetLisp.Backend.Old
 {
 
 #region DelegateProxy
@@ -170,7 +170,7 @@ public sealed class ReflectedMethod : ReflectedMethodBase, IDescriptor
 
 // TODO: respect default parameters
 #region ReflectedMethodBase
-public abstract class ReflectedMethodBase : ReflectedMember, ICallable
+public abstract class ReflectedMethodBase : ReflectedMember, IProcedure
 { protected ReflectedMethodBase(MethodBase mb) : base(mb)
   { sigs = new MethodBase[] { mb };
     hasStatic = allStatic = mb.IsStatic;
@@ -179,7 +179,10 @@ public abstract class ReflectedMethodBase : ReflectedMember, ICallable
   { this.sigs=sigs; this.instance=instance;
   }
 
-  public object Call(LocalEnvironment unused, params object[] args)
+  public int MinArgs { get { throw new NotImplementedException(); } }
+  public int MaxArgs { get { throw new NotImplementedException(); } }
+
+  public object Call(params object[] args)
   { Type[] types  = new Type[args.Length];
     Match[] res   = new Match[sigs.Length];
     int bestMatch = -1;
@@ -394,14 +397,17 @@ public sealed class ReflectedProperty : ReflectedMember, IDataDescriptor
 #endregion
 
 #region ReflectedType
-public sealed class ReflectedType : ICallable, IHasAttributes
+public sealed class ReflectedType : IProcedure, IHasAttributes
 { ReflectedType(Type type) { this.type = type; }
 
   public ReflectedConstructor Constructor { get { Initialize(); return cons; } }
 
   public IDictionary Dict { get { Initialize(); return dict; } }
 
-  public object Call(LocalEnvironment unused, params object[] args)
+  public int MinArgs { get { return cons.MinArgs; } }
+  public int MaxArgs { get { return cons.MaxArgs; } }
+
+  public object Call(params object[] args)
   { Initialize();
     return cons.Call(null, args);
   }

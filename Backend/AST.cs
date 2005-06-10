@@ -32,9 +32,15 @@ public sealed class AST
     if(sym!=null)
       switch(sym.Name)
       { case "if":
-        { if(Ops.Length(pair)<3) throw new Exception("too few for if"); // FIXME: SyntaxException
+        { int len = Ops.Length(pair);
+          if(len<3 || len>4) throw new Exception("if: expects 3 or 4 forms"); // FIXME: SyntaxException
           pair = (Pair)pair.Cdr;
-          return new IfNode(Parse(pair.Car), Parse(Ops.FastCadr(pair)), ParseBody(Ops.FastCddr(pair) as Pair));
+          Pair next = (Pair)pair.Cdr;
+          return new IfNode(Parse(pair.Car), Parse(next.Car), next.Cdr==null ? null : Parse(Ops.FastCadr(next)));
+        }
+        case "begin":
+        { if(Ops.Length(pair)<2) throw new Exception("begin: no forms given");
+          return ParseBody((Pair)pair.Cdr);
         }
         case "lambda":
         { if(Ops.Length(pair)<3) throw new Exception("too few for lambda"); // FIXME: SyntaxException
@@ -213,12 +219,11 @@ public sealed class CallNode : Node
 
   public override void Emit(CodeGenerator cg)
   { Function.Emit(cg);
-    cg.ILG.Emit(OpCodes.Castclass, typeof(ICallable));
-    cg.EmitArgGet(0);
+    cg.ILG.Emit(OpCodes.Castclass, typeof(IProcedure));
     if(Args.Length==0) cg.EmitFieldGet(typeof(Ops), "EmptyArray");
     else cg.EmitObjectArray(Args);
     if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
-    cg.EmitCall(typeof(ICallable), "Call");
+    cg.EmitCall(typeof(IProcedure), "Call");
     // FIXME: if we call a non-lisp function, it won't do a proper return sequence
     if(Tail) cg.EmitReturn();
   }
@@ -241,6 +246,7 @@ public sealed class CallNode : Node
   }
 }
 
+// FIXME: support internal definitions: http://www.swiss.ai.mit.edu/projects/scheme/documentation/scheme_3.html#SEC35
 public sealed class DefineNode : Node
 { public DefineNode(string name, Node value) { Name=name; Value=value; }
 

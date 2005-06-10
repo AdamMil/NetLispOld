@@ -145,6 +145,7 @@ public sealed class NamedFrameSlot : Slot
 
   public override Type Type { get { return typeof(object); } }
 
+  // FIXME: check for unbound variables
   public override void EmitGet(CodeGenerator cg)
   { SetupBinding(cg);
     Binding.EmitGet(cg);
@@ -157,6 +158,7 @@ public sealed class NamedFrameSlot : Slot
     cg.EmitFieldGetAddr(typeof(Binding), "Value");
   }
 
+  // FIXME: check for unbound variables
   public override void EmitSet(CodeGenerator cg)
   { Slot temp = cg.AllocLocalTemp(typeof(object));
     temp.EmitSet(cg);
