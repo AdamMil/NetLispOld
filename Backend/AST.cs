@@ -358,7 +358,8 @@ public sealed class LambdaNode : Node
 
   CodeGenerator MakeImplMethod(CodeGenerator cg)
   { CodeGenerator icg;
-    icg = cg.TypeGenerator.DefineMethod("lambda$" + index, typeof(object),
+    icg = cg.TypeGenerator.DefineMethod(MethodAttributes.Public|MethodAttributes.Static,
+                                        "lambda$" + index, typeof(object),
                                         new Type[] { typeof(LocalEnvironment), typeof(object[]) });
 
     if(Parameters.Length==0) icg.Namespace = cg.Namespace;

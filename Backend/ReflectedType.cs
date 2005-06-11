@@ -30,15 +30,14 @@ public abstract class DelegateProxy
 
 		  if(ci==null)
 		  { TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
-		                                                                "EventHandler"+AST.NextIndex,
-		                                                                typeof(DelegateProxy));
+		                                                        "EventHandler"+AST.NextIndex, typeof(DelegateProxy));
 		    ConstructorInfo pci =
 		      typeof(DelegateProxy).GetConstructor(BindingFlags.Instance|BindingFlags.NonPublic, null, ctypes, null);
 		    CodeGenerator cg = tg.DefineChainedConstructor(pci);
 		    cg.EmitReturn();
 		    cg.Finish();
 
-		    cg = tg.DefineMethod(MethodAttributes.Public, "Handle", mi.ReturnType, ptypes);
+		    cg = tg.DefineMethod(MethodAttributes.Public /* final? */, "Handle", mi.ReturnType, ptypes);
         cg.EmitThis();
         cg.EmitFieldGet(typeof(DelegateProxy).GetField("callable", BindingFlags.Instance|BindingFlags.NonPublic));
         if(pis.Length==0) cg.EmitCall(typeof(Ops), "Call0");

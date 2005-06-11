@@ -94,7 +94,6 @@ public sealed class RG
 
     #region Closure
     { tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed, "ClosureF", typeof(Closure));
-
       cg = tg.DefineConstructor(new Type[] { typeof(Template), typeof(LocalEnvironment) });
       cg.EmitThis();
       cg.EmitArgGet(0);
@@ -236,18 +235,21 @@ public sealed class Ops
     // TODO: check whether it's possible to speed up this big block of checks up somehow
     // TODO: add support for Integer, Complex, and Decimal
     if(from.IsPrimitive && to.IsPrimitive)
-    { if(from==typeof(int))    return IsIn(typeConv[4], to)   ? Conversion.Safe : Conversion.Unsafe;
-      if(to  ==typeof(bool))   return IsIn(typeConv[9], from) ? Conversion.None : Conversion.Safe;
-      if(from==typeof(double)) return Conversion.None;
-      if(from==typeof(long))   return IsIn(typeConv[6], to) ? Conversion.Safe : Conversion.Unsafe;
-      if(from==typeof(char))   return IsIn(typeConv[8], to) ? Conversion.Safe : Conversion.Unsafe;
-      if(from==typeof(byte))   return IsIn(typeConv[1], to) ? Conversion.Safe : Conversion.Unsafe;
-      if(from==typeof(uint))   return IsIn(typeConv[5], to) ? Conversion.Safe : Conversion.Unsafe;
-      if(from==typeof(float))  return to==typeof(double) ? Conversion.Safe : Conversion.None;
-      if(from==typeof(short))  return IsIn(typeConv[2], to) ? Conversion.Safe : Conversion.Unsafe;
-      if(from==typeof(ushort)) return IsIn(typeConv[3], to) ? Conversion.Safe : Conversion.Unsafe;
-      if(from==typeof(sbyte))  return IsIn(typeConv[0], to) ? Conversion.Safe : Conversion.Unsafe;
-      if(from==typeof(ulong))  return IsIn(typeConv[7], to) ? Conversion.Safe : Conversion.Unsafe;
+    { if(to==typeof(bool)) return IsIn(typeConv[9], from) ? Conversion.None : Conversion.Safe;
+      else
+        switch(Type.GetTypeCode(from))
+        { case TypeCode.Int32:  return IsIn(typeConv[4], to) ? Conversion.Safe : Conversion.Unsafe;
+          case TypeCode.Double: return Conversion.None;
+          case TypeCode.Int64:  return IsIn(typeConv[6], to) ? Conversion.Safe : Conversion.Unsafe;
+          case TypeCode.Char:   return IsIn(typeConv[8], to) ? Conversion.Safe : Conversion.Unsafe;
+          case TypeCode.Byte:   return IsIn(typeConv[1], to) ? Conversion.Safe : Conversion.Unsafe;
+          case TypeCode.UInt32: return IsIn(typeConv[5], to) ? Conversion.Safe : Conversion.Unsafe;
+          case TypeCode.Single: return to==typeof(double) ? Conversion.Safe : Conversion.None;
+          case TypeCode.Int16:  return IsIn(typeConv[2], to) ? Conversion.Safe : Conversion.Unsafe;
+          case TypeCode.UInt16: return IsIn(typeConv[3], to) ? Conversion.Safe : Conversion.Unsafe;
+          case TypeCode.SByte:  return IsIn(typeConv[0], to) ? Conversion.Safe : Conversion.Unsafe;
+          case TypeCode.UInt64: return IsIn(typeConv[7], to) ? Conversion.Safe : Conversion.Unsafe;
+        }
     }
     if(from.IsArray && to.IsArray && to.GetElementType().IsAssignableFrom(from.GetElementType()))
       return Conversion.Reference;

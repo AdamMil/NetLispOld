@@ -21,7 +21,7 @@ public sealed class SnippetMaker
   public static Snippet Generate(Node body) { return Generate(body, "code_"+AST.NextIndex); }
   public static Snippet Generate(Node body, string typeName)
   { TypeGenerator tg = Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed, typeName, typeof(Snippet));
-    CodeGenerator cg = tg.DefineMethodOverride(typeof(Snippet).GetMethod("Run"), true);
+    CodeGenerator cg = tg.DefineMethodOverride("Run", true);
     cg.Namespace = new TopLevelNamespace(cg);
     body.Emit(cg);
     cg.Finish();
