@@ -465,7 +465,7 @@ public static void import(string name) { Interop.Import(name); }
     { CheckArity(args);
       IProcedure proc = Ops.ExpectProcedure(args[0]);
       int min=proc.MinArgs, max=proc.MaxArgs;
-      return Ops.FromBool(max==-1 ? num>=min : num>=min && num<=max);
+      return Ops.FromBool(max==-1 ? args.Length>=min : args.Length>=min && args.Length<=max);
     }
   }
   #endregion

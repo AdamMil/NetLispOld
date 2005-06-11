@@ -52,7 +52,7 @@ public sealed class CodeGenerator
   { if(mi.IsVirtual && !mi.DeclaringType.IsSealed && !mi.IsFinal) ILG.Emit(OpCodes.Callvirt, mi);
     else ILG.Emit(OpCodes.Call, mi);
   }
-  public void EmitCall(Type type, string method) { EmitCall(type.GetMethod(method)); }
+  public void EmitCall(Type type, string method) { EmitCall(type.GetMethod(method, SearchAll)); }
   public void EmitCall(Type type, string method, Type[] paramTypes) { EmitCall(type.GetMethod(method, paramTypes)); }
 
   public void EmitConstant(object value)
@@ -72,13 +72,13 @@ public sealed class CodeGenerator
     else e.Emit(this);
   }
 
-  public void EmitFieldGet(Type type, string name) { EmitFieldGet(type.GetField(name)); }
+  public void EmitFieldGet(Type type, string name) { EmitFieldGet(type.GetField(name, SearchAll)); }
   public void EmitFieldGet(FieldInfo field) { ILG.Emit(field.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, field); }
-  public void EmitFieldGetAddr(Type type, string name) { EmitFieldGetAddr(type.GetField(name)); }
+  public void EmitFieldGetAddr(Type type, string name) { EmitFieldGetAddr(type.GetField(name, SearchAll)); }
   public void EmitFieldGetAddr(FieldInfo field)
   { ILG.Emit(field.IsStatic ? OpCodes.Ldsflda : OpCodes.Ldflda, field);
   }
-  public void EmitFieldSet(Type type, string name) { EmitFieldSet(type.GetField(name)); }
+  public void EmitFieldSet(Type type, string name) { EmitFieldSet(type.GetField(name, SearchAll)); }
   public void EmitFieldSet(FieldInfo field) { ILG.Emit(field.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, field); }
 
   public void EmitGet(string name)
@@ -93,9 +93,9 @@ public sealed class CodeGenerator
     slot.EmitSet(this);
   }
 
-  public void EmitPropGet(Type type, string name) { EmitPropGet(type.GetProperty(name)); }
+  public void EmitPropGet(Type type, string name) { EmitPropGet(type.GetProperty(name, SearchAll)); }
   public void EmitPropGet(PropertyInfo pi) { EmitCall(pi.GetGetMethod()); }
-  public void EmitPropSet(Type type, string name) { EmitPropSet(type.GetProperty(name)); }
+  public void EmitPropSet(Type type, string name) { EmitPropSet(type.GetProperty(name, SearchAll)); }
   public void EmitPropSet(PropertyInfo pi) { EmitCall(pi.GetSetMethod()); }
 
   public void EmitInt(int value)
@@ -129,13 +129,19 @@ public sealed class CodeGenerator
   public void EmitIsTrue() { EmitCall(typeof(Ops), "IsTrue"); }
   public void EmitIsTrue(Node e) { e.Emit(this); EmitIsTrue(); }
 
+  public void EmitLdFtn(MethodInfo mi)
+  { ILG.Emit(mi.IsVirtual ? OpCodes.Ldvirtftn : OpCodes.Ldftn, mi);
+  }
+
   public void EmitLine(int line)
   { if(TypeGenerator.Assembly.Symbols!=null)
       ILG.MarkSequencePoint(TypeGenerator.Assembly.Symbols, line, 0, line+1, 0);
   }
 
   public void EmitNew(Type type) { ILG.Emit(OpCodes.Newobj, type.GetConstructor(Type.EmptyTypes)); }
-  public void EmitNew(Type type, Type[] paramTypes) { ILG.Emit(OpCodes.Newobj, type.GetConstructor(paramTypes)); }
+  public void EmitNew(Type type, Type[] paramTypes)
+  { ILG.Emit(OpCodes.Newobj, type.GetConstructor(SearchAll, null, paramTypes, null));
+  }
   public void EmitNew(ConstructorInfo ci) { ILG.Emit(OpCodes.Newobj, ci); }
 
   public void EmitNewArray(Type type, int length)
@@ -221,6 +227,7 @@ public sealed class CodeGenerator
   public readonly MethodBase MethodBase;
   public readonly ILGenerator   ILG;
 
+  const BindingFlags SearchAll = BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance|BindingFlags.Static;
   Namespace EmitEnvironmentFor(string name)
   { Namespace ns=Namespace;
     int depth=0;

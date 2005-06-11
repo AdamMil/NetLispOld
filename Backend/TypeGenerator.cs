@@ -8,9 +8,11 @@ namespace NetLisp.Backend
 {
 
 public sealed class TypeGenerator
-{ public TypeGenerator(AssemblyGenerator assembly, TypeBuilder typeBuilder, Type parent)
-  { Assembly=assembly; TypeBuilder=typeBuilder; parentType=parent;
+{ public TypeGenerator(AssemblyGenerator assembly, TypeBuilder typeBuilder)
+  { Assembly=assembly; TypeBuilder=typeBuilder;
   }
+
+  public Type BaseType { get { return TypeBuilder.BaseType; } }
 
   public CodeGenerator DefineConstructor(Type[] types) { return DefineConstructor(MethodAttributes.Public, types); }
   public CodeGenerator DefineConstructor(MethodAttributes attrs, Type[] types)
@@ -18,6 +20,9 @@ public sealed class TypeGenerator
     return new CodeGenerator(this, cb, cb.GetILGenerator());
   }
 
+  public CodeGenerator DefineChainedConstructor(Type[] paramTypes)
+  { return DefineChainedConstructor(TypeBuilder.BaseType.GetConstructor(paramTypes));
+  }
   public CodeGenerator DefineChainedConstructor(ConstructorInfo parent)
   { ParameterInfo[] pi = parent.GetParameters();
     Type[] types = GetParamTypes(pi);
@@ -54,9 +59,11 @@ public sealed class TypeGenerator
     return new CodeGenerator(this, mb, mb.GetILGenerator());
   }
 
-  public CodeGenerator DefineMethodOverride(string name) { return DefineMethodOverride(parentType, name, false); }
+  public CodeGenerator DefineMethodOverride(string name)
+  { return DefineMethodOverride(TypeBuilder.BaseType, name, false);
+  }
   public CodeGenerator DefineMethodOverride(string name, bool final)
-  { return DefineMethodOverride(parentType.GetMethod(name, BindingFlags.Instance|BindingFlags.NonPublic|BindingFlags.Public),
+  { return DefineMethodOverride(TypeBuilder.BaseType.GetMethod(name, BindingFlags.Instance|BindingFlags.NonPublic|BindingFlags.Public),
                                 final);
   }
   public CodeGenerator DefineMethodOverride(Type type, string name) { return DefineMethodOverride(type, name, false); }
@@ -95,7 +102,7 @@ public sealed class TypeGenerator
   { return DefineProperty(MethodAttributes.Public, name, type, paramTypes);
   }
   public CodeGenerator DefineProperty(MethodAttributes attrs, string name, Type type, Type[] paramTypes)
-  { PropertyBuilder pb = TypeBuilder.DefineProperty(name, attrs, type, paramTypes);
+  { PropertyBuilder pb = TypeBuilder.DefineProperty(name, PropertyAttributes.None, type, paramTypes);
     CodeGenerator cg = DefineMethod(attrs, "get_"+name, type, paramTypes);
     pb.SetGetMethod((MethodBuilder)cg.MethodBase);
     return cg;
@@ -113,11 +120,50 @@ public sealed class TypeGenerator
   }
   public void DefineProperty(MethodAttributes attrs, string name, Type type, Type[] paramTypes,
                              out CodeGenerator get, out CodeGenerator set)
-  { PropertyBuilder pb = TypeBuilder.DefineProperty(name, attrs, type, paramTypes);
+  { PropertyBuilder pb = TypeBuilder.DefineProperty(name, PropertyAttributes.None, type, paramTypes);
     get = DefineMethod(attrs, "get_"+name, type, paramTypes);
     set = DefineMethod(attrs, "set_"+name, null, paramTypes);
     pb.SetGetMethod((MethodBuilder)get.MethodBase);
     pb.SetSetMethod((MethodBuilder)set.MethodBase);
+  }
+
+  public CodeGenerator DefinePropertyOverride(string name)
+  { return DefinePropertyOverride(TypeBuilder.BaseType, name, false);
+  }
+  public CodeGenerator DefinePropertyOverride(string name, bool final)
+  { return DefinePropertyOverride(TypeBuilder.BaseType, name, final);
+  }
+  public CodeGenerator DefinePropertyOverride(Type type, string name)
+  { return DefinePropertyOverride(type.GetProperty(name), false);
+  }
+  public CodeGenerator DefinePropertyOverride(Type type, string name, bool final)
+  { return DefinePropertyOverride(type.GetProperty(name), final);
+  }
+  public CodeGenerator DefinePropertyOverride(PropertyInfo baseProp)
+  { return DefinePropertyOverride(baseProp, true);
+  }
+  public CodeGenerator DefinePropertyOverride(PropertyInfo baseProp, bool final)
+  { return DefineMethodOverride(baseProp.CanRead ? baseProp.GetGetMethod() : baseProp.GetSetMethod(), final);
+  }
+
+  public void DefinePropertyOverride(string name, out CodeGenerator get, out CodeGenerator set)
+  { DefinePropertyOverride(TypeBuilder.BaseType, name, false, out get, out set);
+  }
+  public void DefinePropertyOverride(string name, bool final, out CodeGenerator get, out CodeGenerator set)
+  { DefinePropertyOverride(TypeBuilder.BaseType, name, final, out get, out set);
+  }
+  public void DefinePropertyOverride(Type type, string name, out CodeGenerator get, out CodeGenerator set)
+  { DefinePropertyOverride(type.GetProperty(name), false, out get, out set);
+  }
+  public void DefinePropertyOverride(Type type, string name, bool final, out CodeGenerator get, out CodeGenerator set)
+  { DefinePropertyOverride(type.GetProperty(name), final, out get, out set);
+  }
+  public void DefinePropertyOverride(PropertyInfo baseProp, out CodeGenerator get, out CodeGenerator set)
+  { DefinePropertyOverride(baseProp, false, out get, out set);
+  }
+  public void DefinePropertyOverride(PropertyInfo baseProp, bool final, out CodeGenerator get, out CodeGenerator set)
+  { get = baseProp.CanRead  ? DefineMethodOverride(baseProp.GetGetMethod(), final) : null;
+    set = baseProp.CanWrite ? DefineMethodOverride(baseProp.GetSetMethod(), final) : null;
   }
 
   public Slot DefineStaticField(string name, Type type)
@@ -241,7 +287,6 @@ public sealed class TypeGenerator
   HybridDictionary constants=new HybridDictionary(), namedConstants=new HybridDictionary();
   ArrayList nestedTypes, constobjs, constslots;
   CodeGenerator initGen;
-  Type parentType;
   int numConstants;
 }
 
