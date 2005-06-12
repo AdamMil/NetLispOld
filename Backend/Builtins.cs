@@ -19,6 +19,7 @@ public sealed class Builtins
   }
 
 public static void import(string name) { Interop.Import(name); }
+public static void usens(string ns) { Interop.ImportNamespace(ns); }
 
   #region and
   public sealed class and : Primitive

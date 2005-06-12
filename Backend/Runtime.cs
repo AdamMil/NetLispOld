@@ -38,22 +38,53 @@ public interface IHasAttributes
 { bool GetAttr(string name, out object value);
   void SetAttr(string key, object value);
 }
+#endregion
 
+#region Procedures
 public interface IProcedure
 { int MinArgs { get; }
   int MaxArgs { get; }
 
   object Call(params object[] args);
 }
+
+public abstract class SimpleProcedure : IProcedure
+{ public SimpleProcedure(string name, int min, int max) { this.name=name; this.min=min; this.max=max; }
+
+  public int MinArgs { get { return min; } }
+  public int MaxArgs { get { return max; } }
+  public string Name { get { return name; } }
+
+  public abstract object Call(object[] args);
+
+  protected void CheckArity(object[] args)
+  { int num = args.Length;
+    if(max==-1)
+    { if(num<min) throw new ArgumentException(name+": expects at least "+min.ToString()+
+                                              " arguments, but received "+args.Length.ToString());
+    }
+    else if(num<min || num>max)
+      throw new ArgumentException(name+": expects "+(min==max ? min.ToString() : min.ToString()+"-"+max.ToString())+
+                                  " arguments, but received "+num.ToString());
+  }
+
+  protected string name;
+  protected int min, max;
+}
+
+public abstract class Primitive : SimpleProcedure
+{ public Primitive(string name, int min, int max) : base(name, min, max) { }
+  public override string ToString() { return string.Format("#<primitive procedure '{0}'>", name); }
+}
 #endregion
 
 #region Enums
 [Flags]
 public enum Conversion
-{ None=-1,
-  // 4/6 are chosen to make it clear that those are mutually exclusive
-  Safe=0, Unsafe=1, Reference=4, Identity=6, UnsafeAPA=8, SafeAPA=16, RefAPA=24,
-  QualityMask=7, APAMask=24
+{ None=0,
+  // 1/3 and 8/12 are chosen to make it clear that those are mutually exclusive
+  Unsafe=1, Safe=2, Reference=3, Identity=4, UnsafeAPA=8, SafeAPA=16, RefAPA=24, PacksPA=32,
+  QualityMask=31
 }
 #endregion
 
@@ -232,24 +263,26 @@ public sealed class Ops
     else if(to.IsAssignableFrom(from)) return Conversion.Reference;
 
     // TODO: check whether it's faster to use IndexOf() or our own loop
-    // TODO: check whether it's possible to speed up this big block of checks up somehow
     // TODO: add support for Integer, Complex, and Decimal
-    if(from.IsPrimitive && to.IsPrimitive)
-    { if(to==typeof(bool)) return IsIn(typeConv[9], from) ? Conversion.None : Conversion.Safe;
-      else
-        switch(Type.GetTypeCode(from))
-        { case TypeCode.Int32:  return IsIn(typeConv[4], to) ? Conversion.Safe : Conversion.Unsafe;
-          case TypeCode.Double: return Conversion.None;
-          case TypeCode.Int64:  return IsIn(typeConv[6], to) ? Conversion.Safe : Conversion.Unsafe;
-          case TypeCode.Char:   return IsIn(typeConv[8], to) ? Conversion.Safe : Conversion.Unsafe;
-          case TypeCode.Byte:   return IsIn(typeConv[1], to) ? Conversion.Safe : Conversion.Unsafe;
-          case TypeCode.UInt32: return IsIn(typeConv[5], to) ? Conversion.Safe : Conversion.Unsafe;
-          case TypeCode.Single: return to==typeof(double) ? Conversion.Safe : Conversion.None;
-          case TypeCode.Int16:  return IsIn(typeConv[2], to) ? Conversion.Safe : Conversion.Unsafe;
-          case TypeCode.UInt16: return IsIn(typeConv[3], to) ? Conversion.Safe : Conversion.Unsafe;
-          case TypeCode.SByte:  return IsIn(typeConv[0], to) ? Conversion.Safe : Conversion.Unsafe;
-          case TypeCode.UInt64: return IsIn(typeConv[7], to) ? Conversion.Safe : Conversion.Unsafe;
-        }
+    if(to.IsPrimitive)
+    { if(from.IsPrimitive)
+      { if(to==typeof(bool)) return IsIn(typeConv[9], from) ? Conversion.None : Conversion.Safe;
+        else
+          switch(Type.GetTypeCode(from))
+          { case TypeCode.Int32:  return IsIn(typeConv[4], to) ? Conversion.Safe : Conversion.Unsafe;
+            case TypeCode.Double: return Conversion.None;
+            case TypeCode.Int64:  return IsIn(typeConv[6], to) ? Conversion.Safe : Conversion.Unsafe;
+            case TypeCode.Char:   return IsIn(typeConv[8], to) ? Conversion.Safe : Conversion.Unsafe;
+            case TypeCode.Byte:   return IsIn(typeConv[1], to) ? Conversion.Safe : Conversion.Unsafe;
+            case TypeCode.UInt32: return IsIn(typeConv[5], to) ? Conversion.Safe : Conversion.Unsafe;
+            case TypeCode.Single: return to==typeof(double) ? Conversion.Safe : Conversion.None;
+            case TypeCode.Int16:  return IsIn(typeConv[2], to) ? Conversion.Safe : Conversion.Unsafe;
+            case TypeCode.UInt16: return IsIn(typeConv[3], to) ? Conversion.Safe : Conversion.Unsafe;
+            case TypeCode.SByte:  return IsIn(typeConv[0], to) ? Conversion.Safe : Conversion.Unsafe;
+            case TypeCode.UInt64: return IsIn(typeConv[7], to) ? Conversion.Safe : Conversion.Unsafe;
+          }
+       }
+       else if(from==typeof(object)) return Conversion.Unsafe;
     }
     if(from.IsArray && to.IsArray && to.GetElementType().IsAssignableFrom(from.GetElementType()))
       return Conversion.Reference;
@@ -493,34 +526,6 @@ public sealed class Pair
   }
 
   public object Car, Cdr;
-}
-#endregion
-
-#region Primitive
-public abstract class Primitive : IProcedure
-{ public Primitive(string name, int min, int max) { this.name=name; this.min=min; this.max=max; }
-
-  public int MinArgs { get { return min; } }
-  public int MaxArgs { get { return max; } }
-  public string Name { get { return name; } }
-
-  public abstract object Call(object[] args);
-
-  public override string ToString() { return string.Format("#<primitive procedure '{0}'>", name); }
-  
-  protected void CheckArity(object[] args)
-  { int num = args.Length;
-    if(max==-1)
-    { if(num<min) throw new ArgumentException(name+": expects at least "+min.ToString()+
-                                              " arguments, but received "+args.Length.ToString());
-    }
-    else if(num<min || num>max)
-      throw new ArgumentException(name+": expects "+(min==max ? min.ToString() : min.ToString()+"-"+max.ToString())+
-                                  " arguments, but received "+num.ToString());
-  }
-
-  protected string name;
-  protected int min, max;
 }
 #endregion
 
