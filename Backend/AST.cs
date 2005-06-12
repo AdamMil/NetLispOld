@@ -256,7 +256,7 @@ public sealed class DefineNode : Node
     Value.Emit(cg);
     cg.EmitCall(typeof(TopLevel), "Bind");
     cg.Namespace.GetGlobalSlot(Name); // side effect of creating the slot
-    cg.EmitConstant(Symbol.Get(Name));
+    cg.EmitConstantObject(Symbol.Get(Name));
     if(Tail) cg.EmitReturn();
   }
 
@@ -330,7 +330,7 @@ public sealed class LambdaNode : Node
     if(!cg.TypeGenerator.GetNamedConstant("template"+index, typeof(Template), out tmpl))
     { CodeGenerator icg = cg.TypeGenerator.GetInitializer();
       icg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)impl.MethodBase);
-      icg.EmitConstant(Parameters);
+      icg.EmitConstantObject(Parameters);
       icg.EmitBool(HasList);
       icg.EmitNew(typeof(Template), new Type[] { typeof(IntPtr), typeof(string[]), typeof(bool) });
       tmpl.EmitSet(icg);
@@ -423,7 +423,7 @@ public sealed class ListNode : Node
 public sealed class LiteralNode : Node
 { public LiteralNode(object value) { Value=value; }
   public override void Emit(CodeGenerator cg)
-  { cg.EmitConstant(Value);
+  { cg.EmitConstantObject(Value);
     if(Tail) cg.EmitReturn();
   }
   public override object Evaluate() { return Value; }

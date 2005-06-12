@@ -5,8 +5,19 @@ using NetLisp.Backend;
 namespace NetLisp.Frontend
 {
 
+public struct test
+{ public test(int p) { i=p; }
+  public override string ToString()
+  {
+    return "test:"+i.ToString();
+  }
+
+  int i;
+}
+
 public class App
-{ static void Main()
+{ public const int foo=5;
+  static void Main()
   { TopLevel.Current = new TopLevel();
     foreach(DictionaryEntry de in Builtins.GetProcedureDict())
       TopLevel.Current.Bind((string)de.Key, de.Value);
@@ -17,7 +28,6 @@ public class App
       string line = Console.ReadLine();
       if(line==null) break;
       try { Console.WriteLine(Ops.Repr(Builtins.eval(Parser.FromString(line).Parse()))); }
-      catch(InvalidProgramException) { break; }
       catch(Exception e) { Console.WriteLine("ERROR: "+e.ToString()); }
     }
     SnippetMaker.DumpAssembly();

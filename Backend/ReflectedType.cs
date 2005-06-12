@@ -58,7 +58,7 @@ public abstract class DelegateProxy
 		    }
 		    cg.EmitReturn();
 		    cg.Finish();
-		    
+
 		    ci = tg.FinishType().GetConstructor(ctypes);
 		    lock(sigs) sigs[key] = ci;
 		  }
@@ -182,11 +182,9 @@ public abstract class ReflectedMethodBase : ReflectedMember, IProcedure
   public int MaxArgs { get { throw new NotImplementedException(); } }
 
   public object Call(params object[] args)
-  { Type[] types  = new Type[args.Length];
+  { Type[] types  = Type.GetTypeArray(args);
     Match[] res   = new Match[sigs.Length];
     int bestMatch = -1;
-
-    for(int i=0; i<args.Length; i++) types[i] = args[i]==null ? null : args[i].GetType();
 
     for(int mi=0; mi<sigs.Length; mi++) // TODO: speed the binding up somehow?
     { if(instance==null && !sigs[mi].IsStatic && !sigs[mi].IsConstructor) continue;

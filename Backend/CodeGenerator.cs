@@ -56,6 +56,25 @@ public sealed class CodeGenerator
   public void EmitCall(Type type, string method, Type[] paramTypes) { EmitCall(type.GetMethod(method, paramTypes)); }
 
   public void EmitConstant(object value)
+  { switch(Convert.GetTypeCode(value))
+    { case TypeCode.Byte:   EmitInt((int)(byte)value); break;
+      case TypeCode.Char:   EmitInt((int)(char)value); break;
+      case TypeCode.Double: ILG.Emit(OpCodes.Ldc_R8, (double)value); break;
+      case TypeCode.Empty:  ILG.Emit(OpCodes.Ldnull); break;
+      case TypeCode.Int16:  EmitInt((int)(short)value); break;
+      case TypeCode.Int32:  EmitInt((int)value); break;
+      case TypeCode.Int64:  ILG.Emit(OpCodes.Ldc_I8, (long)value); break;
+      case TypeCode.SByte:  EmitInt((int)(sbyte)value); break;
+      case TypeCode.Single: ILG.Emit(OpCodes.Ldc_R4, (float)value); break;
+      case TypeCode.String: EmitString((string)value); break;
+      case TypeCode.UInt16: EmitInt((int)(ushort)value); break;
+      case TypeCode.UInt32: EmitInt((int)(uint)value); break;
+      case TypeCode.UInt64: ILG.Emit(OpCodes.Ldc_I8, (long)(ulong)value); break;
+      default: throw new NotImplementedException("constant: "+value.GetType());
+    }
+  }
+
+  public void EmitConstantObject(object value)
   { if(value==null) ILG.Emit(OpCodes.Ldnull);
     else if(value is bool) EmitFieldGet(typeof(Ops), (bool)value ? "TRUE" : "FALSE");
     else
@@ -73,13 +92,20 @@ public sealed class CodeGenerator
   }
 
   public void EmitFieldGet(Type type, string name) { EmitFieldGet(type.GetField(name, SearchAll)); }
-  public void EmitFieldGet(FieldInfo field) { ILG.Emit(field.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, field); }
+  public void EmitFieldGet(FieldInfo field)
+  { if(field.IsLiteral) EmitConstant(field.GetValue(null));
+    else ILG.Emit(field.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, field);
+  }
   public void EmitFieldGetAddr(Type type, string name) { EmitFieldGetAddr(type.GetField(name, SearchAll)); }
   public void EmitFieldGetAddr(FieldInfo field)
-  { ILG.Emit(field.IsStatic ? OpCodes.Ldsflda : OpCodes.Ldflda, field);
+  { if(field.IsLiteral) throw new ArgumentException("Cannot get the address of a literal field");
+    ILG.Emit(field.IsStatic ? OpCodes.Ldsflda : OpCodes.Ldflda, field);
   }
   public void EmitFieldSet(Type type, string name) { EmitFieldSet(type.GetField(name, SearchAll)); }
-  public void EmitFieldSet(FieldInfo field) { ILG.Emit(field.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, field); }
+  public void EmitFieldSet(FieldInfo field)
+  { if(field.IsLiteral) throw new ArgumentException("Cannot set a literal field");
+    ILG.Emit(field.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, field);
+  }
 
   public void EmitGet(string name)
   { Namespace ns = EmitEnvironmentFor(name);
@@ -164,7 +190,7 @@ public sealed class CodeGenerator
     for(int i=0; i<objs.Length; i++)
     { ILG.Emit(OpCodes.Dup);
       EmitInt(i);
-      EmitConstant(objs[i]);
+      EmitConstantObject(objs[i]);
       ILG.Emit(OpCodes.Stelem_Ref);
     }
   }
@@ -201,8 +227,14 @@ public sealed class CodeGenerator
   }
   
   public void EmitTypeOf(Type type)
-  { ILG.Emit(OpCodes.Ldtoken, type);
-    EmitCall(typeof(Type), "GetTypeFromHandle");
+  { if(type.IsByRef) // TODO: see if there's a better way to do this. this might not even be safe for types in other assemblies. maybe optimize it by caching values?
+    { EmitString(type.FullName+"&");
+      EmitCall(typeof(Type), "GetType", new Type[] { typeof(string) });
+    }
+    else
+    { ILG.Emit(OpCodes.Ldtoken, type);
+      EmitCall(typeof(Type), "GetTypeFromHandle");
+    }
   }
 
   public void Finish()
