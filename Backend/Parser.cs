@@ -183,7 +183,7 @@ public sealed class Parser
     do
     { if(pastFlags)
       { sb.Append(c);
-        if(radix==0 && !char.IsDigit(c)) ident=true;
+        if(radix==0 && !char.IsDigit(c) && c!='.' && (c!='-' || sb.Length>1)) ident=true;
       }
       else
         switch(c)
@@ -203,7 +203,7 @@ public sealed class Parser
     Match m = numRegex.Match(str);
     if(ident)
     { if(!m.Success) return str;
-      if(m.Groups[1].Success) throw new NotImplementedException("complex numbers");
+      if(m.Groups[1].Success) throw new NotImplementedException("complex numbers"); // TODO: add this
     }
     else if(!m.Success) SyntaxError("invalid number");
 
@@ -216,7 +216,7 @@ public sealed class Parser
       try { return Convert.ToInt32(str, radix); }
       catch(OverflowException)
       { try { return Convert.ToInt64(str, radix); }
-        catch(OverflowException) { throw new NotImplementedException("long numbers"); }
+        catch(OverflowException) { return new Integer(str, radix); }
       }
     }
   }
@@ -227,7 +227,7 @@ public sealed class Parser
     while(true)
     { do c=ReadChar(); while(c!=0 && char.IsWhiteSpace(c));
       
-      if(char.IsDigit(c) || c=='.')
+      if(char.IsDigit(c) || c=='.' || c=='-')
       { value = ReadNumber(c);
         return value is Token ? (Token)value : value is string ? Token.Symbol : Token.Literal;
       }
@@ -338,8 +338,8 @@ public sealed class Parser
 
   static bool IsDelimiter(char c) { return char.IsWhiteSpace(c) || c=='(' || c==')' || c=='#' || c=='`' || c==',' || c=='\''; }
   
-  static readonly Regex numRegex = new Regex(@"^(\d*(?:\.\d+)?)(?:\+(\d*(?:\.\d+)?)j)?$", RegexOptions.Compiled|RegexOptions.IgnoreCase|RegexOptions.Singleline);
-  static readonly Regex fracRegex = new Regex(@"^(\d+)/(\d+)$", RegexOptions.Compiled|RegexOptions.Singleline);
+  static readonly Regex numRegex = new Regex(@"^(-?\d*(?:\.\d+)?)(?:\+(-?\d*(?:\.\d+)?)j)?$", RegexOptions.Compiled|RegexOptions.IgnoreCase|RegexOptions.Singleline);
+  static readonly Regex fracRegex = new Regex(@"^(-?\d+)/(-?\d+)$", RegexOptions.Compiled|RegexOptions.Singleline);
 }
 
 } // namespace NetLisp.Backend

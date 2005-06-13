@@ -6,20 +6,245 @@ namespace NetLisp.Backend
 {
 
 public sealed class Builtins
-{ public static Hashtable GetProcedureDict()
-  { Hashtable dict = new Hashtable(Old.ReflectedType.FromType(typeof(Builtins)).Dict);
+{ public static void Bind(TopLevel top)
+  { foreach(MethodInfo mi in typeof(Builtins).GetMethods())
+    { object[] attrs = mi.GetCustomAttributes(typeof(SymbolNameAttribute), false);
+      string name = attrs.Length==0 ? mi.Name : ((SymbolNameAttribute)attrs[0]).Name;
+      top.Bind(name, Interop.MakeFunctionWrapper(mi, true));
+    }
 
     foreach(Type type in typeof(Builtins).GetNestedTypes(BindingFlags.Public))
       if(type.IsSubclassOf(typeof(Primitive)))
       { Primitive prim = (Primitive)type.GetConstructor(Type.EmptyTypes).Invoke(null);
-        dict[prim.Name] = prim;
+        top.Bind(prim.Name, prim);
       }
-
-    return dict;
   }
 
-public static void import(string name) { Interop.Import(name); }
-public static void usens(string ns) { Interop.ImportNamespace(ns); }
+public static void import(params object[] args)
+{ foreach(object o in args)
+  { if(o is string) Interop.Import((string)o);
+    else if(o is Pair)
+    { string ns = (string)Ops.FastCadr((Pair)o);
+      foreach(string name in Ops.ListToArray((Pair)Ops.FastCddr((Pair)o)))
+        Interop.Import(ns+"."+name);
+    }
+  }
+}
+
+[SymbolName("load-assembly-by-name")]
+public static void loadByName(string name) { Interop.LoadAssemblyByName(name); }
+[SymbolName("load-assembly-from-file")]
+public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name); }
+
+  #region Numeric operators
+  #region +
+  public sealed class opadd : Primitive
+  { public opadd() : base("+", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object ret = Ops.Add(args[0], args[1]);
+      for(int i=2; i<args.Length; i++) ret = Ops.Add(ret, args[i]);
+      return ret;
+    }
+  }
+  #endregion
+  #region -
+  public sealed class opsub : Primitive
+  { public opsub() : base("-", 1, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      if(args.Length==1) return Ops.Negate(args[0]);
+      object ret = Ops.Subtract(args[0], args[1]);
+      for(int i=2; i<args.Length; i++) ret = Ops.Subtract(ret, args[i]);
+      return ret;
+    }
+  }
+  #endregion
+  #region *
+  public sealed class opmul : Primitive
+  { public opmul() : base("*", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object ret = Ops.Multiply(args[0], args[1]);
+      for(int i=2; i<args.Length; i++) ret = Ops.Multiply(ret, args[i]);
+      return ret;
+    }
+  }
+  #endregion
+  #region /
+  public sealed class opdiv : Primitive
+  { public opdiv() : base("/", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object ret = Ops.Divide(args[0], args[1]);
+      for(int i=2; i<args.Length; i++) ret = Ops.Divide(ret, args[i]);
+      return ret;
+    }
+  }
+  #endregion
+  #region //
+  public sealed class opfdiv : Primitive
+  { public opfdiv() : base("//", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object ret = Ops.FloorDivide(args[0], args[1]);
+      for(int i=2; i<args.Length; i++) ret = Ops.FloorDivide(ret, args[i]);
+      return ret;
+    }
+  }
+  #endregion
+  #region %
+  public sealed class opmod : Primitive
+  { public opmod() : base("%", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object ret = Ops.Modulus(args[0], args[1]);
+      for(int i=2; i<args.Length; i++) ret = Ops.Modulus(ret, args[i]);
+      return ret;
+    }
+  }
+  #endregion
+  #region pow
+  public sealed class pow : Primitive
+  { public pow() : base("pow", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.Power(args[0], args[1]);
+    }
+  }
+  #endregion
+  #region powmod
+  public sealed class powmod : Primitive
+  { public powmod() : base("powmod", 3, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.PowerMod(args[0], args[1], args[2]);
+    }
+  }
+  #endregion
+
+  #region =
+  public sealed class opeq : Primitive
+  { public opeq() : base("=", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      for(int i=0; i<args.Length-1; i++) if(Ops.Compare(args[i], args[i+1])!=0) return Ops.FALSE;
+      return Ops.TRUE;
+    }
+  }
+  #endregion
+  #region !=
+  public sealed class opne : Primitive
+  { public opne() : base("!=", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      for(int i=0; i<args.Length-1; i++) if(Ops.Compare(args[i], args[i+1])==0) return Ops.FALSE;
+      return Ops.TRUE;
+    }
+  }
+  #endregion
+  #region <
+  public sealed class oplt : Primitive
+  { public oplt() : base("<", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      for(int i=0; i<args.Length-1; i++) if(Ops.Compare(args[i], args[i+1])>=0) return Ops.FALSE;
+      return Ops.TRUE;
+    }
+  }
+  #endregion
+  #region <=
+  public sealed class ople : Primitive
+  { public ople() : base("<=", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      for(int i=0; i<args.Length-1; i++) if(Ops.Compare(args[i], args[i+1])>0) return Ops.FALSE;
+      return Ops.TRUE;
+    }
+  }
+  #endregion
+  #region >
+  public sealed class opgt : Primitive
+  { public opgt() : base(">", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      for(int i=0; i<args.Length-1; i++) if(Ops.Compare(args[i], args[i+1])<=0) return Ops.FALSE;
+      return Ops.TRUE;
+    }
+  }
+  #endregion
+  #region >=
+  public sealed class opge : Primitive
+  { public opge() : base(">=", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      for(int i=0; i<args.Length-1; i++) if(Ops.Compare(args[i], args[i+1])<0) return Ops.FALSE;
+      return Ops.TRUE;
+    }
+  }
+  #endregion
+
+  #region bitand
+  public sealed class bitand : Primitive
+  { public bitand() : base("bitand", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object ret = Ops.BitwiseAnd(args[0], args[1]);
+      for(int i=2; i<args.Length; i++) ret = Ops.BitwiseAnd(ret, args[i]);
+      return ret;
+    }
+  }
+  #endregion
+  #region bitor
+  public sealed class bitor : Primitive
+  { public bitor() : base("bitor", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object ret = Ops.BitwiseOr(args[0], args[1]);
+      for(int i=2; i<args.Length; i++) ret = Ops.BitwiseOr(ret, args[i]);
+      return ret;
+    }
+  }
+  #endregion
+  #region bitxor
+  public sealed class bitxor : Primitive
+  { public bitxor() : base("bitxor", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object ret = Ops.BitwiseXor(args[0], args[1]);
+      for(int i=2; i<args.Length; i++) ret = Ops.BitwiseXor(ret, args[i]);
+      return ret;
+    }
+  }
+  #endregion
+  #region bitnot
+  public sealed class bitnot : Primitive
+  { public bitnot() : base("bitnot", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.BitwiseNegate(args[0]);
+    }
+  }
+  #endregion
+  #region lshift
+  public sealed class lshift : Primitive
+  { public lshift() : base("lshift", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.LeftShift(args[0], args[1]);
+    }
+  }
+  #endregion
+  #region rshift
+  public sealed class rshift : Primitive
+  { public rshift() : base("rshift", 2, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.RightShift(args[0], args[1]);
+    }
+  }
+  #endregion
+  #endregion
 
   #region and
   public sealed class and : Primitive
@@ -174,6 +399,17 @@ public static void usens(string ns) { Interop.ImportNamespace(ns); }
   [SymbolName("compiled-procedure?")]
   public static object compiledProcedureP(object obj) { return Ops.FromBool(obj is IProcedure); }
 
+  #region complex?
+  public sealed class complexP : Primitive
+  { public complexP() : base("complex?", 1, 1) { }
+  
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return args[0] is Complex ? Ops.TRUE : Ops.FALSE;
+    }
+  }
+  #endregion
+
   [SymbolName("compound-procedure?")]
   public static object compoundProcedureP(object obj) { return Ops.FALSE; }
 
@@ -231,7 +467,7 @@ public static void usens(string ns) { Interop.ImportNamespace(ns); }
   
     public override object Call(object[] args)
     { CheckArity(args);
-      return Ops.Eqv(args[0], args[1]) ? Ops.TRUE : Ops.FALSE;
+      return Ops.EqvP(args[0], args[1]) ? Ops.TRUE : Ops.FALSE;
     }
   }
   #endregion
@@ -242,7 +478,7 @@ public static void usens(string ns) { Interop.ImportNamespace(ns); }
   
     public override object Call(object[] args)
     { CheckArity(args);
-      return Ops.Equal(args[0], args[1]) ? Ops.TRUE : Ops.FALSE;
+      return Ops.EqualP(args[0], args[1]) ? Ops.TRUE : Ops.FALSE;
     }
   }
   #endregion
@@ -359,6 +595,17 @@ public static void usens(string ns) { Interop.ImportNamespace(ns); }
       try { while(pair!=null) { sb.Append((char)pair.Car); pair=pair.Cdr as Pair; } }
       catch(InvalidCastException) { throw new Exception(name+": expects a list of characters"); }
       return sb.ToString();
+    }
+  }
+  #endregion
+
+  #region make-ref
+  public sealed class makeRef : Primitive
+  { public makeRef() : base("make-ref", 0, 1) { }
+    
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return new Reference(args.Length==0 ? null : args[0]);
     }
   }
   #endregion
@@ -484,14 +731,35 @@ public static void usens(string ns) { Interop.ImportNamespace(ns); }
   }
   #endregion
 
+  #region ref-get
+  public sealed class refGet : Primitive
+  { public refGet() : base("ref-get", 1, 1) { }
+    
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectRef(args[0]).Value;
+    }
+  }
+  #endregion
+
+  #region ref-set!
+  public sealed class refSetN : Primitive
+  { public refSetN() : base("ref-set!", 2, 2) { }
+    
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectRef(args[0]).Value=args[1];
+    }
+  }
+  #endregion
+
   #region set-car!
   public sealed class setCarN : Primitive
   { public setCarN() : base("set-car!", 2, 2) { }
   
     public override object Call(object[] args)
     { CheckArity(args);
-      Ops.ExpectPair(args[0]).Car = args[1];
-      return null;
+      return Ops.ExpectPair(args[0]).Car = args[1];
     }
   }
   #endregion
@@ -502,8 +770,7 @@ public static void usens(string ns) { Interop.ImportNamespace(ns); }
   
     public override object Call(object[] args)
     { CheckArity(args);
-      Ops.ExpectPair(args[0]).Cdr = args[1];
-      return null;
+      return Ops.ExpectPair(args[0]).Cdr = args[1];
     }
   }
   #endregion

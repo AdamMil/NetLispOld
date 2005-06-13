@@ -52,13 +52,13 @@ public sealed class TypeGenerator
   }
 
   public CodeGenerator DefineMethod(string name, Type retType, Type[] paramTypes)
-  { return DefineMethod(MethodAttributes.Public|MethodAttributes.Static, name, retType, paramTypes);
+  { return DefineMethod(MethodAttributes.Public, name, retType, paramTypes);
   }
   public CodeGenerator DefineMethod(MethodAttributes attrs, string name, Type retType, Type[] paramTypes)
   { MethodBuilder mb = TypeBuilder.DefineMethod(name, attrs, retType, paramTypes);
     return new CodeGenerator(this, mb, mb.GetILGenerator());
   }
-
+  
   public CodeGenerator DefineMethodOverride(string name)
   { return DefineMethodOverride(TypeBuilder.BaseType, name, false);
   }
@@ -171,6 +171,13 @@ public sealed class TypeGenerator
   }
   public Slot DefineStaticField(FieldAttributes attrs, string name, Type type)
   { return new StaticSlot(TypeBuilder.DefineField(name, type, attrs|FieldAttributes.Static));
+  }
+
+  public CodeGenerator DefineStaticMethod(string name, Type retType, Type[] paramTypes)
+  { return DefineMethod(MethodAttributes.Public|MethodAttributes.Static, name, retType, paramTypes);
+  }
+  public CodeGenerator DefineStaticMethod(MethodAttributes attrs, string name, Type retType, Type[] paramTypes)
+  { return DefineMethod(attrs|MethodAttributes.Static, name, retType, paramTypes);
   }
 
   public Type FinishType()

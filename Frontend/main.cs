@@ -5,22 +5,10 @@ using NetLisp.Backend;
 namespace NetLisp.Frontend
 {
 
-public struct test
-{ public test(int p) { i=p; }
-  public override string ToString()
-  {
-    return "test:"+i.ToString();
-  }
-
-  int i;
-}
-
 public class App
-{ public const int foo=5;
-  static void Main()
+{ static void Main()
   { TopLevel.Current = new TopLevel();
-    foreach(DictionaryEntry de in Builtins.GetProcedureDict())
-      TopLevel.Current.Bind((string)de.Key, de.Value);
+    Builtins.Bind(TopLevel.Current);
 
     Builtins.eval(Parser.FromString(stdlib).Parse());
     while(true)
@@ -93,6 +81,21 @@ public class App
 (define (cddadr x) (cdr (cdr (car (cdr x)))))
 (define (cdddar x) (cdr (cdr (cdr (car x)))))
 (define (cddddr x) (cdr (cdr (cdr (cdr x)))))
+
+(install-expander 'defmacro
+  (lambda (x e)
+    (define (make-macro pattern body)
+      (define (destructure pattern access bindings)
+        (if (null? pattern) bindings
+            (if (symbol? pattern) (cons `(,pattern ,access) bindings)
+                (if (pair? pattern)
+                    (destructure (car pattern) `(car ,access)
+                                (destructure (cdr pattern) `(cdr ,access) bindings))))))
+      (let ((x (gensym))  (e (gensym)))
+        `(lambda (,x ,e)
+          (,e (let ,(destructure pattern `(cdr ,x) nil) ,body) ,e))))
+    (let ((keyword (cadr x))  (pattern (caddr x))  (body (cadddr x)))
+      (e `(install-expander ',keyword ,(make-macro pattern body)) e))))
 
 ; (list obj ...)
 
