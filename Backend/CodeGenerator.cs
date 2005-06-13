@@ -155,10 +155,6 @@ public sealed class CodeGenerator
   public void EmitIsTrue() { EmitCall(typeof(Ops), "IsTrue"); }
   public void EmitIsTrue(Node e) { e.Emit(this); EmitIsTrue(); }
 
-  public void EmitLdFtn(MethodInfo mi)
-  { ILG.Emit(mi.IsVirtual ? OpCodes.Ldvirtftn : OpCodes.Ldftn, mi);
-  }
-
   public void EmitLine(int line)
   { if(TypeGenerator.Assembly.Symbols!=null)
       ILG.MarkSequencePoint(TypeGenerator.Assembly.Symbols, line, 0, line+1, 0);
@@ -176,22 +172,28 @@ public sealed class CodeGenerator
   }
 
   public void EmitObjectArray(Node[] exprs)
-  { EmitNewArray(typeof(object), exprs.Length);
-    for(int i=0; i<exprs.Length; i++)
-    { ILG.Emit(OpCodes.Dup);
-      EmitInt(i);
-      exprs[i].Emit(this);
-      ILG.Emit(OpCodes.Stelem_Ref);
+  { if(exprs.Length==0) EmitFieldGet(typeof(Ops), "EmptyArray");
+    else
+    { EmitNewArray(typeof(object), exprs.Length);
+      for(int i=0; i<exprs.Length; i++)
+      { ILG.Emit(OpCodes.Dup);
+        EmitInt(i);
+        exprs[i].Emit(this);
+        ILG.Emit(OpCodes.Stelem_Ref);
+      }
     }
   }
 
   public void EmitObjectArray(object[] objs)
-  { EmitNewArray(typeof(object), objs.Length);
-    for(int i=0; i<objs.Length; i++)
-    { ILG.Emit(OpCodes.Dup);
-      EmitInt(i);
-      EmitConstantObject(objs[i]);
-      ILG.Emit(OpCodes.Stelem_Ref);
+  { if(objs.Length==0) EmitFieldGet(typeof(Ops), "EmptyArray");
+    else
+    { EmitNewArray(typeof(object), objs.Length);
+      for(int i=0; i<objs.Length; i++)
+      { ILG.Emit(OpCodes.Dup);
+        EmitInt(i);
+        EmitConstantObject(objs[i]);
+        ILG.Emit(OpCodes.Stelem_Ref);
+      }
     }
   }
 

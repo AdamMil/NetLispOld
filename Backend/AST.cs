@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Reflection.Emit;
 
+// TODO: add exception handling
+
 namespace NetLisp.Backend
 {
 
@@ -216,15 +218,160 @@ public sealed class BodyNode : Node
 
 public sealed class CallNode : Node
 { public CallNode(Node func, Node[] args) { Function=func; Args=args; }
+  static CallNode()
+  { ops = new Hashtable();
+    string[] arr = new string[]
+    { "-", "Subtract", "bitnot", "BitwiseNegate", "+", "Add", "*", "Multiply", "/", "Divide", "//", "FloorDivide",
+      "%", "Modulus",  "bitand", "BitwiseAnd", "bitor", "BitwiseOr", "bitxor", "BitwiseXor", "=", "Equal",
+      "!=", "NotEqual", "<", "Less", ">", "More", "<=", "LessEqual", ">=", "MoreEqual", "pow", "Power",
+      "lshift", "LeftShift", "rshift", "RightShift", "powmod", "PowerMod"
+    };
+    for(int i=0; i<arr.Length; i+=2) ops[arr[i]] = arr[i+1];
+  }
+
+  static Hashtable ops;
 
   public override void Emit(CodeGenerator cg)
-  { Function.Emit(cg);
+  { if(Function is VariableNode)
+    { string name=((VariableNode)Function).Name, opname=(string)ops[name];
+      switch(name)
+      { case "eq?": case "eqv?": case "equal?":
+        { if(Args.Length!=2) goto normal;
+          Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
+          Args[0].Emit(cg);
+          Args[1].Emit(cg);
+          if(name=="eq?") cg.ILG.Emit(OpCodes.Ceq);
+          else cg.EmitCall(typeof(Ops), name=="eqv?" ? "EqvP" : "EqualP");
+          cg.ILG.Emit(OpCodes.Brtrue_S, yes);
+          cg.EmitFieldGet(typeof(Ops), "FALSE");
+          cg.ILG.Emit(OpCodes.Br_S, end);
+          cg.ILG.MarkLabel(yes);
+          cg.EmitFieldGet(typeof(Ops), "TRUE");
+          cg.ILG.MarkLabel(end);
+          goto ret;
+        }
+        case "null?": case "pair?": case "char?": case "string?": case "procedure?": case "complex?":
+        case "not": case "string-null?":
+        { if(Args.Length!=1) goto normal;
+          Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
+          Args[0].Emit(cg);
+          Type type=null;
+          switch(name)
+          { case "pair?": type=typeof(Pair); break;
+            case "char?": type=typeof(char); break;
+            case "string?": type=typeof(string); break;
+            case "complex?": type=typeof(Complex); break;
+            case "procedure?": type=typeof(IProcedure); break;
+            case "not": cg.EmitCall(typeof(Ops), "IsTrue"); break;
+            case "string-null?":
+              cg.ILG.Emit(OpCodes.Castclass, typeof(string));
+              cg.EmitPropGet(typeof(string), "Length");
+              break;
+          }
+          if(type!=null)
+          { cg.ILG.Emit(OpCodes.Isinst, type);
+            cg.ILG.Emit(OpCodes.Brtrue_S, yes);
+          }
+          else cg.ILG.Emit(OpCodes.Brfalse_S, yes);
+          cg.EmitFieldGet(typeof(Ops), "FALSE");
+          cg.ILG.Emit(OpCodes.Br_S, end);
+          cg.ILG.MarkLabel(yes);
+          cg.EmitFieldGet(typeof(Ops), "TRUE");
+          cg.ILG.MarkLabel(end);
+          goto ret;
+        }
+        case "string-length":
+          if(Args.Length!=1) goto normal;
+          Args[0].Emit(cg);
+          cg.ILG.Emit(OpCodes.Castclass, typeof(string));
+          cg.EmitPropGet(typeof(string), "Length");
+          cg.ILG.Emit(OpCodes.Box, typeof(int));
+          goto ret;
+        case "string-ref":
+          if(Args.Length!=2) goto normal;
+          Args[0].Emit(cg);
+          cg.ILG.Emit(OpCodes.Castclass, typeof(string));
+          Args[1].Emit(cg);
+          cg.EmitCall(typeof(Ops), "ToInt");
+          cg.EmitPropGet(typeof(string), "Chars");
+          cg.ILG.Emit(OpCodes.Box, typeof(char));
+          goto ret;
+        case "car": case "cdr":
+          if(Args.Length!=1) goto normal;
+          Args[0].Emit(cg);
+          cg.ILG.Emit(OpCodes.Castclass, typeof(Pair));
+          cg.EmitFieldGet(typeof(Pair), name=="car" ? "Car" : "Cdr");
+          goto ret;
+        case "char-upcase": case "char-downcase":
+          if(Args.Length!=1) goto normal;
+          cg.ILG.Emit(OpCodes.Unbox, typeof(char));
+          cg.ILG.Emit(OpCodes.Ldind_I2);
+          cg.EmitCall(typeof(char), name=="char-upcase" ? "ToUpper" : "ToLower", new Type[] { typeof(char) });
+          cg.ILG.Emit(OpCodes.Box, typeof(char));
+          goto ret;
+        case "set-car!": case "set-cdr!":
+          if(Args.Length!=2) goto normal;
+          Slot tmp = cg.AllocLocalTemp(typeof(object));
+          Args[1].Emit(cg);
+          tmp.EmitSet(cg);
+          Args[0].Emit(cg);
+          cg.ILG.Emit(OpCodes.Castclass, typeof(Pair));
+          tmp.EmitGet(cg);
+          cg.EmitFieldSet(typeof(Pair), name=="set-car!" ? "Car" : "Cdr");
+          tmp.EmitGet(cg);
+          cg.FreeLocalTemp(tmp);
+          goto ret;
+        case "-": case "bitnot":
+          if(Args.Length==1)
+          { opname = "Negate";
+            Args[0].Emit(cg);
+            break;
+          }
+          else goto plusetc;
+        case "+": case "*": case "/": case "//": case "%": case "bitand": case "bitor": case "bitxor": plusetc:
+          if(Args.Length<2) goto normal;
+          Args[0].Emit(cg);
+          for(int i=1; i<Args.Length-1; i++)
+          { Args[i].Emit(cg);
+            cg.EmitCall(typeof(Ops), opname);
+          }
+          Args[Args.Length-1].Emit(cg);
+          break;
+        case "=": case "!=": case "<": case ">": case "<=": case ">=":
+          if(Args.Length!=2) goto normal; // TODO: do the code generation for more than 2 arguments
+          Args[0].Emit(cg);
+          Args[1].Emit(cg);
+          break;
+        case "pow": case "lshift": case "rshift":
+          if(Args.Length!=2) goto normal;
+          Args[0].Emit(cg);
+          Args[1].Emit(cg);
+          break;
+        case "powmod":
+          if(Args.Length!=3) goto normal;
+          Args[0].Emit(cg);
+          Args[1].Emit(cg);
+          Args[2].Emit(cg);
+          break;
+        case "values":
+          cg.EmitObjectArray(Args);
+          cg.EmitNew(typeof(MultipleValues), new Type[] { typeof(object[]) });
+          goto ret;
+        default: goto normal;
+      }
+      if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
+      cg.EmitCall(typeof(Ops), opname);
+      ret:
+      if(Tail) cg.EmitReturn();
+      return;
+    }
+    
+    normal:
+    Function.Emit(cg);
     cg.ILG.Emit(OpCodes.Castclass, typeof(IProcedure));
-    if(Args.Length==0) cg.EmitFieldGet(typeof(Ops), "EmptyArray");
-    else cg.EmitObjectArray(Args);
+    cg.EmitObjectArray(Args);
     if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
     cg.EmitCall(typeof(IProcedure), "Call");
-    // FIXME: if we call a non-lisp function, it won't do a proper return sequence
     if(Tail) cg.EmitReturn();
   }
 
@@ -320,7 +467,20 @@ public sealed class IfNode : Node
 }
 
 public sealed class LambdaNode : Node
-{ public LambdaNode(string[] names, bool hasList, Node body) { Parameters=names; Body=body; HasList=hasList; }
+{ public LambdaNode(string[] names, bool hasList, BodyNode body)
+  { Parameters=names; Body=body; HasList=hasList;
+
+    // convert all the nested defines into a let
+    int num=0;
+    for(; num<body.Forms.Length; num++) if(!(body.Forms[num] is DefineNode)) break;
+    if(num==0) Body=body;
+    else
+    { Node[] newbody = new Node[body.Forms.Length-num];
+      Array.Copy(body.Forms, num, newbody, 0, newbody.Length);
+      Body = new BodyNode(newbody);
+      while(num-- != 0) Body = new LetNode(new string[] { ((DefineNode)body.Forms[num]).Name }, Body);
+    }
+  }
 
   public override void Emit(CodeGenerator cg)
   { index = AST.NextIndex;
@@ -358,9 +518,8 @@ public sealed class LambdaNode : Node
 
   CodeGenerator MakeImplMethod(CodeGenerator cg)
   { CodeGenerator icg;
-    icg = cg.TypeGenerator.DefineMethod(MethodAttributes.Public|MethodAttributes.Static,
-                                        "lambda$" + index, typeof(object),
-                                        new Type[] { typeof(LocalEnvironment), typeof(object[]) });
+    icg = cg.TypeGenerator.DefineStaticMethod("lambda$" + index, typeof(object),
+                                              new Type[] { typeof(LocalEnvironment), typeof(object[]) });
 
     if(Parameters.Length==0) icg.Namespace = cg.Namespace;
     else
@@ -428,6 +587,17 @@ public sealed class LiteralNode : Node
   }
   public override object Evaluate() { return Value; }
   public readonly object Value;
+}
+
+public sealed class LetNode : Node
+{ public LetNode(string[] names, Node[] inits) { Names=names; Inits=inits; }
+
+  public override void Emit(CodeGenerator cg)
+  { 
+  }
+
+  public string[] Names;
+  public Node[] Inits;
 }
 
 public sealed class Options

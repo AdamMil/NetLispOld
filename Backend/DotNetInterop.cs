@@ -7,11 +7,6 @@ using System.Reflection.Emit;
 namespace NetLisp.Backend
 {
 
-public abstract class InteropProcedure : SimpleProcedure
-{ public InteropProcedure(string name, int min, int max) : base(name, min, max) { }
-  public override string ToString() { return name; }
-}
-
 #region FieldWrapper
 public abstract class FieldWrapper : IProcedure
 { public int MinArgs { get { return 1; } }
@@ -81,7 +76,7 @@ public abstract class FunctionWrapperI : FunctionWrapper
 #endregion
 
 #region ReflectedConstructor
-public sealed class ReflectedConstructor : InteropProcedure
+public sealed class ReflectedConstructor : SimpleProcedure
 { public ReflectedConstructor(Type type) : base("#<constructor '"+type.FullName+"'>", 0, -1)
   { this.type=type;
   }
@@ -102,7 +97,7 @@ public sealed class ReflectedConstructor : InteropProcedure
 #endregion
 
 #region ReflectedField
-public sealed class ReflectedField : InteropProcedure
+public sealed class ReflectedField : SimpleProcedure
 { public ReflectedField(string name) : base("#<field '"+name+"'>", 1, 2) { FieldName=name; }
 
   public readonly string FieldName;
@@ -123,7 +118,7 @@ public sealed class ReflectedField : InteropProcedure
 #endregion
 
 #region ReflectedFunction
-public sealed class ReflectedFunction : InteropProcedure
+public sealed class ReflectedFunction : SimpleProcedure
 { public ReflectedFunction(Type type, string name) : base("#<method '"+name+"'>", 0, -1)
   { this.type=type; methodName=name;
   }
@@ -133,21 +128,21 @@ public sealed class ReflectedFunction : InteropProcedure
     { ArrayList list = new ArrayList();
       foreach(MethodInfo mi in type.GetMethods(BindingFlags.Public|BindingFlags.Static))
         if(mi.Name==methodName) list.Add(Interop.MakeFunctionWrapper(mi));
-      funcs = (FunctionWrapperI[])list.ToArray(typeof(FunctionWrapper));
+      funcs = (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
       type  = null;
       methodName = null;
     }
     return Interop.Call(funcs, args);
   }
 
-  FunctionWrapperI[] funcs;
+  FunctionWrapper[] funcs;
   Type type;
   string methodName;
 }
 #endregion
 
 #region ReflectedMethod
-public sealed class ReflectedMethod : InteropProcedure
+public sealed class ReflectedMethod : SimpleProcedure
 { public ReflectedMethod(string name) : base("#<method '"+name+"'>", 1, -1) { MethodName=name; }
 
   public readonly string MethodName;
@@ -177,7 +172,7 @@ public sealed class ReflectedMethod : InteropProcedure
 #endregion
 
 #region ReflectedProperty
-public sealed class ReflectedProperty : InteropProcedure
+public sealed class ReflectedProperty : SimpleProcedure
 { public ReflectedProperty(string name) : base("#<property '"+name+"'>", 1, -1) { PropertyName=name; }
 
   public readonly string PropertyName;
@@ -259,70 +254,19 @@ public sealed class Interop
     TopLevel.Current.Bind("::"+type.FullName, type);
 
     ImportConstructors(type);
+    foreach(EventInfo ei in type.GetEvents()) ImportEvent(ei);
     foreach(FieldInfo fi in type.GetFields()) ImportField(fi);
     ImportMethods(type);
     ImportProperties(type);
   }
   #endregion
 
-  public static void ImportNamespace(string ns)
-  { foreach(Assembly ass in AppDomain.CurrentDomain.GetAssemblies())
-      foreach(Type type in ass.GetTypes())
-        if(type.Namespace==ns) Import(type);
+  public static void LoadAssemblyByName(string name)
+  { if(Assembly.LoadWithPartialName(name)==null) throw new ArgumentException("Assembly "+name+" could not be loaded");
   }
+  public static void LoadAssemblyFromFile(string name) { Assembly.LoadFrom(name); }
 
-  #region Signature
-  sealed class Signature
-  { public Signature(MethodBase mi)
-    { ParameterInfo[] pi = mi.GetParameters();
-
-      IsCons = mi is ConstructorInfo;
-      int so = IsCons || mi.IsStatic ? 0 : 1;
-
-      Convention = mi.CallingConvention==CallingConventions.VarArgs ? CallingConventions.VarArgs
-                                                                    : CallingConventions.Standard;
-      Return     = IsCons ? mi.DeclaringType : ((MethodInfo)mi).ReturnType;
-      Params     = new Type[pi.Length + so];
-      ParamArray = pi.Length>0 && pi[pi.Length-1].IsDefined(typeof(ParamArrayAttribute), false);
-
-      if(so==1) Params[0] = mi.DeclaringType;
-      for(int i=0,req=-1; i<pi.Length; i++)
-      { Params[i + so] = pi[i].ParameterType;
-        if(pi[i].IsOptional)
-        { if(req==-1)
-          { req = i;
-            Defaults = new object[pi.Length - i - (ParamArray ? 1 : 0)];
-          }
-          Defaults[i-req] = pi[i].DefaultValue;
-        }
-      }
-    }
-    
-    public override bool Equals(object obj)
-    { Signature o = (Signature)obj;
-      if(Params.Length!=o.Params.Length || ParamArray!=o.ParamArray || Return!=o.Return || Convention!=o.Convention ||
-         IsCons!=o.IsCons || (Defaults==null && o.Defaults!=null || Defaults!=null && o.Defaults==null ||
-                              Defaults!=null && Defaults.Length!=o.Defaults.Length))
-        return false;
-      for(int i=0; i<Params.Length; i++) if(Params[i] != o.Params[i]) return false;
-      if(Defaults!=null)
-        for(int i=0; i<Defaults.Length; i++) if(!object.Equals(Defaults[i], o.Defaults[i])) return false;
-      return true;
-    }
-
-    public override int GetHashCode()
-    { int hash=Return.GetHashCode();
-      for(int i=0; i<Params.Length; i++) hash ^= Params[i].GetHashCode();
-      return hash;
-    }
-
-    public Type     Return;
-    public Type[]   Params;
-    public object[] Defaults;
-    public CallingConventions Convention;
-    public bool     IsCons, ParamArray;
-  }
-  #endregion
+  delegate object Create(IProcedure proc);
 
   #region Emit helpers
   static void EmitArrayStore(CodeGenerator cg, Type type)
@@ -346,7 +290,9 @@ public sealed class Interop
 
   static void EmitConvertTo(CodeGenerator cg, Type type) { EmitConvertTo(cg, type, false); }
   static void EmitConvertTo(CodeGenerator cg, Type type, bool useIndirect)
-  { if(type.IsValueType || type.IsSubclassOf(typeof(Delegate))) // TODO: be sure to handle all special object types
+  { if(type==typeof(void)) throw new ArgumentException("Can't convert to void!");
+
+    if(type.IsValueType || type.IsSubclassOf(typeof(Delegate))) // TODO: be sure to handle all special object types
     { cg.EmitTypeOf(type);
       cg.EmitCall(typeof(Ops), "ConvertTo", new Type[] { typeof(object), typeof(Type) });
     }
@@ -389,6 +335,13 @@ public sealed class Interop
   }
   #endregion
 
+  #region ImportEvent
+  static void ImportEvent(EventInfo ei)
+  { ImportMethods(ei.DeclaringType, new MethodInfo[] { ei.GetAddMethod() }, "add/", ei.Name);
+    ImportMethods(ei.DeclaringType, new MethodInfo[] { ei.GetRemoveMethod() }, "rem/", ei.Name);
+  }
+  #endregion
+
   #region ImportField
   static void ImportField(FieldInfo fi)
   { string shortBase = fi.IsStatic ? ":"+fi.DeclaringType.Name+"." : ":",
@@ -422,17 +375,18 @@ public sealed class Interop
   static void ImportMethods(Type type, MethodInfo[] methods, string prefix, string forceName)
   { ListDictionary dict = new ListDictionary();
     foreach(MethodInfo mi in methods)
-    { string key = (mi.IsStatic ? "1$" : "0$") + (forceName==null ? mi.Name : forceName);
+    { string key = (mi.IsStatic ? "1$" : "0$") + mi.Name;
       ArrayList list = (ArrayList)dict[key];
       if(list==null) dict[key]=list=new ArrayList();
       list.Add(mi);
     }
     foreach(DictionaryEntry de in dict)
     { bool isStatic = ((string)de.Key)[0]=='1';
-      string baseName=((string)de.Key).Substring(2), name=":"+prefix+(isStatic ? type.Name+"." : "") + baseName,
+      MethodBase[] mi = (MethodBase[])((ArrayList)de.Value).ToArray(typeof(MethodBase));
+      string realName=((string)de.Key).Substring(2), baseName=(forceName==null ? realName : forceName),
+                 name=":"+(isStatic ? type.Name+"." : "")+prefix+baseName,
              fullName=":"+type.FullName+"."+prefix+baseName;
 
-      MethodBase[] mi = (MethodBase[])((ArrayList)de.Value).ToArray(typeof(MethodBase));
       object obj;
       if(isStatic)
       { obj = mi.Length==1 ? MakeFunctionWrapper(mi[0]) : (object)new ReflectedFunction(type, baseName);
@@ -440,8 +394,8 @@ public sealed class Interop
         TopLevel.Current.Bind(fullName, obj);
       }
       else if(!TopLevel.Current.Get(name, out obj) || !(obj is ReflectedMethod) ||
-              ((ReflectedMethod)obj).MethodName!=baseName)
-      { obj = new ReflectedMethod(baseName);
+              ((ReflectedMethod)obj).MethodName!=realName)
+      { obj = new ReflectedMethod(realName);
         TopLevel.Current.Bind(name, obj);
         TopLevel.Current.Bind(fullName, obj); // TODO: optimize this by making the full version not dispatch on type
       }
@@ -470,11 +424,72 @@ public sealed class Interop
   }
   #endregion
 
+  #region MakeDelegateWrapper
+  public static object MakeDelegateWrapper(IProcedure proc, Type delegateType)
+  { Create cr;
+    lock(handlers) cr = (Create)handlers[delegateType];
+    
+    if(cr==null)
+    { MethodInfo mi = delegateType.GetMethod("Invoke", BindingFlags.Public|BindingFlags.Instance);
+      Signature sig = new Signature(mi, true);
+
+      lock(dsigs) cr = (Create)dsigs[sig]; // FIXME: improve thread safety elsewhere
+      if(cr==null)
+      { for(int i=0; i<sig.Params.Length; i++)
+          if(sig.Params[i].IsByRef) throw new NotImplementedException(); // TODO: implement this
+        TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
+                                                            "dw$"+AST.NextIndex, null);
+        Slot pslot = tg.DefineField(FieldAttributes.Private, "proc", typeof(IProcedure));
+
+        CodeGenerator cg = tg.DefineConstructor(new Type[] { typeof(IProcedure) });
+        cg.EmitArgGet(0);
+        pslot.EmitSet(cg);
+        cg.EmitReturn();
+        cg.Finish();
+        ConstructorInfo cons = (ConstructorInfo)cg.MethodBase;
+        
+        cg = tg.DefineMethod("Handle", sig.Return, sig.Params);
+        pslot.EmitGet(cg);
+        if(sig.Params.Length==0) cg.EmitFieldGet(typeof(Ops), "EmptyArray");
+        else
+        { cg.EmitNewArray(typeof(object), sig.Params.Length);
+          for(int i=0; i<sig.Params.Length; i++)
+          { cg.ILG.Emit(OpCodes.Dup);
+            cg.EmitInt(i);
+            cg.EmitArgGet(i);
+            if(sig.Params[i].IsValueType) cg.ILG.Emit(OpCodes.Box, sig.Params[i]);
+            cg.ILG.Emit(OpCodes.Stelem_Ref);
+          }
+          if(sig.Return==typeof(object)) cg.ILG.Emit(OpCodes.Tailcall);
+          cg.EmitCall(typeof(IProcedure), "Call");
+          if(sig.Return==typeof(void)) cg.ILG.Emit(OpCodes.Pop);
+          else EmitConvertTo(cg, sig.Return);
+          cg.EmitReturn();
+          cg.Finish();
+        }
+        
+        cg = tg.DefineStaticMethod("Create", typeof(object), new Type[] { typeof(IProcedure) });
+        cg.EmitArgGet(0);
+        cg.EmitNew(cons);
+        cg.EmitReturn();
+        cg.Finish();
+        
+        Type type = tg.FinishType();
+        cr = (Create)Delegate.CreateDelegate(typeof(Create), type.GetMethod("Create"));
+        lock(dsigs) dsigs[sig] = cr;
+      }
+      
+      lock(handlers) handlers[delegateType] = cr;
+    }
+    
+    return cr(proc);
+  }
+  #endregion
+  
   #region MakeFunctionWrapper
-  internal static FunctionWrapper MakeFunctionWrapper(MethodBase mi)
-  { 
-foreach(ParameterInfo pi in mi.GetParameters()) if(pi.ParameterType.IsByRef) return null; // TODO: implement handling of byref arguments
-    IntPtr ptr = mi.MethodHandle.Value;
+  internal static FunctionWrapper MakeFunctionWrapper(MethodBase mi) { return MakeFunctionWrapper(mi, false); }
+  internal static FunctionWrapper MakeFunctionWrapper(MethodBase mi, bool isPrimitive)
+  { IntPtr ptr = mi.MethodHandle.Value;
     FunctionWrapper ret = (FunctionWrapper)funcs[ptr];
     if(ret==null)
     { bool isCons = mi is ConstructorInfo;
@@ -551,6 +566,12 @@ foreach(ParameterInfo pi in mi.GetParameters()) if(pi.ParameterType.IsByRef) ret
   #endregion
   
   #region MakeSignatureWrapper
+  struct Ref
+  { public Ref(int i, Slot slot) { Index=i; Slot=slot; }
+    public Slot Slot;
+    public int Index;
+  }
+
   static Type MakeSignatureWrapper(MethodBase mi)
   { Signature sig = new Signature(mi);
     Type type = (Type)sigs[sig];
@@ -563,6 +584,9 @@ foreach(ParameterInfo pi in mi.GetParameters()) if(pi.ParameterType.IsByRef) ret
       int numnp = sig.ParamArray ? sig.Params.Length-1 : sig.Params.Length;
       int min = sig.Params.Length - (sig.Defaults==null ? 0 : sig.Defaults.Length) - (sig.ParamArray ? 1 : 0);
       int max = sig.ParamArray ? -1 : sig.Params.Length;
+      int refi=0, numrefs=0;
+      for(int i=0; i<sig.Params.Length; i++) if(sig.Params[i].IsByRef || sig.Params[i].IsPointer) numrefs++;
+      Ref[] refs = new Ref[numrefs];
 
       #region Initialize statics
       Slot ptypes =
@@ -626,8 +650,8 @@ foreach(ParameterInfo pi in mi.GetParameters()) if(pi.ParameterType.IsByRef) ret
       #region CheckArity
       if(!sig.ParamArray || min!=0)
       { // CheckArity
-        cg = tg.DefineMethod(MethodAttributes.Private|MethodAttributes.Static, "CheckArity",
-                            typeof(void), new Type[] { typeof(object[]) });
+        cg = tg.DefineStaticMethod(MethodAttributes.Private, "CheckArity",
+                                   typeof(void), new Type[] { typeof(object[]) });
         checkArity = (MethodInfo)cg.MethodBase;
         Label bad = cg.ILG.DefineLabel();
         Slot  len = cg.AllocLocalTemp(typeof(int));
@@ -677,16 +701,27 @@ foreach(ParameterInfo pi in mi.GetParameters()) if(pi.ParameterType.IsByRef) ret
 
       #region Call
       cg = tg.DefineMethodOverride("Call", true);
+      
       if(checkArity!=null)
       { cg.EmitArgGet(0);
         cg.EmitCall(checkArity);
       }
-
+      
       for(int i=0; i<min; i++) // required arguments
       { cg.EmitArgGet(0);
         cg.EmitInt(i);
         cg.ILG.Emit(OpCodes.Ldelem_Ref);
-        EmitConvertTo(cg, sig.Params[i]);
+        if(sig.Params[i].IsByRef || sig.Params[i].IsPointer)
+        { Type etype = sig.Params[i].GetElementType();
+          EmitConvertTo(cg, typeof(Reference));
+          cg.EmitFieldGet(typeof(Reference), "Value");
+          EmitConvertTo(cg, etype);
+          Slot tmp = cg.AllocLocalTemp(etype);
+          tmp.EmitSet(cg);
+          tmp.EmitGetAddr(cg);
+          refs[refi++] = new Ref(i, tmp);
+        }  
+        else EmitConvertTo(cg, sig.Params[i], i==0 && sig.IndirectThis);
       }
 
       if(min<numnp) // default arguments
@@ -716,145 +751,148 @@ foreach(ParameterInfo pi in mi.GetParameters()) if(pi.ParameterType.IsByRef) ret
       #region ParamArray handling
       if(sig.ParamArray)
       { Type etype = sig.Params[numnp].GetElementType();
-        Slot iv=cg.AllocLocalTemp(typeof(int)), sa=cg.AllocLocalTemp(typeof(Array));
-        Label pack=cg.ILG.DefineLabel(), call=cg.ILG.DefineLabel(), loop;
-        bool ind = UsesIndirectCopy(etype);
+        if(min==0 && etype==typeof(object)) cg.EmitArgGet(0);
+        else
+        { Slot iv=cg.AllocLocalTemp(typeof(int)), sa=cg.AllocLocalTemp(typeof(Array));
+          Label pack=cg.ILG.DefineLabel(), call=cg.ILG.DefineLabel(), loop;
+          bool ind = UsesIndirectCopy(etype);
 
-        #region Handle array casting
-        cg.EmitArgGet(0); // if(args.Length==ptypes.Length) {
-        cg.ILG.Emit(OpCodes.Ldlen);
-        cg.EmitInt(sig.Params.Length);
-        cg.ILG.Emit(OpCodes.Bne_Un_S, pack);
-        
-        cg.EmitArgGet(0); // sa = args[numNP] as Array;
-        cg.EmitInt(numnp);
-        cg.ILG.Emit(OpCodes.Ldelem_Ref);
-        cg.ILG.Emit(OpCodes.Isinst, typeof(Array));
-        cg.ILG.Emit(OpCodes.Dup);
-        sa.EmitSet(cg);
-        cg.ILG.Emit(OpCodes.Brfalse_S, pack); // if(sa==null) goto pack
-        
-        sa.EmitGet(cg); // conv = Ops.ConvertTo(sa.GetType(), ptypes[numNP]);
-        cg.EmitCall(typeof(Array), "GetType");
-        cg.EmitTypeOf(sig.Params[numnp]);
-        cg.EmitCall(typeof(Ops), "ConvertTo", new Type[] { typeof(Type), typeof(Type) });
-        cg.ILG.Emit(OpCodes.Dup); // used below
-        iv.EmitSet(cg);
-        
-        // if(conv==Identity || conv==Reference) { stack.push(castTo(ptypes[numNP], sa)); goto call; }
-        Label not2=cg.ILG.DefineLabel(), is2=cg.ILG.DefineLabel();
-        cg.EmitInt((int)Conversion.Identity);
-        cg.ILG.Emit(OpCodes.Beq_S, is2);
-        iv.EmitGet(cg);
-        cg.EmitInt((int)Conversion.Reference);
-        cg.ILG.Emit(OpCodes.Bne_Un_S, not2);
-        cg.ILG.MarkLabel(is2);
-        sa.EmitGet(cg);
-        cg.ILG.Emit(OpCodes.Castclass, sig.Params[numnp]);
-        cg.ILG.Emit(OpCodes.Br_S, call);
-        #endregion
-
-        #region Handle array conversion
-        cg.ILG.MarkLabel(not2);
-        if(etype!=typeof(object))
-        { sa.EmitGet(cg); // conv = Ops.ConvertTo(sa.GetType(), ptypes[numnp].GetElementType());
+          #region Handle array casting
+          cg.EmitArgGet(0); // if(args.Length==ptypes.Length) {
+          cg.ILG.Emit(OpCodes.Ldlen);
+          cg.EmitInt(sig.Params.Length);
+          cg.ILG.Emit(OpCodes.Bne_Un_S, pack);
+          
+          cg.EmitArgGet(0); // sa = args[numNP] as Array;
+          cg.EmitInt(numnp);
+          cg.ILG.Emit(OpCodes.Ldelem_Ref);
+          cg.ILG.Emit(OpCodes.Isinst, typeof(Array));
+          cg.ILG.Emit(OpCodes.Dup);
+          sa.EmitSet(cg);
+          cg.ILG.Emit(OpCodes.Brfalse_S, pack); // if(sa==null) goto pack
+          
+          sa.EmitGet(cg); // conv = Ops.ConvertTo(sa.GetType(), ptypes[numNP]);
           cg.EmitCall(typeof(Array), "GetType");
-          cg.EmitTypeOf(etype);
+          cg.EmitTypeOf(sig.Params[numnp]);
           cg.EmitCall(typeof(Ops), "ConvertTo", new Type[] { typeof(Type), typeof(Type) });
           cg.ILG.Emit(OpCodes.Dup); // used below
           iv.EmitSet(cg);
           
-          // if(conv==Identity || conv==Reference) goto pack;
+          // if(conv==Identity || conv==Reference) { stack.push(castTo(ptypes[numNP], sa)); goto call; }
+          Label not2=cg.ILG.DefineLabel(), is2=cg.ILG.DefineLabel();
           cg.EmitInt((int)Conversion.Identity);
-          cg.ILG.Emit(OpCodes.Beq_S, pack);
+          cg.ILG.Emit(OpCodes.Beq_S, is2);
           iv.EmitGet(cg);
           cg.EmitInt((int)Conversion.Reference);
-          cg.ILG.Emit(OpCodes.Beq_S, pack);
-          
-          sa.EmitGet(cg); // etype[] pa = new etype[sa.Length];
-          cg.EmitPropGet(typeof(Array), "Length");
-          cg.ILG.Emit(OpCodes.Newarr, etype);
-          
-          cg.EmitInt(numnp); // for(int i=0; i<pa.Length; i++) pa[i] = ConvertTo(sa[i], etype);
-          iv.EmitSet(cg);
-          loop = cg.ILG.DefineLabel();
-          cg.ILG.MarkLabel(loop);
-          cg.ILG.Emit(OpCodes.Dup); // dups pa for pa[i] or to leave onto the stack
-          cg.ILG.Emit(OpCodes.Ldlen);
-          iv.EmitGet(cg);
-          cg.ILG.Emit(OpCodes.Beq_S, call);
-          iv.EmitGet(cg);
-          if(ind) cg.ILG.Emit(OpCodes.Ldelema);
-          sa.EmitGet(cg); // sa[i]
-          iv.EmitGet(cg);
-          cg.EmitCall(typeof(Array), "GetValue", new Type[] { typeof(int) });
-          EmitConvertTo(cg, etype, ind);
-          if(ind) cg.ILG.Emit(OpCodes.Cpobj, etype);
-          else EmitArrayStore(cg, etype);
-          iv.EmitGet(cg); // i++
-          cg.EmitInt(1);
-          cg.ILG.Emit(OpCodes.Add);
-          iv.EmitSet(cg);
-          cg.ILG.Emit(OpCodes.Br_S, loop);
-        }
-        #endregion
-        
-        #region Handle new array packing
-        cg.ILG.MarkLabel(pack); // pack:
-        cg.EmitArgGet(0);       // etype[] pa = new etype[args.Length - numnp];
-        cg.ILG.Emit(OpCodes.Ldlen);
-        cg.EmitInt(numnp);
-        cg.ILG.Emit(OpCodes.Sub);
-        if(etype==typeof(object))
-        { cg.ILG.Emit(OpCodes.Dup); // used below
-          iv.EmitSet(cg);
-        }
-        cg.ILG.Emit(OpCodes.Newarr, etype);
+          cg.ILG.Emit(OpCodes.Bne_Un_S, not2);
+          cg.ILG.MarkLabel(is2);
+          sa.EmitGet(cg);
+          cg.ILG.Emit(OpCodes.Castclass, sig.Params[numnp]);
+          cg.ILG.Emit(OpCodes.Br_S, call);
+          #endregion
 
-        if(etype==typeof(object)) // Array.Copy(args, numnp, pa, 0, pa.Length)
-        { Slot pa=cg.AllocLocalTemp(sig.Params[numnp]);
-          pa.EmitSet(cg);
-          cg.EmitArgGet(0);
-          cg.EmitInt(numnp);
-          pa.EmitGet(cg);
-          cg.EmitInt(0);
-          iv.EmitGet(cg);
-          cg.EmitCall(typeof(Array), "Copy",
-                      new Type[] { typeof(Array), typeof(int), typeof(Array), typeof(int), typeof(int) });
-          pa.EmitGet(cg);
-          cg.FreeLocalTemp(pa);
-        }
-        else
-        { cg.EmitInt(numnp); // for(int i=numnp; i<args.Length; i++) pa[i-numnp] = ConvertTo(args[i], etype);
-          iv.EmitSet(cg);
-          loop = cg.ILG.DefineLabel();
-          cg.ILG.MarkLabel(loop);
-          iv.EmitGet(cg);
-          cg.EmitArgGet(0);
-          cg.ILG.Emit(OpCodes.Ldlen);
-          cg.ILG.Emit(OpCodes.Beq_S, call);
+          #region Handle array conversion
+          cg.ILG.MarkLabel(not2);
+          if(etype!=typeof(object))
+          { sa.EmitGet(cg); // conv = Ops.ConvertTo(sa.GetType(), ptypes[numnp].GetElementType());
+            cg.EmitCall(typeof(Array), "GetType");
+            cg.EmitTypeOf(etype);
+            cg.EmitCall(typeof(Ops), "ConvertTo", new Type[] { typeof(Type), typeof(Type) });
+            cg.ILG.Emit(OpCodes.Dup); // used below
+            iv.EmitSet(cg);
+            
+            // if(conv==Identity || conv==Reference) goto pack;
+            cg.EmitInt((int)Conversion.Identity);
+            cg.ILG.Emit(OpCodes.Beq_S, pack);
+            iv.EmitGet(cg);
+            cg.EmitInt((int)Conversion.Reference);
+            cg.ILG.Emit(OpCodes.Beq_S, pack);
+            
+            sa.EmitGet(cg); // etype[] pa = new etype[sa.Length];
+            cg.EmitPropGet(typeof(Array), "Length");
+            cg.ILG.Emit(OpCodes.Newarr, etype);
+            
+            cg.EmitInt(numnp); // for(int i=0; i<pa.Length; i++) pa[i] = ConvertTo(sa[i], etype);
+            iv.EmitSet(cg);
+            loop = cg.ILG.DefineLabel();
+            cg.ILG.MarkLabel(loop);
+            cg.ILG.Emit(OpCodes.Dup); // dups pa for pa[i] or to leave onto the stack
+            cg.ILG.Emit(OpCodes.Ldlen);
+            iv.EmitGet(cg);
+            cg.ILG.Emit(OpCodes.Beq_S, call);
+            iv.EmitGet(cg);
+            if(ind) cg.ILG.Emit(OpCodes.Ldelema);
+            sa.EmitGet(cg); // sa[i]
+            iv.EmitGet(cg);
+            cg.EmitCall(typeof(Array), "GetValue", new Type[] { typeof(int) });
+            EmitConvertTo(cg, etype, ind);
+            if(ind) cg.ILG.Emit(OpCodes.Cpobj, etype);
+            else EmitArrayStore(cg, etype);
+            iv.EmitGet(cg); // i++
+            cg.EmitInt(1);
+            cg.ILG.Emit(OpCodes.Add);
+            iv.EmitSet(cg);
+            cg.ILG.Emit(OpCodes.Br_S, loop);
+          }
+          #endregion
           
-          cg.ILG.Emit(OpCodes.Dup); // dup pa
-          iv.EmitGet(cg);
+          #region Handle new array packing
+          cg.ILG.MarkLabel(pack); // pack:
+          cg.EmitArgGet(0);       // etype[] pa = new etype[args.Length - numnp];
+          cg.ILG.Emit(OpCodes.Ldlen);
           cg.EmitInt(numnp);
           cg.ILG.Emit(OpCodes.Sub);
-          if(ind) cg.ILG.Emit(OpCodes.Ldelema);
-          cg.EmitArgGet(0);
-          iv.EmitGet(cg);
-          cg.ILG.Emit(OpCodes.Ldelem_Ref);
-          EmitConvertTo(cg, etype, ind);
-          if(ind) cg.ILG.Emit(OpCodes.Cpobj, etype);
-          else EmitArrayStore(cg, etype);
-          iv.EmitGet(cg);
-          cg.EmitInt(1);
-          iv.EmitSet(cg);
-          cg.ILG.Emit(OpCodes.Br_S, loop);
-        }
-        #endregion
+          if(etype==typeof(object))
+          { cg.ILG.Emit(OpCodes.Dup); // used below
+            iv.EmitSet(cg);
+          }
+          cg.ILG.Emit(OpCodes.Newarr, etype);
 
-        cg.ILG.MarkLabel(call);
-        cg.FreeLocalTemp(iv);
-        cg.FreeLocalTemp(sa);
+          if(etype==typeof(object)) // Array.Copy(args, numnp, pa, 0, pa.Length)
+          { Slot pa=cg.AllocLocalTemp(sig.Params[numnp]);
+            pa.EmitSet(cg);
+            cg.EmitArgGet(0);
+            cg.EmitInt(numnp);
+            pa.EmitGet(cg);
+            cg.EmitInt(0);
+            iv.EmitGet(cg);
+            cg.EmitCall(typeof(Array), "Copy",
+                        new Type[] { typeof(Array), typeof(int), typeof(Array), typeof(int), typeof(int) });
+            pa.EmitGet(cg);
+            cg.FreeLocalTemp(pa);
+          }
+          else
+          { cg.EmitInt(numnp); // for(int i=numnp; i<args.Length; i++) pa[i-numnp] = ConvertTo(args[i], etype);
+            iv.EmitSet(cg);
+            loop = cg.ILG.DefineLabel();
+            cg.ILG.MarkLabel(loop);
+            iv.EmitGet(cg);
+            cg.EmitArgGet(0);
+            cg.ILG.Emit(OpCodes.Ldlen);
+            cg.ILG.Emit(OpCodes.Beq_S, call);
+            
+            cg.ILG.Emit(OpCodes.Dup); // dup pa
+            iv.EmitGet(cg);
+            cg.EmitInt(numnp);
+            cg.ILG.Emit(OpCodes.Sub);
+            if(ind) cg.ILG.Emit(OpCodes.Ldelema);
+            cg.EmitArgGet(0);
+            iv.EmitGet(cg);
+            cg.ILG.Emit(OpCodes.Ldelem_Ref);
+            EmitConvertTo(cg, etype, ind);
+            if(ind) cg.ILG.Emit(OpCodes.Cpobj, etype);
+            else EmitArrayStore(cg, etype);
+            iv.EmitGet(cg);
+            cg.EmitInt(1);
+            iv.EmitSet(cg);
+            cg.ILG.Emit(OpCodes.Br_S, loop);
+          }
+          #endregion
+
+          cg.ILG.MarkLabel(call);
+          cg.FreeLocalTemp(iv);
+          cg.FreeLocalTemp(sa);
+        }
       }
       #endregion
 
@@ -863,16 +901,32 @@ foreach(ParameterInfo pi in mi.GetParameters()) if(pi.ParameterType.IsByRef) ret
         if(mi.DeclaringType.IsValueType) cg.ILG.Emit(OpCodes.Box, mi.DeclaringType);
       }
       else
-      { cg.EmitThis();
-        cg.EmitFieldGet(typeof(FunctionWrapperI), "methodPtr");
-        if(!sig.Return.IsValueType) cg.ILG.Emit(OpCodes.Tailcall);
+      { if(sig.IndirectThis) cg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)mi); // HACK: we hardcode the function pointer in this case because MethodHandle.GetFunctionPointer() doesn't return the correct value for instance calls on value types. this should be a safe hack
+        else
+        { cg.EmitThis();
+          cg.EmitFieldGet(typeof(FunctionWrapperI), "methodPtr");
+        }
+        if(!sig.Return.IsValueType && numrefs==0) cg.ILG.Emit(OpCodes.Tailcall);
         cg.ILG.EmitCalli(OpCodes.Calli, sig.Convention, sig.Return, sig.Params, null);
-        if(sig.Return.IsValueType) cg.ILG.Emit(OpCodes.Box, sig.Return);
+        if(sig.Return==typeof(void)) cg.ILG.Emit(OpCodes.Ldnull);
+        else if(sig.Return.IsValueType) cg.ILG.Emit(OpCodes.Box, sig.Return);
+        
+        foreach(Ref r in refs)
+        { Type etype = sig.Params[r.Index].GetElementType();
+          cg.EmitArgGet(0);
+          cg.EmitInt(r.Index);
+          cg.ILG.Emit(OpCodes.Ldelem_Ref);
+          cg.ILG.Emit(OpCodes.Castclass, typeof(Reference));
+          r.Slot.EmitGet(cg);
+          if(etype.IsValueType) cg.ILG.Emit(OpCodes.Box, etype);
+          cg.EmitFieldSet(typeof(Reference), "Value");
+          cg.FreeLocalTemp(r.Slot);
+        }
       }
+
       cg.EmitReturn();
       cg.Finish();
       #endregion
-
       sigs[sig] = type = tg.FinishType();
     }
     return type;
@@ -880,6 +934,65 @@ foreach(ParameterInfo pi in mi.GetParameters()) if(pi.ParameterType.IsByRef) ret
   #endregion
 
   static readonly Hashtable sigs=new Hashtable(), funcs=new Hashtable(), gets=new Hashtable(), sets=new Hashtable();
+  static Hashtable handlers=new Hashtable(), dsigs=new Hashtable();
+}
+#endregion
+
+#region Signature
+sealed class Signature
+{ public Signature(MethodBase mi) : this(mi, false) { }
+  public Signature(MethodBase mi, bool ignoreThis)
+  { ParameterInfo[] pi = mi.GetParameters();
+
+    IsCons   = mi is ConstructorInfo;
+    int so   = IsCons || mi.IsStatic || ignoreThis ? 0 : 1;
+
+    Convention = mi.CallingConvention==CallingConventions.VarArgs ? CallingConventions.VarArgs
+                                                                  : CallingConventions.Standard;
+    Return     = IsCons ? mi.DeclaringType : ((MethodInfo)mi).ReturnType;
+    Params     = new Type[pi.Length + so];
+    ParamArray = pi.Length>0 && pi[pi.Length-1].IsDefined(typeof(ParamArrayAttribute), false);
+
+    if(so==1)
+    { Params[0] = mi.DeclaringType;
+      IndirectThis = mi.DeclaringType.IsValueType;
+    }
+    for(int i=0,req=-1; i<pi.Length; i++)
+    { Params[i + so] = pi[i].ParameterType;
+      if(pi[i].IsOptional)
+      { if(req==-1)
+        { req = i;
+          Defaults = new object[pi.Length - i - (ParamArray ? 1 : 0)];
+        }
+        Defaults[i-req] = pi[i].DefaultValue;
+      }
+    }
+  }
+  
+  public override bool Equals(object obj)
+  { Signature o = (Signature)obj;
+    if(Params.Length!=o.Params.Length || ParamArray!=o.ParamArray || Return!=o.Return || Convention!=o.Convention ||
+        IsCons!=o.IsCons || IndirectThis!=o.IndirectThis ||
+       (Defaults==null && o.Defaults!=null || Defaults!=null && o.Defaults==null ||
+        Defaults!=null && Defaults.Length!=o.Defaults.Length))
+      return false;
+    for(int i=0; i<Params.Length; i++) if(Params[i] != o.Params[i]) return false;
+    if(Defaults!=null)
+      for(int i=0; i<Defaults.Length; i++) if(!object.Equals(Defaults[i], o.Defaults[i])) return false;
+    return true;
+  }
+
+  public override int GetHashCode()
+  { int hash=Return.GetHashCode();
+    for(int i=0; i<Params.Length; i++) hash ^= Params[i].GetHashCode();
+    return hash;
+  }
+
+  public Type     Return;
+  public Type[]   Params;
+  public object[] Defaults;
+  public CallingConventions Convention;
+  public bool     IsCons, IndirectThis, ParamArray;
 }
 #endregion
 
