@@ -319,8 +319,7 @@ public sealed class Interop
   static bool UsesIndirectCopy(Type type) // TODO: see if it's faster to always use indirect copying
   { if(!type.IsValueType || type.IsPointer || type==typeof(IntPtr)) return false;
     TypeCode code = Type.GetTypeCode(type);
-    return code==TypeCode.DateTime || code==TypeCode.DBNull || code==TypeCode.Decimal ||
-           code==TypeCode.Object;
+    return code==TypeCode.Object || code==TypeCode.DateTime || code==TypeCode.DBNull || code==TypeCode.Decimal;
   }
   #endregion
 
@@ -438,7 +437,7 @@ public sealed class Interop
       { for(int i=0; i<sig.Params.Length; i++)
           if(sig.Params[i].IsByRef) throw new NotImplementedException(); // TODO: implement this
         TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
-                                                            "dw$"+AST.NextIndex, null);
+                                                            "dw$"+dwi.Next, null);
         Slot pslot = tg.DefineField(FieldAttributes.Private, "proc", typeof(IProcedure));
 
         CodeGenerator cg = tg.DefineConstructor(new Type[] { typeof(IProcedure) });
@@ -507,7 +506,7 @@ public sealed class Interop
     FieldWrapper ret = (FieldWrapper)gets[ptr];
     if(ret==null)
     { TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
-                                                          "fg"+AST.NextIndex+"$"+fi.Name, typeof(FieldWrapper));
+                                                          "fg"+fwi.Next+"$"+fi.Name, typeof(FieldWrapper));
       CodeGenerator cg = tg.DefineMethodOverride("Call", true);
       if(!fi.IsStatic)
       { cg.EmitArgGet(0);
@@ -532,7 +531,7 @@ public sealed class Interop
     FieldWrapper ret = (FieldWrapper)sets[ptr];
     if(ret==null)
     { TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
-                                                          "fs"+AST.NextIndex+"$"+fi.Name, typeof(FieldWrapper));
+                                                          "fs"+fwi.Next+"$"+fi.Name, typeof(FieldWrapper));
       CodeGenerator cg = tg.DefineMethodOverride("Call", true);
 
       if(!fi.IsStatic)
@@ -579,7 +578,7 @@ public sealed class Interop
     if(type==null)
     { bool isCons = mi is ConstructorInfo;
       TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
-                                                          "sw$"+AST.NextIndex, isCons ? typeof(FunctionWrapper)
+                                                          "sw$"+swi.Next, isCons ? typeof(FunctionWrapper)
                                                                                       : typeof(FunctionWrapperI));
       int numnp = sig.ParamArray ? sig.Params.Length-1 : sig.Params.Length;
       int min = sig.Params.Length - (sig.Defaults==null ? 0 : sig.Defaults.Length) - (sig.ParamArray ? 1 : 0);
@@ -935,6 +934,7 @@ public sealed class Interop
 
   static readonly Hashtable sigs=new Hashtable(), funcs=new Hashtable(), gets=new Hashtable(), sets=new Hashtable();
   static Hashtable handlers=new Hashtable(), dsigs=new Hashtable();
+  static Index dwi=new Index(), fwi=new Index(), swi=new Index();
 }
 #endregion
 

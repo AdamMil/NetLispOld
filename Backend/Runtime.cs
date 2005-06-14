@@ -94,8 +94,8 @@ public sealed class Binding
 //        not of where it was defined
 #region Closure
 public abstract class Closure : IProcedure
-{ public int MinArgs { get { return Template.ParamNames.Length; } }
-  public int MaxArgs { get { return Template.HasList ? -1 : Template.ParamNames.Length; } }
+{ public int MinArgs { get { return Template.NumParams; } }
+  public int MaxArgs { get { return Template.HasList ? -1 : Template.NumParams; } }
   public string Name { get { return "#<lambda>"; } }
 
   public abstract object Call(params object[] args);
@@ -150,7 +150,7 @@ public sealed class RG
 }
 #endregion
 
-#region Environment
+#region Environments
 public sealed class TopLevel
 { public TopLevel() { Globals=new Hashtable(); }
 
@@ -188,12 +188,18 @@ public sealed class TopLevel
   }
 
   public Hashtable Globals;
+  public Hashtable Macros = new Hashtable();
   
   [ThreadStatic] public static TopLevel Current;
 }
 
 public sealed class LocalEnvironment
 { public LocalEnvironment(LocalEnvironment parent, object[] values) { Parent=parent; Values=values; }
+  public LocalEnvironment(LocalEnvironment parent, object[] values, int length)
+  { Parent=parent; Values=new object[length];
+    Array.Copy(values, Values, values.Length);
+  }
+
   public readonly LocalEnvironment Parent;
   public readonly object[] Values;
 
@@ -1032,10 +1038,10 @@ public sealed class Reference
 
 #region Symbol
 public sealed class Symbol
-{ Symbol(string name) { Name=name; }
-  static readonly Hashtable table = new Hashtable();
+{ public Symbol(string name) { Name=name; }
 
   public readonly string Name;
+  public override string ToString() { return Name; }
 
   public static Symbol Get(string name)
   { Symbol sym = (Symbol)table[name];
@@ -1043,36 +1049,35 @@ public sealed class Symbol
     return sym;
   }
   
-  public override string ToString() { return Name; }
+  static readonly Hashtable table = new Hashtable();
 }
 #endregion
 
 #region Template
 public sealed class Template
-{ public Template(IntPtr func, string[] paramNames, bool hasList)
-  { FuncPtr=func; ParamNames=paramNames; HasList=hasList;
+{ public Template(IntPtr func, int numParams, bool hasList)
+  { FuncPtr=func; NumParams=numParams; HasList=hasList;
   }
 
   public object[] FixArgs(object[] args)
   { if(HasList)
-    { int positional = ParamNames.Length-1;
+    { int positional = NumParams-1;
       if(args.Length<positional) throw new Exception("too few arguments"); // FIXME: use other exception
       else if(args.Length!=positional)
-      { object[] nargs = new object[ParamNames.Length];
+      { object[] nargs = new object[NumParams];
         Array.Copy(args, nargs, positional);
         nargs[positional] = Ops.ListSlice(positional, args);
         args = nargs;
       }
       else args[positional] = new Pair(args[positional], null);
     }
-    else if(args.Length!=ParamNames.Length) throw new Exception("wrong number of arguments"); // FIXME: use other exception  }
+    else if(args.Length!=NumParams) throw new Exception("wrong number of arguments"); // FIXME: use other exception  }
     return args;
   }
 
-  public readonly string[] ParamNames;
   public readonly IntPtr FuncPtr;
+  public readonly int  NumParams;
   public readonly bool HasList;
-  public bool Macro;
 }
 #endregion
 

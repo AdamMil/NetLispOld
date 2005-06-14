@@ -321,7 +321,6 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
   }
   #endregion
 
-  // TODO: compositions?
   #region car
   public sealed class car : Primitive
   { public car() : base("car", 1, 1) { }
@@ -377,7 +376,7 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
     }
   }
   #endregion
-  
+
   #region char->digit
   public sealed class charToDigit : Primitive
   { public charToDigit() : base("char->digit", 1, 2) { }
@@ -489,48 +488,26 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
     return snip.Run(null);
   }
 
-  public static object expand(object form)
-  { return Ops.Call(initialExpander.Instance, form, initialExpander.Instance);
-  }
+  public static object expand(object form) { return form; }
 
   [SymbolName("expander?")]
-  public static bool expanderP(object obj)
-  { Closure clos = obj as Closure;
-    return clos!=null && clos.Template.Macro;
+  public static bool expanderP(Symbol sym)
+  { return TopLevel.Current.Macros.Contains(sym.Name);
   }
+
+  [SymbolName("expander-function")]
+  public static IProcedure expanderFunction(Symbol sym)
+  { return (IProcedure)TopLevel.Current.Macros[sym.Name];
+  }
+
+  public static Symbol gensym() { return new Symbol("#<g"+gensyms.Next+">"); }
 
   [SymbolName("inexact->exact")]
   public static object inexactToExact(object obj) { throw new NotImplementedException(); }
 
-  #region initial-expander
-  public sealed class initialExpander : Primitive
-  { public initialExpander() : base("initial-expander", 2, 2) { }
-  
-    public override object Call(object[] args)
-    { CheckArity(args);
-      IProcedure expander = Ops.ExpectProcedure(args[1]);
-
-      Pair pair = args[0] as Pair;
-      if(pair==null || pair.Cdr!=null && !(pair.Cdr is Pair)) return args[0];
-      Symbol sym = pair.Car as Symbol;
-      if(sym!=null)
-      { object obj;
-        if(Ops.GetGlobal(sym.Name, out obj))
-        { Closure clos = obj as Closure;
-          if(clos!=null && clos.Template.Macro) return clos.Call(clos.Environment, args[0], expander);
-        }
-      }
-      return map(new _ixLambda(expander), pair);
-    }
-    
-    public static readonly initialExpander Instance = new initialExpander();
-  }
-  #endregion
-
   [SymbolName("install-expander")]
   public static object installExpander(Symbol sym, Closure func)
-  { func.Template.Macro = true;
-    TopLevel.Current.Bind(sym.Name, func);
+  { TopLevel.Current.Macros[sym.Name] = func;
     return sym;
   }
 
@@ -831,7 +808,18 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
     }
   }
   #endregion
+
+  #region symbol?
+  public sealed class symbolP : Primitive
+  { public symbolP() : base("symbol?", 1, 1) { }
   
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return args[0] is Symbol ? Ops.TRUE : Ops.FALSE;
+    }
+  }
+  #endregion
+
   // TODO: string-set!
   // TODO: more string functions: http://www.swiss.ai.mit.edu/projects/scheme/documentation/scheme_7.html#SEC73
   // TODO: string-builder methods in a module
@@ -865,22 +853,8 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
     }
   }
   #endregion
-
-  #region _ixLambda
-  sealed class _ixLambda : IProcedure
-  { public _ixLambda(IProcedure expander) { this.expander=expander; }
-    
-    public int MinArgs { get { return 1; } }
-    public int MaxArgs { get { return 1; } }
-
-    public object Call(params object[] args)
-    { if(args.Length!=1) throw new Exception(); // FIXME: ex
-      return Ops.Call(expander, args[0], expander);
-    }
-
-    IProcedure expander;
-  }
-  #endregion
+  
+  static Index gensyms = new Index();
 }
 
 } // namespace NetLisp.Backend

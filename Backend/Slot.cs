@@ -43,18 +43,22 @@ public sealed class ArgSlot : Slot
 
 #region EnvironmentSlot
 public sealed class EnvironmentSlot : Slot
-{ public EnvironmentSlot(int pos) { this.pos=pos; }
+{ public EnvironmentSlot(int depth, int pos) { this.depth=depth; this.pos=pos; }
 
   public override Type Type { get { return typeof(object); } }
 
   public override void EmitGet(CodeGenerator cg)
-  { cg.EmitFieldGet(typeof(LocalEnvironment), "Values");
+  { cg.EmitArgGet(0);
+    for(int i=0; i<depth; i++) cg.EmitFieldGet(typeof(LocalEnvironment), "Parent");
+    cg.EmitFieldGet(typeof(LocalEnvironment), "Values");
     cg.EmitInt(pos);
     cg.ILG.Emit(OpCodes.Ldelem_Ref);
   }
   
   public override void EmitGetAddr(CodeGenerator cg)
-  { cg.EmitFieldGet(typeof(LocalEnvironment), "Values");
+  { cg.EmitArgGet(0);
+    for(int i=0; i<depth; i++) cg.EmitFieldGet(typeof(LocalEnvironment), "Parent");
+    cg.EmitFieldGet(typeof(LocalEnvironment), "Values");
     cg.EmitInt(pos);
     cg.ILG.Emit(OpCodes.Ldelema);
   }
@@ -67,12 +71,15 @@ public sealed class EnvironmentSlot : Slot
   }
 
   public override void EmitSet(CodeGenerator cg, Slot val)
-  { cg.EmitInt(pos);
+  { cg.EmitArgGet(0);
+    for(int i=0; i<depth; i++) cg.EmitFieldGet(typeof(LocalEnvironment), "Parent");
+    cg.EmitFieldGet(typeof(LocalEnvironment), "Values");
+    cg.EmitInt(pos);
     val.EmitGet(cg);
     cg.ILG.Emit(OpCodes.Stelem_Ref);
   }
 
-  int pos;
+  int pos, depth;
 }
 #endregion
 
