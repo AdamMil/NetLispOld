@@ -107,17 +107,8 @@ public sealed class CodeGenerator
     ILG.Emit(field.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, field);
   }
 
-  public void EmitGet(string name)
-  { Namespace ns = EmitEnvironmentFor(name);
-    Slot slot = ns==null ? Namespace.GetSlotForGet(name) : ns.GetLocalSlot(name);
-    slot.EmitGet(this);
-  }
-
-  public void EmitSet(string name)
-  { Namespace ns = EmitEnvironmentFor(name);
-    Slot slot = ns==null ? Namespace.GetSlotForSet(name) : ns.GetLocalSlot(name);
-    slot.EmitSet(this);
-  }
+  public void EmitGet(Name name) { Namespace.GetSlot(name).EmitGet(this); }
+  public void EmitSet(Name name) { Namespace.GetSlot(name).EmitSet(this); }
 
   public void EmitPropGet(Type type, string name) { EmitPropGet(type.GetProperty(name, SearchAll)); }
   public void EmitPropGet(PropertyInfo pi) { EmitCall(pi.GetGetMethod()); }
@@ -245,15 +236,6 @@ public sealed class CodeGenerator
 
   public void FreeLocalTemp(Slot slot) { localTemps.Add(slot); }
 
-  public bool IsGlobal(string name)
-  { Namespace ns=Namespace;
-    while(ns is EnvironmentNamespace && !ns.Contains(name)) ns=ns.Parent;
-    return !(ns is EnvironmentNamespace);
-  }
-
-  public void SetArgs(string[] names) { Namespace.SetArgs(names, 0, MethodBase); }
-  public void SetArgs(string[] names, int offset) { Namespace.SetArgs(names, offset, MethodBase); }
-
   public Namespace Namespace;
   public bool IsGenerator;
 
@@ -262,18 +244,6 @@ public sealed class CodeGenerator
   public readonly ILGenerator   ILG;
 
   const BindingFlags SearchAll = BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance|BindingFlags.Static;
-  Namespace EmitEnvironmentFor(string name)
-  { Namespace ns=Namespace;
-    int depth=0;
-    while(ns is EnvironmentNamespace && !ns.Contains(name)) { depth++; ns=ns.Parent; }
-
-    if(ns is EnvironmentNamespace)
-    { EmitArgGet(0);
-      while(depth--!=0) EmitFieldGet(typeof(LocalEnvironment), "Parent");
-      return ns;
-    }
-    else return null;
-  }
 
   ArrayList localTemps;
 }

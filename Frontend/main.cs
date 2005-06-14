@@ -22,35 +22,6 @@ public class App
   }
 
   static string stdlib = @"
-(install-expander 'quasiquote
-  (lambda (x e)
-    ((lambda (_quasi _combine _isconst?)
-       (set! _quasi 
-         (lambda (skel)
-           (if (null? skel) 'nil
-               (if (symbol? skel) (list 'quote skel)
-                   (if (not (pair? skel)) skel
-                       (if (eq? (car skel) 'unquote) (cadr skel)
-                           (if (eq? (car skel) 'quasiquote)
-                               (_quasi (_quasi (cadr skel)))
-                               (if (if (pair? (car skel))
-                                       (eq? (caar skel) 'unquote-splicing) #f)
-                                   (list 'append (cadar skel)
-                                         (_quasi (cdr skel)))
-                                   (_combine (_quasi (car skel))
-                                                    (if (null? (cdr skel)) '()
-                                                        (_quasi (cdr skel)))
-                                                    skel)))))))))
-       (set! _combine
-         (lambda (lft rgt skel)
-           (if (if (_isconst? lft) (_isconst? rgt) #f) (list 'quote skel)
-               (if (null? rgt) (list 'list lft)
-                   (if (if (pair? rgt) (eq? (car rgt) 'list) #f)
-                       (cons 'list (cons lft (cdr rgt)))
-                       (list 'cons lft rgt))))))
-       (e (_quasi (cdr x)) e))
-     nil nil (lambda (obj) (if (pair? obj) (eq? (car obj) 'quote) #f)))))
-
 (define (caar x) (car (car x)))
 (define (cadr x) (car (cdr x)))
 (define (cdar x) (cdr (car x)))
@@ -82,6 +53,81 @@ public class App
 (define (cdddar x) (cdr (cdr (cdr (car x)))))
 (define (cddddr x) (cdr (cdr (cdr (cdr x)))))
 
+(define (expand x) (initial-expander x initial-expander))
+(define (expand-once x) (initial-expander x (lambda (x e) x)))
+
+(define (initial-expander x e)
+  (if (or (symbol? x) (not (pair? x))) x
+      (if (expander? (car x)) ((expander-function (car x)) x e)
+          (map (lambda (x) (e x e)) x))))
+
+(install-expander 'quote (lambda (x e) x))
+
+(install-expander 'quasiquote
+  (lambda (x e)
+    ((lambda (_quasi _combine _isconst?)
+       (set! _quasi 
+         (lambda (skel)
+           (if (null? skel) 'nil
+               (if (symbol? skel) (list 'quote skel)
+                   (if (not (pair? skel)) skel
+                       (if (eq? (car skel) 'unquote) (cadr skel)
+                           (if (eq? (car skel) 'quasiquote)
+                               (_quasi (_quasi (cadr skel)))
+                               (if (and (pair? (car skel)) (eq? (caar skel) 'unquote-splicing))
+                                   (list 'append (cadar skel)
+                                         (_quasi (cdr skel)))
+                                   (_combine (_quasi (car skel))
+                                             (if (null? (cdr skel)) '()
+                                                        (_quasi (cdr skel)))
+                                             skel)))))))))
+       (set! _combine
+         (lambda (lft rgt skel)
+           (if (if (_isconst? lft) (_isconst? rgt) #f) (list 'quote skel)
+               (if (null? rgt) (list 'list lft)
+                   (if (if (pair? rgt) (eq? (car rgt) 'list) #f)
+                       (cons 'list (cons lft (cdr rgt)))
+                       (list 'cons lft rgt))))))
+       (e (_quasi (cdr x)) e))
+     nil nil (lambda (obj) (if (pair? obj) (eq? (car obj) 'quote) #f)))))
+
+(define (body-expander x e)
+  (e (if (and (pair? (car x)) (eq? (caar x) 'define))
+         (let ((bindings (cadar x))
+               (dbody (e (cddar x) e))
+               (body (body-expander (cdr x) e))
+               (name #f) (args #f))
+           (if (pair? bindings)
+               (begin
+                 (set! name (car bindings))
+                 (set! args (cdr bindings)))
+               (set! name bindings))
+           (if (or args (pair? (cdr dbody)))
+               `((let ((,name nil))
+                  (set! ,name ,(if args `(lambda ,args ,@dbody) (car dbody)))
+                  ,@body))
+               `((let ((,name ,@dbody)) ,@body))))
+         x) e))
+
+(install-expander 'let
+  (lambda (x e)
+    (let ((bindings (cadr x)))
+      (if (symbol? bindings) ; named let
+          (let ((name bindings))
+            (set! bindings (caddr x))
+            (e `(letrec ((,name (lambda ,(map car bindings) ,@(cdddr x))))
+                  (,name ,@(map cadr bindings))) e))
+          `(let ,bindings ,@(body-expander (cddr x) e))))))
+
+(install-expander 'if
+  (lambda (x e) `(if ,@(map (lambda (x) (e x e)) (cdr x)))))
+
+(install-expander 'set!
+  (lambda (x e) `(set! ,(cadr x) ,(e (caddr x) e))))
+
+(install-expander 'lambda
+  (lambda (x e) `(lambda ,(cadr x) ,@(body-expander (cddr x) e))))
+
 (install-expander 'defmacro
   (lambda (x e)
     (define (make-macro pattern body)
@@ -90,12 +136,29 @@ public class App
             (if (symbol? pattern) (cons `(,pattern ,access) bindings)
                 (if (pair? pattern)
                     (destructure (car pattern) `(car ,access)
-                                (destructure (cdr pattern) `(cdr ,access) bindings))))))
+                                 (destructure (cdr pattern) `(cdr ,access) bindings))))))
       (let ((x (gensym))  (e (gensym)))
         `(lambda (,x ,e)
           (,e (let ,(destructure pattern `(cdr ,x) nil) ,body) ,e))))
-    (let ((keyword (cadr x))  (pattern (caddr x))  (body (cadddr x)))
+    (let ((keyword (caadr x))  (pattern (cdadr x))  (body (caddr x)))
       (e `(install-expander ',keyword ,(make-macro pattern body)) e))))
+
+(defmacro (cond item . rest)
+  `(if ,(car item) ,@(cdr item)
+       ,(if (null? rest) nil
+            `(cond ,@rest))))
+
+(defmacro (letrec bindings . body)
+  `(let ,(map car bindings)
+     ,@(apply append (map (lambda (init) (and (pair? init) `(set! ,(car init) ,(cadr init)))) bindings))
+     ,@body))
+
+(defmacro (let* bindings . body)
+  (let rec ((bindings bindings))
+    (if (null? bindings) `(begin ,@body)
+        `(let (,(if (pair? (car bindings)) `(,(caar bindings) ,(cdar bindings))
+                    (car bindings)))
+           ,(rec (cdr bindings))))))
 
 ; (list obj ...)
 

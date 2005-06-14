@@ -14,11 +14,11 @@ public sealed class SnippetMaker
 
   public static void DumpAssembly()
   { Assembly.Save();
-    string bn = "snippets"+AST.NextIndex;
+    string bn = "snippets"+index.Next;
     Assembly = new AssemblyGenerator(bn, bn+".dll");
   }
 
-  public static Snippet Generate(Node body) { return Generate(body, "code_"+AST.NextIndex); }
+  public static Snippet Generate(Node body) { return Generate(body, "code_"+index.Next); }
   public static Snippet Generate(Node body, string typeName)
   { TypeGenerator tg = Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed, typeName, typeof(Snippet));
     CodeGenerator cg = tg.DefineMethodOverride("Run", true);
@@ -29,6 +29,8 @@ public sealed class SnippetMaker
   }
 
   public static AssemblyGenerator Assembly = new AssemblyGenerator("snippets", "snippets.dll");
+  
+  static Index index = new Index();
 }
 
 } // namespace NetLisp.Backend
