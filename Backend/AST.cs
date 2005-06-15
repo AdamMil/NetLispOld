@@ -9,15 +9,15 @@ using System.Reflection.Emit;
 namespace NetLisp.Backend
 {
 
-#region Index, Name, Options, IWalker
+#region Index, Name, Options, Singleton, IWalker
 public sealed class Index
 { public long Next { get { lock(this) return index++; } }
   long index;
 }
 
 public sealed class Name
-{ public Name(string name) { String=name; Depth=Local; }
-  public Name(string name, int depth) { String=name; Depth=depth; }
+{ public Name(string name) { String=name; Depth=Local; Index=-1; }
+  public Name(string name, int depth) { String=name; Depth=depth; Index=-1; }
   public Name(string name, int depth, int index) { String=name; Depth=depth; Index=index; }
 
   public const int Global=-2, Local=-1;
@@ -35,7 +35,13 @@ public sealed class Name
 
 public sealed class Options
 { private Options() { }
-  public static bool Debug, Optimize;
+  public static bool AllowInternal, Debug, Optimize;
+}
+
+public sealed class Singleton
+{ public Singleton(string name) { Name=name; }
+  public override string ToString() { return "Singleton: "+Name; }
+  public string Name;
 }
 
 public interface IWalker
@@ -46,8 +52,11 @@ public interface IWalker
 
 #region AST
 public sealed class AST
-{ public static Node Create(object obj)
-  { Node node = Parse(obj);
+{ public static LambdaNode Create(object obj)
+  { // wrapping it in a lambda node is done so we can keep the preprocessing code simple, and so that we can support
+    // top-level closures. it's unwrapped later on by SnippetMaker.Generate()
+    Node body = Parse(obj);
+    LambdaNode node = new LambdaNode(new string[0], false, new BodyNode(new Node[1] { body }));
     node.Preprocess();
     return node;
   }
@@ -95,7 +104,7 @@ public sealed class AST
         { if(Ops.Length(pair)<3) throw new Exception("too few for lambda"); // FIXME: SyntaxException
           pair = (Pair)pair.Cdr;
           bool hasList;
-          return new LambdaNode(ParseLambaList((Pair)pair.Car, out hasList), hasList, ParseBody((Pair)pair.Cdr));
+          return new LambdaNode(ParseLambaList(pair.Car, out hasList), hasList, ParseBody((Pair)pair.Cdr));
         }
         case "quote":
         { if(Ops.Length(pair)!=2) throw new Exception("wrong number for quote"); // FIXME: ex
@@ -110,24 +119,10 @@ public sealed class AST
         }
         case "define":
         { int length = Ops.Length(pair);
-          if(length<3) throw new Exception("wrong number for define"); // FIXME: ex
+          if(length!=3) throw new Exception("wrong number for define"); // FIXME: ex
           pair = (Pair)pair.Cdr;
-          sym = pair.Car as Symbol;
-          if(sym!=null)
-          { if(length!=3) throw new Exception("wrong number for define"); // FIXME: ex
-            return new DefineNode(sym.Name, ParseBody((Pair)pair.Cdr)); // (define name value)
-          }
-          Pair names = (Pair)pair.Car;
-          if(names.Cdr is Symbol) // (define (name . list) body ...)
-            return new DefineNode(((Symbol)names.Car).Name,
-                                  new LambdaNode(new string[] { ((Symbol)names.Cdr).Name },
-                                                 true, ParseBody((Pair)pair.Cdr)));
-          else // define (name a0 a1 ...) body ...)
-          { bool hasList;
-            return new DefineNode(((Symbol)names.Car).Name,
-                                  new LambdaNode(ParseLambaList((Pair)names.Cdr, out hasList),
-                                                 hasList, ParseBody((Pair)pair.Cdr)));
-          }
+          sym = (Symbol)pair.Car;
+          return new DefineNode(sym.Name, ParseBody((Pair)pair.Cdr)); // (define name value)
         }
       }
 
@@ -151,9 +146,11 @@ public sealed class AST
     return new BodyNode((Node[])items.ToArray(typeof(Node)));
   }
 
-  static string[] ParseLambaList(Pair list, out bool hasList)
+  static string[] ParseLambaList(object obj, out bool hasList)
   { hasList = false;
+    if(obj is Symbol) { hasList=true; return new string[] { ((Symbol)obj).Name }; }
 
+    Pair list = (Pair)obj;
     ArrayList names = new ArrayList();
     while(list!=null)
     { Symbol sym = list.Car as Symbol;
@@ -164,7 +161,7 @@ public sealed class AST
       if(list==null && next!=null)
       { sym = next as Symbol;
         if(sym==null) throw new Exception("lambda list must contain symbols"); // FIXME: SyntaxException
-        names.Add(sym);
+        names.Add(sym.Name);
         hasList=true;
         break;
       }
@@ -199,7 +196,7 @@ public abstract class Node
 
   public virtual void Preprocess()
   { MarkTail(true);
-    Walk(new NodeDecorator());
+    Walk(new NodeDecorator((LambdaNode)this));
   }
   
   public virtual void Walk(IWalker w)
@@ -207,14 +204,15 @@ public abstract class Node
     w.PostWalk(this);
   }
   
+  public LambdaNode InFunc;
   public bool Tail;
 
   internal virtual void MarkTail(bool tail) { Tail=tail; }
 
-  protected LambdaNode InFunc;
-  
   sealed class NodeDecorator : IWalker
-  { public bool Walk(Node node)
+  { public NodeDecorator(LambdaNode top) { func=this.top=top; }
+
+    public bool Walk(Node node)
     { node.InFunc = func;
 
       if(node is LambdaNode)
@@ -230,17 +228,20 @@ public abstract class Node
         foreach(Name name in free)
         { int index = IndexOf(oldBound, name.String);
           if(index==-1)
-          { if(oldFunc==null) name.Depth=Name.Global;
+          { if(oldFunc==top) name.Depth=Name.Global;
             else
-            { name.Depth++;
+            { if(func.MaxNames!=0) name.Depth++;
               oldFree.Add(name);
             }
           }
           else
-          { name.Index = index;
-            Name bname = (Name)oldBound[index];
-            bname.Depth = 0;
-            bname.Index = oldFunc.MaxNames++;
+          { Name bname  = (Name)oldBound[index];
+            if(bname.Depth==Name.Local && IndexOf(oldFunc.Parameters, name.String)==-1)
+            { bname.Depth = 0;
+              bname.Index = name.Index = oldFunc.MaxNames++;
+            }
+            else name.Index=bname.Index;
+            if(func.MaxNames!=0) name.Depth++;
           }
         }
 
@@ -254,17 +255,17 @@ public abstract class Node
         let.Body.Walk(this);
         return false;
       }
-      else if(node is SetNode || node is VariableNode)
+      else if(node is VariableNode || node is SetNode)
       { Name name = node is SetNode ? ((SetNode)node).Name : ((VariableNode)node).Name;
         int index = IndexOf(bound, name.String);
         if(index==-1)
-        { if(func==null) name.Depth=Name.Global;
-          else { free.Add(name); name.Depth=func.Parameters.Length==0 ? 0 : 1; }
+        { if(func==top) name.Depth=Name.Global;
+          else { free.Add(name); name.Depth=0; }
         }
         else
         { Name bname = (Name)bound[index];
-          name.Depth = bname.Depth;
-          name.Index = bname.Index;
+          if(node is SetNode) ((SetNode)node).Name=bname;
+          else ((VariableNode)node).Name=bname;
         }
       }
       return true;
@@ -275,12 +276,16 @@ public abstract class Node
       { LetNode let = (LetNode)node;
         bound.RemoveRange(bound.Count-let.Names.Length, let.Names.Length);
       }
+      else if(node is DefineNode)
+      { DefineNode def = (DefineNode)node;
+        if(def.InFunc==top) def.InFunc=null;
+      }
     }
 
-    LambdaNode func;
+    LambdaNode func, top;
     ArrayList bound=new ArrayList(), free;
 
-    static int IndexOf(ArrayList list, string name)
+    static int IndexOf(IList list, string name)
     { for(int i=list.Count-1; i>=0; i--) if(((Name)list[i]).String==name) return i;
       return -1;
     }
@@ -530,22 +535,15 @@ public sealed class IfNode : Node
 { public IfNode(Node test, Node iftrue, Node iffalse) { Test=test; IfTrue=iftrue; IfFalse=iffalse; }
 
   public override void Emit(CodeGenerator cg)
-  { Label end = IfFalse==null ? new Label() : cg.ILG.DefineLabel();
-    Label falselbl = cg.ILG.DefineLabel();
+  { Label endlbl=cg.ILG.DefineLabel(), falselbl=cg.ILG.DefineLabel();
 
     cg.EmitIsTrue(Test);
     cg.ILG.Emit(OpCodes.Brfalse, falselbl);
     IfTrue.Emit(cg);
-    if(IfFalse==null)
-    { cg.ILG.MarkLabel(falselbl);
-      if(Tail) cg.ILG.Emit(OpCodes.Ldnull);
-    }
-    else
-    { cg.ILG.Emit(OpCodes.Br, end);
-      cg.ILG.MarkLabel(falselbl);
-      cg.EmitExpression(IfFalse);
-      cg.ILG.MarkLabel(end);
-    }
+    cg.ILG.Emit(OpCodes.Br, endlbl);
+    cg.ILG.MarkLabel(falselbl);
+    cg.EmitExpression(IfFalse);
+    cg.ILG.MarkLabel(endlbl);
     if(Tail) cg.EmitReturn();
   }
 
@@ -625,14 +623,16 @@ public sealed class LambdaNode : Node
                                               new Type[] { typeof(LocalEnvironment), typeof(object[]) });
 
     icg.Namespace = new LocalNamespace(cg.Namespace, icg);
-    if(Parameters.Length!=0)
+    if(MaxNames!=0)
     { icg.EmitArgGet(0);
-      icg.EmitArgGet(1);
+      if(Parameters.Length!=0) icg.EmitArgGet(1);
       if(MaxNames==Parameters.Length)
         icg.EmitNew(typeof(LocalEnvironment), new Type[] { typeof(LocalEnvironment), typeof(object[]) });
       else
       { icg.EmitInt(MaxNames);
-        icg.EmitNew(typeof(LocalEnvironment), new Type[] { typeof(LocalEnvironment), typeof(object[]), typeof(int) });
+        icg.EmitNew(typeof(LocalEnvironment),
+                    Parameters.Length==0 ? new Type[] { typeof(LocalEnvironment), typeof(int) }
+                                         : new Type[] { typeof(LocalEnvironment), typeof(object[]), typeof(int) });
       }
       icg.EmitArgSet(0);
     }
@@ -718,7 +718,12 @@ public sealed class LetNode : Node
       { Inits[i].Emit(cg);
         cg.EmitSet(Names[i]);
       }
+      else if(Options.Debug)
+      { cg.EmitFieldGet(typeof(Binding), "Unbound");
+        cg.EmitSet(Names[i]);
+      }
     Body.Emit(cg);
+    for(int i=0; i<Names.Length; i++) cg.Namespace.RemoveSlot(Names[i]);
   }
 
   public override void Walk(IWalker w)
@@ -756,7 +761,7 @@ public sealed class SetNode : Node
     w.PostWalk(this);
   }
 
-  public readonly Name Name;
+  public Name Name;
   public readonly Node Value;
 
   internal override void MarkTail(bool tail)
@@ -772,10 +777,14 @@ public sealed class VariableNode : Node
 
   public override void Emit(CodeGenerator cg)
   { cg.EmitGet(Name);
+    if(Options.Debug)
+    { cg.EmitString(Name.String);
+      cg.EmitCall(typeof(Ops), "CheckVariable");
+    }
     if(Tail) cg.EmitReturn();
   }
 
-  public readonly Name Name;
+  public Name Name;
 }
 #endregion
 

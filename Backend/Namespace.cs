@@ -15,18 +15,24 @@ public abstract class Namespace
     codeGen = cg;
   }
 
-  // TODO: implement a way to free temporaries
-  public virtual Slot AllocTemp(Type type) { throw new NotImplementedException(); }
-
   public Slot GetSlot(Name name) { return GetSlot(name, true); }
   public Slot GetSlot(Name name, bool makeIt)
   { if(name.Depth==Name.Global && Parent!=null) return Parent.GetSlot(name, true);
     Slot ret = (Slot)slots[name];
     if(ret==null)
     { if(Parent!=null) ret = Parent.GetSlot(name, false);
-      if(ret==null && makeIt) slots[name] = ret = MakeSlot(name);
+      if(ret==null && makeIt)
+      { ret = name.Depth==Name.Local ? codeGen.AllocLocalTemp(typeof(object)) : MakeSlot(name);
+        slots[name] = ret = ret;
+      }
     }
     return ret;
+  }
+
+  public void RemoveSlot(Name name)
+  { Slot slot = (Slot)slots[name];
+    if(name.Depth==Name.Local) codeGen.FreeLocalTemp(slot);
+    slots.Remove(name);
   }
 
   public Namespace Parent;
@@ -41,11 +47,7 @@ public abstract class Namespace
 #region LocalNamespace
 public sealed class LocalNamespace : Namespace
 { public LocalNamespace(Namespace parent, CodeGenerator cg) : base(parent, cg) { }
-
-  protected override Slot MakeSlot(Name name)
-  { if(name.Depth==Name.Local) return new LocalSlot(codeGen.ILG.DeclareLocal(typeof(object)), name.String);
-    return new EnvironmentSlot(name.Depth, name.Index);
-  }
+  protected override Slot MakeSlot(Name name) { return new EnvironmentSlot(name.Depth, name.Index); }
 }
 #endregion
 

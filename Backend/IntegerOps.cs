@@ -120,7 +120,7 @@ public sealed class IntegerOps
       case TypeCode.UInt32: return a.CompareTo((uint)b);
       case TypeCode.UInt64: return a.CompareTo((ulong)b);
     }
-    throw Ops.TypeError("can't compare '{0}' and '{1}'", Ops.TypeName(a), Ops.TypeName(b));
+    return string.Compare("integer", Ops.TypeName(b));
   }
 
   public static object Divide(Integer a, object b)

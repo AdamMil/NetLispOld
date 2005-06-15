@@ -86,7 +86,7 @@ public sealed class Binding
   public object Value;
   public string Name;
 
-  public readonly static object Unbound = "<UNBOUND>";
+  public readonly static object Unbound = new Singleton("<UNBOUND>");
 }
 #endregion
 
@@ -195,6 +195,7 @@ public sealed class TopLevel
 
 public sealed class LocalEnvironment
 { public LocalEnvironment(LocalEnvironment parent, object[] values) { Parent=parent; Values=values; }
+  public LocalEnvironment(LocalEnvironment parent, int length) { Parent=parent; Values=new object[length]; }
   public LocalEnvironment(LocalEnvironment parent, object[] values, int length)
   { Parent=parent; Values=new object[length];
     Array.Copy(values, Values, values.Length);
@@ -365,6 +366,15 @@ public sealed class Ops
   public static object Call(string name, params object[] args) { return Call(GetGlobal(name), args); }
   public static object Call(object func, params object[] args) { return ExpectProcedure(func).Call(args); }
 
+  public static Binding CheckBinding(Binding bind)
+  { if(bind.Value==Binding.Unbound) throw new Exception("use of unbound variable: "+bind.Name);
+    return bind;
+  }
+  public static object CheckVariable(object value, string name)
+  { if(value==Binding.Unbound) throw new Exception("use of unbound variable: "+name);
+    return value;
+  }
+
   public static Snippet CompileRaw(object obj) { return SnippetMaker.Generate(AST.Create(obj)); }
 
   public static int Compare(object a, object b)
@@ -420,7 +430,7 @@ public sealed class Ops
         return v<=long.MaxValue ? LongOps.Compare((long)v, b) : IntegerOps.Compare(new Integer(v), b);
       }
     }
-    throw TypeError("can't compare '{0}' to '{1}'", TypeName(a), TypeName(b));
+    return string.Compare(TypeName(a), TypeName(b));
   }
 
   public static object ConsAll(object[] args)
@@ -523,6 +533,13 @@ public sealed class Ops
     catch(InvalidCastException) { throw new ArgumentException("expected int but received "+TypeName(obj)); }
   }
 
+  public static Pair ExpectList(object obj)
+  { if(obj==null) return null;
+    Pair ret = obj as Pair;
+    if(ret==null) throw new ArgumentException("expected list but received "+TypeName(obj));
+    return ret;
+  }
+
   public static Pair ExpectPair(object obj)
   { Pair ret = obj as Pair;
     if(ret==null) throw new ArgumentException("expected pair but received "+TypeName(obj));
@@ -552,7 +569,9 @@ public sealed class Ops
   }
 
   public static bool EqualP(object a, object b)
-  { Pair pa=a as Pair;
+  { if(a==b) return true;
+
+    Pair pa=a as Pair;
     if(pa!=null)
     { Pair pb=b as Pair;
       if(pb!=null)
@@ -571,7 +590,7 @@ public sealed class Ops
   }
 
   public static bool EqvP(object a, object b)
-  { return a is Complex ? ((Complex)a).Equals(b) : Compare(a, b)==0;
+  { return a==b || a is Complex ? ((Complex)a).Equals(b) : Compare(a, b)==0;
   }
 
   public static object FastCadr(Pair pair) { return ((Pair)pair.Cdr).Car; }
@@ -678,7 +697,8 @@ public sealed class Ops
   }
 
   public static int Length(Pair pair)
-  { int total=1;
+  { if(pair==null) return 0;
+    int total=1;
     while(true)
     { pair = pair.Cdr as Pair;
       if(pair==null) break;
@@ -955,7 +975,7 @@ public sealed class Ops
   { return new TypeErrorException(Source(node)+string.Format(format, args));
   }
 
-  public static string TypeName(object o) { return "TYPENAME - FIXME"; } // FIXME: return GetDynamicType(o).__name__.ToString(); }
+  public static string TypeName(object o) { return o==null ? "nil" : o.GetType().FullName; }
 
   public static ValueErrorException ValueError(string format, params object[] args)
   { return new ValueErrorException(string.Format(format, args));
@@ -964,7 +984,7 @@ public sealed class Ops
   { return new ValueErrorException(Source(node)+string.Format(format, args));
   }
 
-  public static readonly object Missing = "<Missing>";
+  public static readonly object Missing = new Singleton("<Missing>");
   public static readonly object FALSE=false, TRUE=true;
   public static readonly object[] EmptyArray = new object[0];
 
@@ -1062,16 +1082,16 @@ public sealed class Template
   public object[] FixArgs(object[] args)
   { if(HasList)
     { int positional = NumParams-1;
-      if(args.Length<positional) throw new Exception("too few arguments"); // FIXME: use other exception
-      else if(args.Length!=positional)
+      if(args.Length==NumParams) args[positional] = new Pair(args[positional], null);
+      else if(args.Length>=positional)
       { object[] nargs = new object[NumParams];
         Array.Copy(args, nargs, positional);
         nargs[positional] = Ops.ListSlice(positional, args);
         args = nargs;
       }
-      else args[positional] = new Pair(args[positional], null);
+      else throw new Exception("expected at least "+positional+" arguments, but received "+args.Length); // FIXME: use other exception
     }
-    else if(args.Length!=NumParams) throw new Exception("wrong number of arguments"); // FIXME: use other exception  }
+    else if(args.Length!=NumParams) throw new Exception("expected "+NumParams+" arguments, but received "+args.Length); // FIXME: use other exception  }
     return args;
   }
 

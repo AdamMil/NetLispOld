@@ -36,6 +36,7 @@ public sealed class Parser
       if(tail==null) list=tail=next;
       else { tail.Cdr=next; tail=next; }
     }
+    if(list==null) return null;
     if(list.Cdr==null) return list.Car;
     else return new Pair(Symbol.Get("begin"), list);
   }
@@ -81,7 +82,7 @@ public sealed class Parser
     }
   }
   
-  public static readonly object EOF = "<EOF>";
+  public static readonly object EOF = new Singleton("<EOF>");
 
   void Eat(Token type) { if(token!=type) Unexpected(token, type); NextToken(); }
   void Expect(Token type) { if(token!=type) Unexpected(token); }
@@ -259,6 +260,19 @@ public sealed class Parser
               }
             }
             return Token.Literal;
+          }
+          case '_':
+          { if(!Options.AllowInternal)
+              SyntaxError("internal symbols (#_*) are disallowed outside the standard library");
+            StringBuilder sb = new StringBuilder();
+            sb.Append("#_");
+            while(true)
+            { c = ReadChar();
+              if(IsDelimiter(c)) { lastChar=c; break; }
+              sb.Append(c);
+            }
+            value = sb.ToString();
+            return Token.Symbol;
           }
           case '(': return Token.Vector;
           case '|':

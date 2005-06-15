@@ -11,10 +11,8 @@ public sealed class CodeGenerator
   { TypeGenerator = tg; MethodBase = mb; ILG = ilg;
   }
 
-  public Slot AllocLocalTemp(Type type) { return AllocLocalTemp(type, false); }
-  public Slot AllocLocalTemp(Type type, bool keepAround)
+  public Slot AllocLocalTemp(Type type)
   { if(localTemps==null) localTemps = new ArrayList();
-    if(keepAround && IsGenerator) return Namespace.AllocTemp(type);
     Slot ret;
     for(int i=localTemps.Count-1; i>=0; i--)
     { ret = (Slot)localTemps[i];

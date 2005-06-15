@@ -35,6 +35,8 @@ public static void import(params object[] args)
 public static void loadByName(string name) { Interop.LoadAssemblyByName(name); }
 [SymbolName("load-assembly-from-file")]
 public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name); }
+public static void print(object obj) { Console.Write(Ops.Repr(obj)); }
+public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
   #region Numeric operators
   #region +
@@ -246,18 +248,6 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
   #endregion
   #endregion
 
-  #region and
-  public sealed class and : Primitive
-  { public and() : base("and", 0, -1) { }
-
-    public override object Call(object[] args)
-    { CheckArity(args);
-      for(int i=0; i<args.Length; i++) if(!Ops.IsTrue(args[i])) return args[i];
-      return Ops.TRUE;
-    }
-  }
-  #endregion
-
   #region apply
   public sealed class apply : Primitive
   { public apply() : base("apply", 2, -1) { }
@@ -282,14 +272,17 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
   
   #region append
   public sealed class append : Primitive
-  { public append() : base("append", 2, -1) { }
+  { public append() : base("append", 0, -1) { }
 
     public override object Call(object[] args)
-    { CheckArity(args);
+    { if(args.Length==0) return null;
+      if(args.Length==1) return args[0];
+
       Pair head=null, prev=null;
       int i;
       for(i=0; i<args.Length-1; i++)
-      { Pair pair=Ops.ExpectPair(args[i]), tail=new Pair(pair.Car, pair.Cdr);
+      { if(args[i]==null) continue;
+        Pair pair=Ops.ExpectPair(args[i]), tail=new Pair(pair.Car, pair.Cdr);
         if(prev==null) head = tail;
         else prev.Cdr = tail;
         while(true)
@@ -301,6 +294,7 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
         }
         prev = tail;
       }
+      if(prev==null) return args[i];
       prev.Cdr = args[i];
       return head;
     }
@@ -491,8 +485,9 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
   public static object expand(object form) { return form; }
 
   [SymbolName("expander?")]
-  public static bool expanderP(Symbol sym)
-  { return TopLevel.Current.Macros.Contains(sym.Name);
+  public static bool expanderP(object obj)
+  { Symbol sym = obj as Symbol;
+    return sym!=null && TopLevel.Current.Macros.Contains(sym.Name);
   }
 
   [SymbolName("expander-function")]
@@ -500,7 +495,15 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
   { return (IProcedure)TopLevel.Current.Macros[sym.Name];
   }
 
-  public static Symbol gensym() { return new Symbol("#<g"+gensyms.Next+">"); }
+  #region gensym
+  public sealed class gensym : Primitive
+  { public gensym() : base("gensym", 0, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return new Symbol((args.Length==0 ? "#<g" : "#<"+Ops.ExpectString(args[0])) + gensyms.Next + ">");
+    }
+  }
+  #endregion
 
   [SymbolName("inexact->exact")]
   public static object inexactToExact(object obj) { throw new NotImplementedException(); }
@@ -632,18 +635,6 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
     public override object Call(object[] args)
     { CheckArity(args);
       return args[0]==null ? Ops.TRUE : Ops.FALSE;
-    }
-  }
-  #endregion
-
-  #region or
-  public sealed class or : Primitive
-  { public or() : base("or", 0, -1) { }
-  
-    public override object Call(object[] args)
-    { CheckArity(args);
-      for(int i=0; i<args.Length; i++) if(Ops.IsTrue(args[i])) return args[i];
-      return Ops.FALSE;
     }
   }
   #endregion
