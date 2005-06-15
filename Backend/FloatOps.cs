@@ -57,7 +57,7 @@ public sealed class FloatOps
       case TypeCode.UInt16: bv=(ushort)b; break;
       case TypeCode.UInt32: bv=(uint)b; break;
       case TypeCode.UInt64: bv=(ulong)b; break;
-      default: throw Ops.TypeError("cannot compare '{0}' and '{1}'", Ops.TypeName(a), Ops.TypeName(b));
+      default: return string.Compare("float", Ops.TypeName(b));
     }
     return a<bv ? -1 : a>bv ? 1 : 0;
   }

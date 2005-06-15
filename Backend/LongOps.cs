@@ -132,7 +132,7 @@ public sealed class LongOps
       case TypeCode.UInt32: return a<0 ? -1 : (int)((ulong)a - (uint)b);
       case TypeCode.UInt64: return a<0 ? -1 : (int)((ulong)a - (ulong)b);
     }
-    throw Ops.TypeError("cannot compare '{0}' and '{1}'", Ops.TypeName(a), Ops.TypeName(b));
+    return string.Compare("fixnum64", Ops.TypeName(b));
   }
 
   public static object Divide(long a, object b) { return Divide(a, b, false); }

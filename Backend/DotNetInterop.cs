@@ -810,15 +810,16 @@ public sealed class Interop
             sa.EmitGet(cg); // etype[] pa = new etype[sa.Length];
             cg.EmitPropGet(typeof(Array), "Length");
             cg.ILG.Emit(OpCodes.Newarr, etype);
-            
+
             cg.EmitInt(numnp); // for(int i=0; i<pa.Length; i++) pa[i] = ConvertTo(sa[i], etype);
             iv.EmitSet(cg);
             loop = cg.ILG.DefineLabel();
             cg.ILG.MarkLabel(loop);
-            cg.ILG.Emit(OpCodes.Dup); // dups pa for pa[i] or to leave onto the stack
+            cg.ILG.Emit(OpCodes.Dup);
             cg.ILG.Emit(OpCodes.Ldlen);
             iv.EmitGet(cg);
             cg.ILG.Emit(OpCodes.Beq_S, call);
+            cg.ILG.Emit(OpCodes.Dup);
             iv.EmitGet(cg);
             if(ind) cg.ILG.Emit(OpCodes.Ldelema);
             sa.EmitGet(cg); // sa[i]
@@ -834,7 +835,7 @@ public sealed class Interop
             cg.ILG.Emit(OpCodes.Br_S, loop);
           }
           #endregion
-          
+
           #region Handle new array packing
           cg.ILG.MarkLabel(pack); // pack:
           cg.EmitArgGet(0);       // etype[] pa = new etype[args.Length - numnp];
@@ -883,6 +884,7 @@ public sealed class Interop
             else EmitArrayStore(cg, etype);
             iv.EmitGet(cg);
             cg.EmitInt(1);
+            cg.ILG.Emit(OpCodes.Add);
             iv.EmitSet(cg);
             cg.ILG.Emit(OpCodes.Br_S, loop);
           }

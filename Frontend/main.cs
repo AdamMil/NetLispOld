@@ -7,59 +7,86 @@ namespace NetLisp.Frontend
 
 public class App
 { static void Main()
-  { TopLevel.Current = new TopLevel();
+  { Options.Debug = true;
+
+    TopLevel.Current = new TopLevel();
     Builtins.Bind(TopLevel.Current);
 
-    Builtins.eval(Parser.FromString(stdlib).Parse());
+    Options.AllowInternal = true;
+    Eval(stdlib);
+    Options.AllowInternal = false;
+
     while(true)
-    { Console.Write(">>> ");
-      string line = Console.ReadLine();
-      if(line==null) break;
-      try { Console.WriteLine(Ops.Repr(Builtins.eval(Parser.FromString(line).Parse()))); }
+    { string code = null;
+      int  parens = 0;
+      do
+      { Console.Write(code==null ? ">>> " : "... ");
+        string line = Console.ReadLine();
+        if(line==null) goto done;
+        for(int i=0; i<line.Length; i++)
+          if(line[i]=='(') parens++;
+          else if(line[i]==')') parens--;
+        code += line;
+      } while(parens>0);
+
+      try { Eval(code); }
       catch(Exception e) { Console.WriteLine("ERROR: "+e.ToString()); }
     }
+    done:
     SnippetMaker.DumpAssembly();
   }
 
+  static void Eval(string code)
+  { Parser p = Parser.FromString(code);
+    while(true)
+    { object obj = p.ParseOne();
+      if(obj==Parser.EOF) return;
+      Console.WriteLine(Ops.Repr(Builtins.eval(obj)));
+    }
+  }
+
   static string stdlib = @"
-(define (caar x) (car (car x)))
-(define (cadr x) (car (cdr x)))
-(define (cdar x) (cdr (car x)))
-(define (cddr x) (cdr (cdr x)))
+(define caar (lambda (x) (car (car x))))
+(define cadr (lambda (x) (car (cdr x))))
+(define cdar (lambda (x) (cdr (car x))))
+(define cddr (lambda (x) (cdr (cdr x))))
 
-(define (caaar x) (car (car (car x))))
-(define (caadr x) (car (car (cdr x))))
-(define (cadar x) (car (cdr (car x))))
-(define (caddr x) (car (cdr (cdr x))))
-(define (cdaar x) (cdr (car (car x))))
-(define (cdadr x) (cdr (car (cdr x))))
-(define (cddar x) (cdr (cdr (car x))))
-(define (cdddr x) (cdr (cdr (cdr x))))
+(define caaar (lambda (x) (car (car (car x)))))
+(define caadr (lambda (x) (car (car (cdr x)))))
+(define cadar (lambda (x) (car (cdr (car x)))))
+(define caddr (lambda (x) (car (cdr (cdr x)))))
+(define cdaar (lambda (x) (cdr (car (car x)))))
+(define cdadr (lambda (x) (cdr (car (cdr x)))))
+(define cddar (lambda (x) (cdr (cdr (car x)))))
+(define cdddr (lambda (x) (cdr (cdr (cdr x)))))
 
-(define (caaaar x) (car (car (car (car x)))))
-(define (caaadr x) (car (car (car (cdr x)))))
-(define (caadar x) (car (car (cdr (car x)))))
-(define (caaddr x) (car (car (cdr (cdr x)))))
-(define (cadaar x) (car (cdr (car (car x)))))
-(define (cadadr x) (car (cdr (car (cdr x)))))
-(define (caddar x) (car (cdr (cdr (car x)))))
-(define (cadddr x) (car (cdr (cdr (cdr x)))))
-(define (cdaaar x) (cdr (car (car (car x)))))
-(define (cdaadr x) (cdr (car (car (cdr x)))))
-(define (cdadar x) (cdr (car (cdr (car x)))))
-(define (cdaddr x) (cdr (car (cdr (cdr x)))))
-(define (cddaar x) (cdr (cdr (car (car x)))))
-(define (cddadr x) (cdr (cdr (car (cdr x)))))
-(define (cdddar x) (cdr (cdr (cdr (car x)))))
-(define (cddddr x) (cdr (cdr (cdr (cdr x)))))
+(define caaaar (lambda (x) (car (car (car (car x))))))
+(define caaadr (lambda (x) (car (car (car (cdr x))))))
+(define caadar (lambda (x) (car (car (cdr (car x))))))
+(define caaddr (lambda (x) (car (car (cdr (cdr x))))))
+(define cadaar (lambda (x) (car (cdr (car (car x))))))
+(define cadadr (lambda (x) (car (cdr (car (cdr x))))))
+(define caddar (lambda (x) (car (cdr (cdr (car x))))))
+(define cadddr (lambda (x) (car (cdr (cdr (cdr x))))))
+(define cdaaar (lambda (x) (cdr (car (car (car x))))))
+(define cdaadr (lambda (x) (cdr (car (car (cdr x))))))
+(define cdadar (lambda (x) (cdr (car (cdr (car x))))))
+(define cdaddr (lambda (x) (cdr (car (cdr (cdr x))))))
+(define cddaar (lambda (x) (cdr (cdr (car (car x))))))
+(define cddadr (lambda (x) (cdr (cdr (car (cdr x))))))
+(define cdddar (lambda (x) (cdr (cdr (cdr (car x))))))
+(define cddddr (lambda (x) (cdr (cdr (cdr (cdr x))))))
 
-(define (expand x) (initial-expander x initial-expander))
-(define (expand-once x) (initial-expander x (lambda (x e) x)))
+(define list (lambda elems elems))
 
-(define (initial-expander x e)
-  (if (or (symbol? x) (not (pair? x))) x
-      (if (expander? (car x)) ((expander-function (car x)) x e)
-          (map (lambda (x) (e x e)) x))))
+(define initial-expander
+  (lambda (x e)
+    (if (not (pair? x)) x
+        (if (expander? (car x)) ((expander-function (car x)) x e)
+            (map (lambda (x) (e x e)) x)))))
+
+(define expand (lambda (x) (initial-expander x initial-expander)))
+(define expand-once (lambda (x) (initial-expander x (lambda (x e) x))))
 
 (install-expander 'quote (lambda (x e) x))
 
@@ -74,7 +101,7 @@ public class App
                        (if (eq? (car skel) 'unquote) (cadr skel)
                            (if (eq? (car skel) 'quasiquote)
                                (_quasi (_quasi (cadr skel)))
-                               (if (and (pair? (car skel)) (eq? (caar skel) 'unquote-splicing))
+                               (if (if (pair? (car skel)) (eq? (caar skel) 'unquote-splicing) #f)
                                    (list 'append (cadar skel)
                                          (_quasi (cdr skel)))
                                    (_combine (_quasi (car skel))
@@ -88,36 +115,37 @@ public class App
                    (if (if (pair? rgt) (eq? (car rgt) 'list) #f)
                        (cons 'list (cons lft (cdr rgt)))
                        (list 'cons lft rgt))))))
-       (e (_quasi (cdr x)) e))
+       (e (_quasi (cadr x)) e))
      nil nil (lambda (obj) (if (pair? obj) (eq? (car obj) 'quote) #f)))))
 
-(define (body-expander x e)
-  (e (if (and (pair? (car x)) (eq? (caar x) 'define))
-         (let ((bindings (cadar x))
-               (dbody (e (cddar x) e))
-               (body (body-expander (cdr x) e))
-               (name #f) (args #f))
-           (if (pair? bindings)
-               (begin
-                 (set! name (car bindings))
-                 (set! args (cdr bindings)))
-               (set! name bindings))
-           (if (or args (pair? (cdr dbody)))
-               `((let ((,name nil))
-                  (set! ,name ,(if args `(lambda ,args ,@dbody) (car dbody)))
-                  ,@body))
-               `((let ((,name ,@dbody)) ,@body))))
-         x) e))
+(install-expander 'define
+  (lambda (x e)
+    (if (pair? (cadr x))
+        (e `(define ,(caadr x) (lambda ,(cdadr x) ,@(cddr x))) e)
+           `(define ,@(map (lambda (x) (e x e)) (cdr x))))))
+
+(define (#_body-expander x e)
+  (set! x (e x e))
+  (if (if (pair? (car x)) (eq? (caar x) 'define) #f)
+      (let ((dar (cdar x)))
+        (let ((name (car dar)))
+          `((let ((,name nil))
+              (set! ,name ,(cadr dar))
+              ,@(cdr x)))))
+      x))
 
 (install-expander 'let
   (lambda (x e)
     (let ((bindings (cadr x)))
       (if (symbol? bindings) ; named let
           (let ((name bindings))
-            (set! bindings (caddr x))
+            (set! bindings (map (lambda (init) (if (pair? init)
+                                                   init
+                                                   (list init nil)))
+                                (caddr x)))
             (e `(letrec ((,name (lambda ,(map car bindings) ,@(cdddr x))))
                   (,name ,@(map cadr bindings))) e))
-          `(let ,bindings ,@(body-expander (cddr x) e))))))
+          `(let ,bindings ,@(#_body-expander (cddr x) e))))))
 
 (install-expander 'if
   (lambda (x e) `(if ,@(map (lambda (x) (e x e)) (cdr x)))))
@@ -126,7 +154,7 @@ public class App
   (lambda (x e) `(set! ,(cadr x) ,(e (caddr x) e))))
 
 (install-expander 'lambda
-  (lambda (x e) `(lambda ,(cadr x) ,@(body-expander (cddr x) e))))
+  (lambda (x e) `(lambda ,(cadr x) ,@(#_body-expander (cddr x) e))))
 
 (install-expander 'defmacro
   (lambda (x e)
@@ -137,34 +165,63 @@ public class App
                 (if (pair? pattern)
                     (destructure (car pattern) `(car ,access)
                                  (destructure (cdr pattern) `(cdr ,access) bindings))))))
-      (let ((x (gensym))  (e (gensym)))
+      (let ((x (gensym ""x""))  (e (gensym ""e"")))
         `(lambda (,x ,e)
           (,e (let ,(destructure pattern `(cdr ,x) nil) ,body) ,e))))
-    (let ((keyword (caadr x))  (pattern (cdadr x))  (body (caddr x)))
+    (let ((keyword (cadr x))  (pattern (caddr x))  (body (cadddr x)))
       (e `(install-expander ',keyword ,(make-macro pattern body)) e))))
 
-(defmacro (cond item . rest)
-  `(if ,(car item) ,@(cdr item)
-       ,(if (null? rest) nil
-            `(cond ,@rest))))
+(defmacro cond (item . rest)
+  `(if ,(if (eq? (car item) 'else) #t (car item))
+       ,@(cdr item)
+       ,(if (null? rest) nil `(cond ,@rest))))
 
-(defmacro (letrec bindings . body)
-  `(let ,(map car bindings)
-     ,@(apply append (map (lambda (init) (and (pair? init) `(set! ,(car init) ,(cadr init)))) bindings))
+(defmacro case (key . cases)
+  (let ((keyvar (gensym ""key"")))
+    `(let ((,keyvar ,key))
+       (cond ,@(map (lambda (case)
+                      `(,(cond ((pair? (car case)) `(memv ,keyvar ',(car case)))
+                               ((eq? (car case) 'else) #t)
+                               ((symbol? (car case)) `(eq? ,keyvar ',(car case)))
+                               (#t `(eqv? ,keyvar ',(car case))))
+                        ,@(cdr case)))
+                    cases)))))
+
+(defmacro and items
+  (if (null? items) #t
+      (if (null? (cdr items)) (car items)
+          `(if ,(car items) (and ,@(cdr items))))))
+
+(defmacro letrec (bindings . body)
+  `(let ,(map (lambda (init) (if (pair? init) (car init) init)) bindings)
+     ,@(apply append (map (lambda (init) (if (pair? init) `((set! ,(car init) ,(cadr init))))) bindings))
      ,@body))
 
-(defmacro (let* bindings . body)
+(defmacro let* (bindings . body)
   (let rec ((bindings bindings))
     (if (null? bindings) `(begin ,@body)
         `(let (,(if (pair? (car bindings)) `(,(caar bindings) ,(cdar bindings))
                     (car bindings)))
            ,(rec (cdr bindings))))))
 
-; (list obj ...)
+(defmacro or items
+  (if (null? items) #f
+      (letrec ((tmp (gensym ""tmp""))
+               (rec (lambda (items)
+                      (if (null? items) #f
+                          `(if (set! ,tmp ,(car items)) ,tmp
+                               ,(rec (cdr items)))))))
+        `(let (,tmp) ,(rec items)))))
 
-(define (list . elems) elems)
-
-; (list? obj)  -- Defined below (after named lets are introduced).
+(defmacro do (inits test . body)
+  (let ((loop (gensym ""loop"")))
+    `(let ,loop ,(map (lambda (init) (list (car init) (cadr init))) inits)
+       (if ,(car test)
+           ,(if (null? (cdr test)) nil `(begin ,@(cdr test)))
+           (begin ,@body
+                  (,loop ,@(map (lambda (init)
+                                  (if (cddr init) (caddr init) (car init)))
+                                inits)))))))
 
 ; (memq   obj list)
 ; (memv   obj list)
@@ -174,23 +231,22 @@ public class App
   (if (null? list) #f
       (if (not (pair? list))
           (error ""2nd arg to memq not a list: "" list)
-          (if (eq?  obj (car list)) list
-              (memq  obj (cdr list)) ))))
+          (if (eq? obj (car list)) list
+              (memq obj (cdr list))))))
 
 (define (memv obj list)
   (if (null? list) #f
       (if (not (pair? list))
           (error ""2nd arg to memv not a list: "" list)
-          (if (eqv?  obj (car list)) list
-              (memv  obj (cdr list)) ))))
+          (if (eqv? obj (car list)) list
+              (memv obj (cdr list))))))
 
 (define (member obj list)
   (if (null? list) #f
       (if (not (pair? list))
           (error ""2nd arg to member not a list: "" list)
-          (if (equal?  obj (car list)) list
-              (member  obj (cdr list)) ))))
-
+          (if (equal? obj (car list)) list
+              (member obj (cdr list))))))
 
 ; (assq  obj alist)
 ; (assv  obj alist)
@@ -217,421 +273,6 @@ public class App
           (if (equal? (caar alist) obj) (car alist)
               (assoc obj (cdr alist))))))";
 /*
-; Numbers
-
-(define (number->string num . radix )
-  (#_number->string num (if (null? radix) 10 (car radix)) ))
-
-(define (string->number str . radix )
-  (#_string->number str (if (null? radix) 0 (car radix)) ))
-
-; Strings
-
-; (make-string k)
-; (make-string k char)
-
-(define (make-string length . fill-char)
-  (if (null? fill-char)
-      (#_make-string length #\space)
-      (#_make-string length (car fill-char)) ) )
-
-; (string char ...)
-
-(define (string . characters) (list->string characters))
-
-; Vectors
-
-; (make-vector k)
-; (make-vector k fill)
-
-(define (make-vector length . fill)	; and extend it to handle default fill
-  (#_make-vector length (if (null? fill) (the-undefined-symbol) (car fill)) ))
-
-; (vector obj ...)
-
-(define (vector . elems) (list->vector elems))
-
-
-; Control Features 
-
-; (apply proc args)
-; (apply proc arg1 ... args)
-
-(define (#_collect args)
-  (if (null? (cdr args)) (car args) (cons (car args) (#_collect (cdr args)))))
-
-(define (apply proc arg1 . args)
-  (#_apply proc (if (null? args) arg1 (#_collect (cons arg1 args)))))
-
-
-; (map proc list1 list2 ...)
-
-(define (map fn list . lists)
-  (if (null? lists) (#_map1 fn list)
-      (#_mapn fn (cons list lists))))
-
-(define (#_map1 fn list)
-  (if (null? list) '()
-      (cons (fn (car list)) (#_map1 fn (cdr list)))))
-
-(define (#_mapn fn lists)
-  (if (null? (car lists)) '()
-      (cons (#_apply fn (#_map1 car lists))
-            (#_mapn fn (#_map1 cdr lists)) )))
-
-; (for-each proc list1 list2 ...)
-
-(define (for-each proc list . lists)
-  (if (null? lists) (#_for-each1 proc list)
-      (#_for-eachn proc (cons list lists))))
-
-(define (#_for-each1 proc list)
-  (if (null? list) '()
-      (begin (proc (car list)) 
-             (#_for-each1 proc (cdr list)))))
-
-(define (#_for-eachn proc lists)
-  (if (null? (car lists)) '()
-      (begin (#_apply proc (#_map1 car lists))
-             (#_for-eachn proc (#_map1 cdr lists)) )))
-
-
-; Input and output (Ports)
-
-; (call-with-input-file string proc)  DEFINED BELOW
-; (call-with-output-file string proc) DEFINED BELOW
-
-; (read)
-; (read port)
-; (read-char)
-; (read-char port)
-; (peek-char)
-; (peek-char port)
-; (char-ready?)
-; (char-ready? port)
-
-(define (read . port)
-  (#_read (if (null? port) (current-input-port) (car port))))
-
-(define (read-char . port)
-  (#_read-char (if (null? port) (current-input-port) (car port))))
-
-(define (peek-char . port)
-  (#_peek-char (if (null? port) (current-input-port) (car port))))
-
-(define (char-ready? . port)
-  (#_char-ready? (if (null? port) (current-input-port) (car port))))
-
-; (write)
-; (write port)
-; (newline)
-; (newline port)
-; (write-char)
-; (write-char port)
-
-(define (write obj . port)	; and extend them to have default ports
-  (#_write obj (if (null? port) (current-output-port) (car port))))
-
-(define (display obj . port)
-  (#_display obj (if (null? port) (current-output-port) (car port))))
-
-(define (newline . port)
-  (if (null? port) (write-char #\newline (current-output-port))
-      (write-char #\newline (car port)) ))
-
-(define (write-char obj . port)
-  (#_write-char obj (if (null? port) (current-output-port) (car port))))
-
-
-; (with-input-from-file string thunk) 	DEFINED BELOW
-; (with-output-to-file string thunk)	DEFINED BELOW
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; (let v0 ((v1 e1) ...) . body)                ; a named let
-;   =>
-; ((letrec ((v0 (lambda (v1 ...) . body)))
-;   v0)
-;  e1 ...)
-;
-; (let ((v1 e1) ...) . body)                   ; a regular let
-;   =>
-; ((lambda (v1 ...) . body) e1 ...)
-
-(defmacro let (arg1 arg2 . args)
-  (if (symbol? arg1)
-      
-      ; named let
-      `((letrec ((,arg1 (lambda ,(#_map1 car arg2) ,@args)))
-	  ,arg1)
-	,@(#_map1 cadr arg2))
-      
-      ; regular let
-      (if (null? args)
-          
-	  ; simple body
-	  `((lambda ,(#_map1 car arg1) ,arg2) ,@(#_map1 cadr arg1))
-          
-	  ; composite body
-	  `((lambda ,(#_map1 car arg1) ,arg2 ,@args) ,@(#_map1 cadr arg1)))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; (letrec ((var1 e1) ...)
-;    body)
-;
-;  =>
-;
-; (let ((var1 #f) ...)
-;     (let ((temp1 expression1) ...)
-;         (set! var1 temp1) ...)
-;     body)
-;
-; NB: We don't actually implement the inner let since it's not
-;     strictly neccessary.
-
-(defmacro letrec (formals . body)
-  (let ((vars (#_map1 car formals))
-	(temps (#_map1 (lambda (x) (gensym ""_temp"")) formals))
-	(exprs (#_map1 cadr formals)))
-    `(let (,@(#_map1 (lambda (x) `(,x #f)) vars))
-       (let (,@(map (lambda (x y) `(,x ,y)) temps exprs))
-	 ,@(map (lambda (x y) `(set! ,x ,y)) vars temps)
-	 ,@body))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; (let* ((v1 e1) ...) body) =>  (let ((v1 e1)) (let* ( ... ) body))
-;
-; (let* () body) => (begin body)
-
-(defmacro let* (formals . body)
-  (if (null? formals)
-      `(let () ,@body) ; to make internal defines work
-      (if (= (length formals) 1)
-          `(let (,(car formals)) ,@body)
-          (if (pair? (car formals))
-              `(let (,(car formals))
-                 (let* ,(cdr formals) ,@body))
-              (error ""Bad let* syntax: "" 'let* vars body)))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; (and)           => #t
-; (and e1)        => e1
-; (and e1 e2 ...) =>
-;       (let ((x e1)
-;             (thunk (lambda()(and e2...))))
-;           (if x (thunk) x))
-
-(defmacro and ( . args)
-  (if (null? args)
-      
-      ; (and)
-      #t
-      
-      (if (null? (cdr args))
-          
-          ; (and e1)
-	  (car args)
-          
-          ; (and e1 e2 ...)
-	  (let ((x (gensym ""_x""))
-		(thunk (gensym ""_thunk"")))
-	    `(let ((,x ,(car args))
-		   (,thunk (lambda ()
-			     (and ,@(cdr args)))))
-	       (if ,x (,thunk) ,x))))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-
-; (or)           => #f
-; (or e1)        => e1
-; (or e1 e2 ...) =>
-;       (let ((x e1)
-;             (thunk (lambda()(or e2...))))
-;           (if x x (thunk)))
-
-(defmacro or ( . args )
-  
-  (if (null? args)
-      
-      ; (or)
-      #f
-      
-      (if (null? (cdr args))
-          
-          ; (or e1)
-	  (car args)
-          
-          ; (or e1 e2 ...)
-          (let ((x (gensym ""_x""))
-                (thunk (gensym ""_thunk"")))
-            `(let ((,x ,(car args))
-                   (,thunk (lambda ()
-                             (or ,@(cdr args)))))
-               (if ,x ,x (,thunk)))
-            ))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; (cond) => '()
-;
-; (cond (else seq)) => (begin seq)
-;
-; (cond (e1) c2 ...) => (or e1 (cond c2 ...))
-;
-; (cond (e1 => recipient) c2 ...) =>
-;   (let ((t e1)
-;         (r (lambda() recipient))
-;         (c (lambda() c2 ...)))
-;    (if t ((r)t) (c)) )
-;
-; (cond (e1 seq1) c2 ...) =>
-;    (if e1 (begin seq1)
-;     (cond c2 ...))
-
-(defmacro cond ( . args)
-  (if (null? args)
-      
-      ; (cond)
-      ''()
-      
-      (let ((clause (car args)))
-	(if (not (pair? clause))
-            
-            ; error
-	    (error ""Bad cond syntax:  "" 'cond args)
-            
-	    (if (eq? (car clause) 'else)
-                
-                ; (cond (else seq))
-		`(begin ,@(cdr clause))
-                
-		(if (null? (cdr clause))
-                    
-                    ; (cond (e1) c2 ...)
-		    `(or ,(car clause)
-			 (cond ,@(cdr args)))
-                    
-		    (if (eq? (cadr clause) '=>)
-                        
-                        ; (cond (e1 => recipient) c2 ...)
-			(let ((t (gensym ""_t""))
-			      (r (gensym ""_r""))
-			      (c (gensym ""_c"")))
-			  `(let ((,t ,(car clause))
-				 (,r (lambda () ,@(cddr clause)))
-				 (,c (lambda () (cond ,@(cdr args)))))
-			     (if ,t ((,r) ,t) (,c))))
-                        
-                        ; (cond (e1 seq1) c2 ...)
-			`(if ,(car clause)
-			     (begin ,@(cdr clause))
-			     (cond ,@(cdr args))))))))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; (case key
-;     ((d1 ...) seq)
-;     ...)
-;
-;  =>
-;
-; (let ((keyvar key))
-;     (cond ((memv keyvar '(d1 ...)) seq)
-;           ...)
-;
-; Note: the clause, (else seq) => (else seq)
-
-(defmacro case (key . clauses)
-  (let ((keyvar (gensym ""_keyvar"")))
-    `(let ((,keyvar ,key))
-       (cond ,@(map (lambda (clause)
-		      (if (eqv? (car clause) 'else)
-			  clause
-			  `((memv ,keyvar (quote ,(car clause)))
-			    ,@(cdr clause))))
-		    clauses)))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; (do ((var1 init1 step1) ...)
-;     (test seq)
-;     cmd1 ...)
-;
-;   =>
-;
-; (letrec ((loop
-;           (lambda (var1 ...)
-;               (if test
-;                   (begin seq)
-;                   (begin cmd1
-;                          ...
-;                          (loop step1 ...))))))
-;       (loop init1 ...))
-
-(defmacro do (vars-list test-list . cmds)
-  (let ((loop (gensym ""_loop""))
-	(vars (map car vars-list))
-	(inits (map cadr vars-list))
-	(steps (map (lambda (l) (if (= (length l) 3)
-				    (caddr l)
-				    (car l)))
-		    vars-list))
-	(test (car test-list))
-	(seq (cdr test-list)))
-    `(letrec ((,loop
-                (lambda ,vars
-                  (if ,test
-                      (begin ,@seq)
-                      (begin ,@cmds (,loop ,@steps))))))
-       (,loop ,@inits))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define gentemp (lambda ()
-                  (gensym ""scm:G"")))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define defmacro:eval eval)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define defmacro:load load)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define macroexpand-1 (lambda (quoted-calling-form)
-			(expand1-quoted-defmacro-call quoted-calling-form)))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define (macroexpand quoted-calling-form)
-  (if (pair? quoted-calling-form)
-      (let ((keyword (car quoted-calling-form)))
-	(if (defmacro? keyword)
-            (macroexpand (macroexpand-1 quoted-calling-form))
-	    quoted-calling-form))
-      quoted-calling-form))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(define (defmacro:expand* quoted-calling-form)
-  (if (pair? quoted-calling-form)
-      (let ((keyword (car quoted-calling-form)))
-	(if (defmacro? keyword)
-	    (defmacro:expand* (macroexpand quoted-calling-form))
-            (map defmacro:expand* quoted-calling-form)))
-      quoted-calling-form))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; PRIMITIVES requiring syntax defined above.
-
 ; (list? obj)
 
 (define (list? x)
@@ -645,117 +286,7 @@ public class App
 		      ((null? (cdr fast)) #t)
 		      (else (loop (cddr fast) (cdr slow))))))))
 
-; (call-with-input-file string proc)
-; (call-with-output-file string proc)
-
-(define (call-with-input-file string proc )
-  (let* ((port (open-input-file string))
-         (result (proc port)))
-    (close-input-port port)
-    result)) 
-
-(define (call-with-output-file string proc )
-  (let* ((port (open-output-file string))
-         (result (proc port)))
-    (close-output-port port)
-    result)) 
-
-; (with-input-from-file string thunk)
-; (with-output-to-file string thunk)
-
-(define (with-input-from-file string thunk)
-  (let ((save (current-input-port))
-	(port (open-input-file string)))
-    (set-current-input-port! port)
-    (let ((result (thunk)))
-      (close-input-port port)
-      (set-current-input-port! save)
-      result)))
-
-(define (with-output-to-file string thunk)
-  (let ((save (current-output-port))
-	(port (open-output-file string)))
-    (set-current-output-port! port)
-    (let ((result (thunk)))
-      (close-output-port port)
-      (set-current-output-port! save)
-      result)))
-
-; ERROR HANDLING
-
-(defmacro break ( . args)
-  (if (null? args)
-      '(#_break)
-      `(begin (display* ,@args) (newline) (break))))
-
-(define (error . args )
-  (newline)
-  (display ""Error: "")
-  (apply display* args)
-  (newline)
-  (break) )
-
-; DEBUGGING
-
-(define (show-env . args)
-  (#_show-env (if (null? args)  20 (car args))))
-
-(define (where . args)
-  (#_where (if (null? args)  20 (car args))))
-
-(define	(go arg . rest)
-  (if (null? rest) (#_go 0 arg) (#_go arg (car rest))))
-
-(defmacro how ( .args)
-  `(#_how (quote ,(car args))))
-
-; EDITING
-
-; Define edit to remember the last file edited.
-
-(define #_last-file-edited '())
-
-; (edit)
-; (edit filename)
-
-(define (edit . filestring)
-  (if (null? filestring)
-      (if (null? #_last-file-edited)
-          (error ""(edit) not previously applied -- no file to remember."")
-          (#_edit #_last-file-edited))
-      (begin
-        (set! #_last-file-edited (car filestring))
-        (#_edit (car filestring))) ))
-
-; (edits)
-; (edits filename)
-
-(define (edits . filestring)
-  (if (null? filestring)
-      (if (null? #_last-file-edited)
-          (error ""(edits) not previously applied -- no file to remember."")
-          (#_edits #_last-file-edited))
-      (begin
-        (set! #_last-file-edited (car filestring))
-        (#_edits (car filestring))) ))
-
-; UMB SPECIFIC
-
-(define (write* first . rest)
-  (define port (if (output-port? first) first (current-output-port)))
-  (define (write** objs)
-    (if (pair? objs) 
-        (begin (#_write (car objs) port) (write** (cdr objs)))))
-  (write** (if (output-port? first) rest (cons first rest))))
-
-
-(define (display* first . rest)
-  (define port (if (output-port? first) first (current-output-port)))
-  (define (display** objs)
-    (if (pair? objs) 
-        (begin (#_display (car objs) port) (display** (cdr objs)))))
-  (display** (if (output-port? first) rest (cons first rest))))
-";*/
+*/
 }
 
 } // namespace NetLisp.Frontend
