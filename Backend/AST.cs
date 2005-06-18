@@ -260,7 +260,15 @@ public abstract class Node
         int index = IndexOf(bound, name.String);
         if(index==-1)
         { if(func==top) name.Depth=Name.Global;
-          else { free.Add(name); name.Depth=0; }
+          else
+          { index = IndexOf(free, name.String);
+            if(index==-1) { free.Add(name); name.Depth=0; }
+            else
+            { Name bname = (Name)free[index];
+              if(node is SetNode) ((SetNode)node).Name=bname;
+              else ((VariableNode)node).Name=bname;
+            }
+          }
         }
         else
         { Name bname = (Name)bound[index];
