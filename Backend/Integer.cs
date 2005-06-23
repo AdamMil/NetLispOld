@@ -117,9 +117,8 @@ public struct Integer : IConvertible, IComparable, ICloneable
   }
   #endregion
 
+  public Integer Abs { get { return sign==-1 ? -this : this; } }
   public int Sign { get { return sign; } }
-
-  public Integer abs() { return sign==-1 ? -this : this; }
 
   public override bool Equals(object obj) { return obj is Integer ? CompareTo((Integer)obj)==0 : false; }
 

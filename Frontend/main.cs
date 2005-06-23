@@ -223,6 +223,11 @@ public class App
                                   (if (cddr init) (caddr init) (car init)))
                                 inits)))))))
 
+; (1+ obj)
+; (1- obj)
+(define (1+ o) (+ o 1))
+(define (1- o) (- o 1))
+
 ; (memq   obj list)
 ; (memv   obj list)
 ; (member obj list)

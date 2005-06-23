@@ -339,8 +339,8 @@ public sealed class CallNode : Node
     string[] arr = new string[]
     { "-", "Subtract", "bitnot", "BitwiseNegate", "+", "Add", "*", "Multiply", "/", "Divide", "//", "FloorDivide",
       "%", "Modulus",  "bitand", "BitwiseAnd", "bitor", "BitwiseOr", "bitxor", "BitwiseXor", "=", "Equal",
-      "!=", "NotEqual", "<", "Less", ">", "More", "<=", "LessEqual", ">=", "MoreEqual", "pow", "Power",
-      "lshift", "LeftShift", "rshift", "RightShift", "powmod", "PowerMod"
+      "!=", "NotEqual", "<", "Less", ">", "More", "<=", "LessEqual", ">=", "MoreEqual", "expt", "Power",
+      "lshift", "LeftShift", "rshift", "RightShift", "exptmod", "PowerMod"
     };
     for(int i=0; i<arr.Length; i+=2) ops[arr[i]] = arr[i+1];
   }
@@ -366,7 +366,7 @@ public sealed class CallNode : Node
           cg.ILG.MarkLabel(end);
           goto ret;
         }
-        case "null?": case "pair?": case "char?": case "symbol?": case "string?": case "procedure?": case "complex?":
+        case "null?": case "pair?": case "char?": case "symbol?": case "string?": case "procedure?":
         case "not": case "string-null?":
         { if(Args.Length!=1) goto normal;
           Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
@@ -377,7 +377,6 @@ public sealed class CallNode : Node
             case "char?": type=typeof(char); break;
             case "symbol?": type=typeof(Symbol); break;
             case "string?": type=typeof(string); break;
-            case "complex?": type=typeof(Complex); break;
             case "procedure?": type=typeof(IProcedure); break;
             case "not": cg.EmitCall(typeof(Ops), "IsTrue"); break;
             case "string-null?":
@@ -459,12 +458,12 @@ public sealed class CallNode : Node
           Args[0].Emit(cg);
           Args[1].Emit(cg);
           break;
-        case "pow": case "lshift": case "rshift":
+        case "expt": case "lshift": case "rshift":
           if(Args.Length!=2) goto normal;
           Args[0].Emit(cg);
           Args[1].Emit(cg);
           break;
-        case "powmod":
+        case "exptmod":
           if(Args.Length!=3) goto normal;
           Args[0].Emit(cg);
           Args[1].Emit(cg);

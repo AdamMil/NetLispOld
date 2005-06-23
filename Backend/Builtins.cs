@@ -106,18 +106,18 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     }
   }
   #endregion
-  #region pow
-  public sealed class pow : Primitive
-  { public pow() : base("pow", 2, 2) { }
+  #region expt
+  public sealed class expt : Primitive
+  { public expt() : base("expt", 2, 2) { }
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.Power(args[0], args[1]);
     }
   }
   #endregion
-  #region powmod
-  public sealed class powmod : Primitive
-  { public powmod() : base("powmod", 3, 3) { }
+  #region exptmod
+  public sealed class exptmod : Primitive
+  { public exptmod() : base("exptmod", 3, 3) { }
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.PowerMod(args[0], args[1], args[2]);
@@ -248,6 +248,57 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   #endregion
   #endregion
 
+  #region abs
+  public sealed class abs : Primitive
+  { public abs() : base("abs", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte: case TypeCode.UInt16: case TypeCode.UInt32: case TypeCode.UInt64: return obj;
+        case TypeCode.Decimal: return Math.Abs((Decimal)obj);
+        case TypeCode.Double: return Math.Abs((double)obj);
+        case TypeCode.Int16: return Math.Abs((short)obj);
+        case TypeCode.Int32: return Math.Abs((int)obj);
+        case TypeCode.Int64: return Math.Abs((long)obj);
+        case TypeCode.SByte: return Math.Abs((sbyte)obj);
+        case TypeCode.Single: return Math.Abs((float)obj);
+        case TypeCode.Object:
+          if(obj is Integer) return ((Integer)obj).Abs;
+          if(obj is Complex)
+          { Complex c = (Complex)obj;
+            if(c.imag==0) return Math.Abs(c.real);
+          }
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+      }
+    }
+  }
+  #endregion
+
+  #region acos
+  public sealed class acos : Primitive
+  { public acos() : base("acos", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      return obj is Complex ? Complex.Acos((Complex)obj) : (object)Math.Acos(Ops.ToFloat(obj));
+    }
+  }
+  #endregion
+
+  #region angle
+  public sealed class angle : Primitive
+  { public angle() : base("angle", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectComplex(args[0]).Angle;
+    }
+  }
+  #endregion
+
   #region apply
   public sealed class apply : Primitive
   { public apply() : base("apply", 2, -1) { }
@@ -301,6 +352,32 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region asin
+  public sealed class asin : Primitive
+  { public asin() : base("asin", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      return obj is Complex ? Complex.Asin((Complex)obj) : (object)Math.Asin(Ops.ToFloat(obj));
+    }
+  }
+  #endregion
+
+  #region atan
+  public sealed class atan : Primitive
+  { public atan() : base("atan", 1, 2) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      if(args.Length==2) return Math.Atan2(Ops.ToFloat(args[0]), Ops.ToFloat(args[1]));
+
+      object obj = args[0];
+      return obj is Complex ? Complex.Atan((Complex)obj) : (object)Math.Atan(Ops.ToFloat(obj));
+    }
+  }
+  #endregion
+
   #region call-with-values
   public sealed class callWithValues : Primitive
   { public callWithValues() : base("call-with-values", 2, 2) { }
@@ -333,6 +410,36 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectPair(args[0]).Cdr;
+    }
+  }
+  #endregion
+
+  #region ceiling
+  public sealed class ceiling : Primitive
+  { public ceiling() : base("ceiling", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte:  case TypeCode.UInt16: case TypeCode.UInt32: case TypeCode.UInt64: 
+        case TypeCode.SByte: case TypeCode.Int16:  case TypeCode.Int32:  case TypeCode.Int64:
+          return obj;
+        case TypeCode.Decimal:
+        { Decimal d=(Decimal)obj, t=Decimal.Truncate(d);
+          return d==t ? obj : t+Decimal.One;
+        }
+        case TypeCode.Double: return Math.Ceiling((double)obj);
+        case TypeCode.Single: return Math.Ceiling((float)obj);
+        case TypeCode.Object:
+          if(obj is Integer) return obj;
+          if(obj is Complex)
+          { Complex c = (Complex)obj;
+            if(c.imag==0) return Math.Ceiling(c.real);
+          }
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+      }
     }
   }
   #endregion
@@ -398,13 +505,32 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   
     public override object Call(object[] args)
     { CheckArity(args);
-      return args[0] is Complex ? Ops.TRUE : Ops.FALSE;
+      switch(Convert.GetTypeCode(args[0]))
+      { case TypeCode.Byte:   case TypeCode.Decimal: case TypeCode.Double:
+        case TypeCode.Int16:  case TypeCode.Int32:   case TypeCode.Int64:
+        case TypeCode.SByte:  case TypeCode.Single:
+        case TypeCode.UInt16: case TypeCode.UInt32:  case TypeCode.UInt64:
+          return Ops.TRUE;
+        case TypeCode.Object:
+          return args[0] is Integer || args[0] is Complex ? Ops.TRUE : Ops.FALSE;
+        default: return Ops.FALSE;
+      }
     }
   }
   #endregion
 
   [SymbolName("compound-procedure?")]
   public static object compoundProcedureP(object obj) { return Ops.FALSE; }
+
+  #region conjugate
+  public sealed class conjugate : Primitive
+  { public conjugate() : base("conjugate", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectComplex(args[0]).Conjugate;
+    }
+  }
+  #endregion
 
   #region cons
   public sealed class cons : Primitive
@@ -424,6 +550,17 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ConsAll(args);
+    }
+  }
+  #endregion
+
+  #region cos
+  public sealed class cos : Primitive
+  { public cos() : base("cos", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Math.Cos(Ops.ToFloat(args[0]));
     }
   }
   #endregion
@@ -482,6 +619,130 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     return snip.Run(null);
   }
 
+  #region even?
+  public sealed class evenP : Primitive
+  { public evenP() : base("even?", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+
+      object obj = args[0];
+      int iv;
+
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte:    iv = (byte)obj; goto isint;
+        case TypeCode.SByte:   iv = (sbyte)obj; goto isint;
+        case TypeCode.Int16:   iv = (short)obj; goto isint;
+        case TypeCode.Int32:   iv = (int)obj; goto isint;
+        case TypeCode.Int64:   iv = (int)(long)obj; goto isint;
+        case TypeCode.UInt16:  iv = (ushort)obj; goto isint;
+        case TypeCode.UInt32:  iv = (int)(uint)obj; goto isint;
+        case TypeCode.UInt64:  iv = (int)(ulong)obj; goto isint;
+        case TypeCode.Decimal: iv = (int)Decimal.ToDouble((Decimal)obj); goto isint;
+        case TypeCode.Double:  iv = (int)(double)obj; goto isint;
+        case TypeCode.Single:  iv = (int)(float)obj; goto isint;
+        case TypeCode.Object:
+          if(obj is Integer)
+          { Integer i = (Integer)obj;
+            return i.length!=0 && (i.data[0]&1)==0;
+          }
+          if(obj is Complex)
+          { Complex c = (Complex)obj;
+            if(c.imag==0) { iv=(int)c.real; goto isint; }
+          }
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+      }
+      
+      isint: return (iv&1)==0 && iv!=0 ? Ops.TRUE : Ops.FALSE;
+    }
+  }
+  #endregion
+
+  #region exact?
+  public sealed class exactP : Primitive
+  { public exactP() : base("exact?", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte:   case TypeCode.SByte:
+        case TypeCode.Int16:  case TypeCode.Int32:  case TypeCode.Int64:
+        case TypeCode.UInt16: case TypeCode.UInt32: case TypeCode.UInt64:
+          return Ops.TRUE;
+        case TypeCode.Decimal: case TypeCode.Double: case TypeCode.Single:
+          return Ops.FALSE;
+        case TypeCode.Object:
+          if(obj is Integer) return Ops.TRUE;
+          if(obj is Complex) return Ops.FALSE;
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a number, but received "+Ops.TypeName(obj));
+      }
+    }
+  }
+  #endregion
+
+  #region exact-integer?
+  public sealed class exactIntegerP : Primitive
+  { public exactIntegerP() : base("exact-integer?", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte:   case TypeCode.SByte:
+        case TypeCode.Int16:  case TypeCode.Int32:  case TypeCode.Int64:
+        case TypeCode.UInt16: case TypeCode.UInt32: case TypeCode.UInt64:
+          return Ops.TRUE;
+        case TypeCode.Decimal: case TypeCode.Double: case TypeCode.Single:
+          return Ops.FALSE;
+        case TypeCode.Object:
+          if(obj is Integer) return Ops.TRUE;
+          if(obj is Complex) return Ops.FALSE;
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a number, but received "+Ops.TypeName(obj));
+      }
+    }
+  }
+  #endregion
+
+  #region exact->inexact
+  public sealed class exactToInexact : Primitive
+  { public exactToInexact() : base("exact->inexact", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte: return (double)(byte)obj;
+        case TypeCode.SByte: return (double)(sbyte)obj;
+        case TypeCode.Int16: return (double)(short)obj;
+        case TypeCode.Int32: return (double)(int)obj;
+        case TypeCode.Int64: return (double)(long)obj;
+        case TypeCode.UInt16: return (double)(ushort)obj;
+        case TypeCode.UInt32:  return (double)(uint)obj;
+        case TypeCode.UInt64: return (double)(ulong)obj;
+
+        case TypeCode.Decimal: case TypeCode.Double: case TypeCode.Single:
+          return obj;
+
+        case TypeCode.Object:
+          if(obj is Integer) return ((Integer)obj).ToDouble();
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a number, but received "+Ops.TypeName(obj));
+      }
+    }
+  }
+  #endregion
+
+  #region exp
+  public sealed class exp : Primitive
+  { public exp() : base("exp", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Math.Exp(Ops.ToFloat(args[0]));
+    }
+  }
+  #endregion
+
   public static object expand(object form) { return form; }
 
   [SymbolName("expander?")]
@@ -495,6 +756,33 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   { return (IProcedure)TopLevel.Current.Macros[sym.Name];
   }
 
+  #region floor
+  public sealed class floor : Primitive
+  { public floor() : base("floor", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte:  case TypeCode.UInt16: case TypeCode.UInt32: case TypeCode.UInt64: 
+        case TypeCode.SByte: case TypeCode.Int16:  case TypeCode.Int32:  case TypeCode.Int64:
+          return obj;
+        case TypeCode.Decimal: return Decimal.Floor((Decimal)obj);
+        case TypeCode.Double: return Math.Floor((double)obj);
+        case TypeCode.Single: return Math.Floor((float)obj);
+        case TypeCode.Object:
+          if(obj is Integer) return obj;
+          if(obj is Complex)
+          { Complex c = (Complex)obj;
+            if(c.imag==0) return Math.Floor(c.real);
+          }
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+      }
+    }
+  }
+  #endregion
+
   #region gensym
   public sealed class gensym : Primitive
   { public gensym() : base("gensym", 0, 1) { }
@@ -505,8 +793,64 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  [SymbolName("inexact->exact")]
-  public static object inexactToExact(object obj) { throw new NotImplementedException(); }
+  #region imag-part
+  public sealed class imagPart : Primitive
+  { public imagPart() : base("imag-part", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectComplex(args[0]).imag;
+    }
+  }
+  #endregion
+
+  #region inexact?
+  public sealed class inexactP : Primitive
+  { public inexactP() : base("inexact?", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte:   case TypeCode.SByte:
+        case TypeCode.Int16:  case TypeCode.Int32:  case TypeCode.Int64:
+        case TypeCode.UInt16: case TypeCode.UInt32: case TypeCode.UInt64:
+          return Ops.FALSE;
+        case TypeCode.Decimal: case TypeCode.Double: case TypeCode.Single:
+          return Ops.TRUE;
+        case TypeCode.Object:
+          if(obj is Integer) return Ops.FALSE;
+          if(obj is Complex) return Ops.TRUE;
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a number, but received "+Ops.TypeName(obj));
+      }
+    }
+  }
+  #endregion
+
+  #region inexact->exact
+  public sealed class inexactToExact : Primitive
+  { public inexactToExact() : base("inexact->exact", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return core(args[0]);
+    }
+    
+    internal static object core(object obj)
+    { switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte:   case TypeCode.SByte:
+        case TypeCode.Int16:  case TypeCode.Int32:  case TypeCode.Int64:
+        case TypeCode.UInt16: case TypeCode.UInt32: case TypeCode.UInt64:
+          return obj;
+        case TypeCode.Decimal: case TypeCode.Double: case TypeCode.Single:
+          throw new NotImplementedException("rationals");
+        case TypeCode.Object:
+          if(obj is Integer) return obj;
+          if(obj is Complex) throw new NotImplementedException("rationals");
+          goto default;
+        default: throw Ops.TypeError("inexact->exact"+": expected a number, but received "+Ops.TypeName(obj));
+      }
+    }
+  }
+  #endregion
 
   [SymbolName("install-expander")]
   public static object installExpander(Symbol sym, Closure func)
@@ -579,6 +923,77 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region log
+  public sealed class log : Primitive
+  { public log() : base("log", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      return obj is Complex ? Complex.Log((Complex)obj) : (object)Math.Log(Ops.ToFloat(obj));
+    }
+  }
+  #endregion
+
+  #region log10
+  public sealed class log10 : Primitive
+  { public log10() : base("log10", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      return obj is Complex ? Complex.Log10((Complex)obj) : (object)Math.Log10(Ops.ToFloat(obj));
+    }
+  }
+  #endregion
+
+  #region magnitude
+  public sealed class magnitude : Primitive
+  { public magnitude() : base("magnitude", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte: case TypeCode.UInt16: case TypeCode.UInt32: case TypeCode.UInt64: return obj;
+        case TypeCode.Decimal: return Math.Abs((Decimal)obj);
+        case TypeCode.Double: return Math.Abs((double)obj);
+        case TypeCode.Int16: return Math.Abs((short)obj);
+        case TypeCode.Int32: return Math.Abs((int)obj);
+        case TypeCode.Int64: return Math.Abs((long)obj);
+        case TypeCode.SByte: return Math.Abs((sbyte)obj);
+        case TypeCode.Single: return Math.Abs((float)obj);
+        case TypeCode.Object:
+          if(obj is Integer) return ((Integer)obj).Abs;
+          if(obj is Complex) return ((Complex)obj).Magnitude;
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a number, but received "+Ops.TypeName(obj));
+      }
+    }
+  }
+  #endregion
+
+  #region make-polar
+  public sealed class makePolar : Primitive
+  { public makePolar() : base("make-polar", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      double phase = Ops.ToFloat(args[1]);
+      return new Complex(Math.Cos(phase), Math.Sin(phase)) * Ops.ToFloat(args[0]);
+    }
+  }
+  #endregion
+
+  #region make-rectangular
+  public sealed class makeRectangular : Primitive
+  { public makeRectangular() : base("make-rectangular", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return new Complex(Ops.ToFloat(args[0]), Ops.ToFloat(args[1]));
+    }
+  }
+  #endregion
+
   #region make-ref
   public sealed class makeRef : Primitive
   { public makeRef() : base("make-ref", 0, 1) { }
@@ -635,6 +1050,48 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     public override object Call(object[] args)
     { CheckArity(args);
       return args[0]==null ? Ops.TRUE : Ops.FALSE;
+    }
+  }
+  #endregion
+
+  // TODO: number->string
+
+  #region odd?
+  public sealed class oddP : Primitive
+  { public oddP() : base("odd?", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+
+      object obj = args[0];
+      int iv;
+
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte:    iv = (byte)obj; goto isint;
+        case TypeCode.SByte:   iv = (sbyte)obj; goto isint;
+        case TypeCode.Int16:   iv = (short)obj; goto isint;
+        case TypeCode.Int32:   iv = (int)obj; goto isint;
+        case TypeCode.Int64:   iv = (int)(long)obj; goto isint;
+        case TypeCode.UInt16:  iv = (ushort)obj; goto isint;
+        case TypeCode.UInt32:  iv = (int)(uint)obj; goto isint;
+        case TypeCode.UInt64:  iv = (int)(ulong)obj; goto isint;
+        case TypeCode.Decimal: iv = (int)Decimal.ToDouble((Decimal)obj); goto isint;
+        case TypeCode.Double:  iv = (int)(double)obj; goto isint;
+        case TypeCode.Single:  iv = (int)(float)obj; goto isint;
+        case TypeCode.Object:
+          if(obj is Integer)
+          { Integer i = (Integer)obj;
+            return i.length!=0 && (i.data[0]&1)==0;
+          }
+          if(obj is Complex)
+          { Complex c = (Complex)obj;
+            if(c.imag==0) { iv=(int)c.real; goto isint; }
+          }
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+      }
+      
+      isint: return (iv&1)!=0 ? Ops.TRUE : Ops.FALSE;
     }
   }
   #endregion
@@ -699,6 +1156,16 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region real-part
+  public sealed class realPart : Primitive
+  { public realPart() : base("real-part", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectComplex(args[0]).real;
+    }
+  }
+  #endregion
+
   #region ref-get
   public sealed class refGet : Primitive
   { public refGet() : base("ref-get", 1, 1) { }
@@ -721,6 +1188,43 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region round
+  public sealed class round : Primitive
+  { public round() : base("round", 1, 2) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+
+      object obj = args[0];
+      int places = args.Length==2 ? Ops.ToInt(args[1]) : 0;
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte:  case TypeCode.UInt16: case TypeCode.UInt32: case TypeCode.UInt64: 
+        case TypeCode.SByte: case TypeCode.Int16:  case TypeCode.Int32:  case TypeCode.Int64:
+          return obj;
+        case TypeCode.Decimal: return Decimal.Round((Decimal)obj, places);
+        case TypeCode.Double:  return Math.Round((double)d, places);
+        case TypeCode.Single:  return Math.Round((float)d, places);
+        case TypeCode.Object:
+          if(obj is Integer) return obj;
+          if(obj is Complex)
+          { Complex c = (Complex)obj;
+            if(c.imag==0) return Math.Round(c.real, places);
+          }
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+      }
+    }
+    
+    static object doubleCore(double d)
+    { try { return checked((int)d); }
+      catch(OverflowException)
+      { try { return checked((long)d); }
+        catch(OverflowException) { return new Integer(d); }
+      }
+    }
+  }
+  #endregion
+
   #region set-car!
   public sealed class setCarN : Primitive
   { public setCarN() : base("set-car!", 2, 2) { }
@@ -739,6 +1243,29 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectPair(args[0]).Cdr = args[1];
+    }
+  }
+  #endregion
+
+  #region sin
+  public sealed class sin : Primitive
+  { public sin() : base("sin", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Math.Sin(Ops.ToFloat(args[0]));
+    }
+  }
+  #endregion
+
+  #region sqrt
+  public sealed class sqrt : Primitive
+  { public sqrt() : base("sqrt", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      return obj is Complex ? Complex.Sqrt((Complex)obj) : (object)Math.Sqrt(Ops.ToFloat(obj));
     }
   }
   #endregion
@@ -800,6 +1327,8 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  // TODO: string->number
+
   #region symbol?
   public sealed class symbolP : Primitive
   { public symbolP() : base("symbol?", 1, 1) { }
@@ -815,6 +1344,17 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   // TODO: more string functions: http://www.swiss.ai.mit.edu/projects/scheme/documentation/scheme_7.html#SEC73
   // TODO: string-builder methods in a module
   // TODO: regexp methods in a module
+
+  #region tan
+  public sealed class tan : Primitive
+  { public tan() : base("tan", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Math.Tan(Ops.ToFloat(args[0]));
+    }
+  }
+  #endregion
 
   #region tree-copy
   public sealed class treeCopy : Primitive
@@ -834,6 +1374,41 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region truncate
+  public sealed class truncate : Primitive
+  { public truncate() : base("truncate", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      switch(Convert.GetTypeCode(obj))
+      { case TypeCode.Byte:  case TypeCode.UInt16: case TypeCode.UInt32: case TypeCode.UInt64: 
+        case TypeCode.SByte: case TypeCode.Int16:  case TypeCode.Int32:  case TypeCode.Int64:
+          return obj;
+        case TypeCode.Decimal: return Decimal.Truncate((Decimal)obj);
+        case TypeCode.Double:  return doubleCore((double)obj);
+        case TypeCode.Single:  return doubleCore((float)obj);
+        case TypeCode.Object:
+          if(obj is Integer) return obj;
+          if(obj is Complex)
+          { Complex c = (Complex)obj;
+            if(c.imag==0) return doubleCore(c.real);
+          }
+          goto default;
+        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+      }
+    }
+    
+    static object doubleCore(double d)
+    { try { return checked((int)d); }
+      catch(OverflowException)
+      { try { return checked((long)d); }
+        catch(OverflowException) { return new Integer(d); }
+      }
+    }
+  }
+  #endregion
+
   #region values
   public sealed class values : Primitive
   { public values() : base("values", 1, -1) { }
@@ -844,7 +1419,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     }
   }
   #endregion
-  
+
   static Index gensyms = new Index();
 }
 
