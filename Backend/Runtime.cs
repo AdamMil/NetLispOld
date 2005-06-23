@@ -528,6 +528,11 @@ public sealed class Ops
     catch(InvalidCastException) { throw new ArgumentException("expected character but received "+TypeName(obj)); }
   }
 
+  public static Complex ExpectComplex(object obj)
+  { try { return (Complex)obj; }
+    catch(InvalidCastException) { throw new ArgumentException("expected complex but received "+TypeName(obj)); }
+  }
+
   public static int ExpectInt(object obj)
   { try { return (int)obj; }
     catch(InvalidCastException) { throw new ArgumentException("expected int but received "+TypeName(obj)); }
@@ -844,9 +849,13 @@ public sealed class Ops
   }
   
   public static string Repr(object obj)
-  { if(obj==null) return "nil";
-    if(obj is bool) return (bool)obj ? "#t" : "#f";
-    return obj.ToString();
+  { switch(Convert.GetTypeCode(obj))
+    { case TypeCode.Boolean: return (bool)obj ? "#t" : "#f";
+      case TypeCode.Empty: return "nil";
+      case TypeCode.Double: return ((double)obj).ToString("R");
+      case TypeCode.Single: return ((float)obj).ToString("R");
+      default: return obj.ToString();
+    }
   }
 
   public static object RightShift(object a, object b)
@@ -968,6 +977,7 @@ public sealed class Ops
     catch(InvalidCastException) { throw TypeError("expected long, but got {0}", TypeName(o)); }
   }
 
+  public static TypeErrorException TypeError(string message) { return new TypeErrorException(message); }
   public static TypeErrorException TypeError(string format, params object[] args)
   { return new TypeErrorException(string.Format(format, args));
   }

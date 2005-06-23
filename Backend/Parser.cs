@@ -199,7 +199,10 @@ public sealed class Parser
     } while(c!=0 && !IsDelimiter(c));
     lastChar = c;
     
-    if(sb.Length==1 && sb[0]=='.') return Token.Period;
+    if(sb.Length==1)
+    { if(sb[0]=='.') return Token.Period;
+      if(sb[0]=='-') return "-";
+    }
     string str = sb.ToString();
     Match m = numRegex.Match(str);
     if(ident)
@@ -208,7 +211,7 @@ public sealed class Parser
     }
     else if(!m.Success) SyntaxError("invalid number");
 
-    if(str.IndexOf('.')!=-1) return exact=='e' ? Builtins.inexactToExact(double.Parse(str)) : double.Parse(str);
+    if(str.IndexOf('.')!=-1) return exact=='e' ? Builtins.inexactToExact.core(double.Parse(str)) : double.Parse(str);
     else
     { m = fracRegex.Match(str);
       if(m.Success) throw new NotImplementedException("fractions");
