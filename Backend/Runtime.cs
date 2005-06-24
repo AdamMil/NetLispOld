@@ -851,9 +851,35 @@ public sealed class Ops
   public static string Repr(object obj)
   { switch(Convert.GetTypeCode(obj))
     { case TypeCode.Boolean: return (bool)obj ? "#t" : "#f";
+      case TypeCode.Char: return Builtins.charToName.core((char)obj, true);
       case TypeCode.Empty: return "nil";
       case TypeCode.Double: return ((double)obj).ToString("R");
       case TypeCode.Single: return ((float)obj).ToString("R");
+      case TypeCode.String:
+      { string str = (string)obj;
+        System.Text.StringBuilder sb = new System.Text.StringBuilder(str.Length+16);
+        sb.Append('"');
+        for(int i=0; i<str.Length; i++)
+        { char c = str[i];
+          if(c>=32 && c!='"' && c!='\\' && c!=127) sb.Append(c);
+          else
+            switch(c)
+            { case '\n': sb.Append("\\n"); break;
+              case '\r': sb.Append("\\r"); break;
+              case '\"': sb.Append("\\\""); break;
+              case '\\': sb.Append("\\\\"); break;
+              case '\t': sb.Append("\\t"); break;
+              case '\b': sb.Append("\\b"); break;
+              case (char)27: sb.Append("\\e"); break;
+              default:
+                sb.Append(c==0 ? "\\0" : c<27 ? "\\c"+((char)(c+64)).ToString()
+                                              : (c<256 ? "\\x" : "\\u")+ToHex((uint)c, c<256 ? 2 : 4));
+                break;
+            }
+        }
+        sb.Append('"');
+        return sb.ToString();
+      }
       default: return obj.ToString();
     }
   }
@@ -919,6 +945,20 @@ public sealed class Ops
     catch(FormatException) { throw ValueError("string does not contain a valid float"); }
     catch(OverflowException) { throw ValueError("too big for float"); }
     catch(InvalidCastException) { throw TypeError("expected float, but got {0}", TypeName(o)); }
+  }
+
+  public static string ToHex(uint number, int minlen)
+  { const string cvt = "0123456789ABCDEF";
+
+    unsafe
+    { char* chars = stackalloc char[8];
+      int len = 0;
+      do
+      { chars[8 - ++len] = cvt[(int)(number&0xF)];
+        number >>= 4;
+      } while(number!=0 && len<minlen);
+      return new string(chars, 8-len, len);
+    }
   }
 
   public static int ToInt(object o)

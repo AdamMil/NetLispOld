@@ -53,7 +53,7 @@ public sealed class Parser
             if(TryEat(Token.Period)) { dot=ParseOne(); break; }
           }
           while(token!=Token.RParen && token!=Token.EOF);
-          if(items.Count==0 && dot!=null) SyntaxError("malformed dotted list");
+          if(items.Count==0 && dot!=null) throw SyntaxError("malformed dotted list");
           Eat(Token.RParen);
           return Ops.DottedList(dot, (object[])items.ToArray(typeof(object)));
         }
@@ -78,7 +78,7 @@ public sealed class Parser
         return Ops.List2(Symbol.Get("vector"), (object[])items.ToArray(typeof(object)));
       }
       case Token.EOF: return EOF;
-      default: SyntaxError("unexpected token: "+token); return null;
+      default: throw SyntaxError("unexpected token: "+token);
     }
   }
   
@@ -114,7 +114,7 @@ public sealed class Parser
         if(!char.IsDigit(c)) { lastChar=c; break; }
         num = num*10 + (c-'0');
       }
-      if(num>255) SyntaxError("character value out of range");
+      if(num>255) throw SyntaxError("character value out of range");
       return (char)num;
     }
     else switch(c)
@@ -135,7 +135,7 @@ public sealed class Parser
         { c = ReadChar();
           if(char.IsDigit(c)) num = (num<<4) | (c-'0');
           else if((c<'A' || c>'F') || (c<'a' || c>'f'))
-          { if(i==0) SyntaxError("expected hex digit");
+          { if(i==0) throw SyntaxError("expected hex digit");
             lastChar = c;
             break;
           }
@@ -144,11 +144,10 @@ public sealed class Parser
         return (char)num;
       }
       case 'c':
-        c = ReadChar();
-        if(!char.IsLetter(c)) SyntaxError("expected letter");
-        return (char)(char.ToUpper(c)-64);
-      case '\n': return '\0';
-      default: SyntaxError(string.Format("unknown escape character '{0}'", c)); return c;
+        c = char.ToUpper(ReadChar());
+        if(c>96 || c<65) throw SyntaxError("expected control character, but received '{0}'", c);
+        return (char)(c-64);
+      default: throw SyntaxError("unknown escape character '{0}' (0x{1})", c, Ops.ToHex((uint)c, 2));
     }
   }
 
@@ -209,7 +208,7 @@ public sealed class Parser
     { if(!m.Success) return str;
       if(m.Groups[1].Success) throw new NotImplementedException("complex numbers"); // TODO: add this
     }
-    else if(!m.Success) SyntaxError("invalid number");
+    else if(!m.Success) throw SyntaxError("invalid number");
 
     if(str.IndexOf('.')!=-1) return exact=='e' ? Builtins.inexactToExact.core(double.Parse(str)) : double.Parse(str);
     else
@@ -249,24 +248,15 @@ public sealed class Parser
                 c = ReadChar();
               } while(c!=0 && !IsDelimiter(c));
               lastChar=c;
-              if(sb.Length==3 && char.ToLower(sb[0])=='c' && sb[1]=='-' && char.IsLetter(sb[2])) c = (char)(char.ToLower(sb[2])-'a'+1);
-              else switch(sb.ToString().ToLower())
-              { case "bs": case "backspace": value='\b'; break;
-                case "esc": case "escape": value=(char)27; break;
-                case "lf": case "linefeed": case "newline": value='\n'; break;
-                case "nul": value='\0'; break;
-                case "return": value='\r'; break;
-                case "del": case "rubout": value=(char)127; break;
-                case "space": value=' '; break;
-                case "tab": value='\t'; break;
-                case "vt": case "vtab": value='\v'; break;
-              }
+
+              try { value = Builtins.nameToChar.core(sb.ToString()); }
+              catch(ValueErrorException e) { throw SyntaxError(e.Message); }
             }
             return Token.Literal;
           }
           case '_':
           { if(!Options.AllowInternal)
-              SyntaxError("internal symbols (#_*) are disallowed outside the standard library");
+              throw SyntaxError("internal symbols (#_*) are disallowed outside the standard library");
             StringBuilder sb = new StringBuilder();
             sb.Append("#_");
             while(true)
@@ -285,13 +275,13 @@ public sealed class Parser
               { c = ReadChar();
                 if(c=='#') break;
               }
-              if(c==0) SyntaxError("unterminated extended comment");
+              if(c==0) throw SyntaxError("unterminated extended comment");
             }
             break;
           case 'b': case 'o': case 'd': case 'x': case 'i': case 'e':
             value=ReadNumber(c); return Token.Literal;
-          case '<': SyntaxError("unable to read: #<..."); break;
-          default: SyntaxError("unknown notation: #"+c); break;
+          case '<': throw SyntaxError("unable to read: #<...");
+          default: throw SyntaxError("unknown notation: #"+c);
         }
       }
       else if(c=='"')
@@ -299,8 +289,8 @@ public sealed class Parser
         while(true)
         { c = ReadChar();
           if(c=='"') break;
-          if(c==0) SyntaxError("unterminated string constant");
-          if(c=='\\') { ReadChar(); c=GetEscapeChar(); }
+          if(c==0) throw SyntaxError("unterminated string constant");
+          if(c=='\\') c=GetEscapeChar();
           sb.Append(c);
         }
         value = sb.ToString();
@@ -333,8 +323,11 @@ public sealed class Parser
     }
   }
 
-  void SyntaxError(string format, params object[] args)
-  { throw new ArgumentException(string.Format("{0}({1},{2}): {3}", sourceFile, line, column, string.Format(format, args)));
+  SyntaxErrorException SyntaxError(string message)
+  { return new SyntaxErrorException(string.Format("{0}({1},{2}): {3}", sourceFile, line, column, message));
+  }
+  SyntaxErrorException SyntaxError(string format, params object[] args)
+  { return SyntaxError(string.Format(format, args));
   }
 
   bool TryEat(Token type)
