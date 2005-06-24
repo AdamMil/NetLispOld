@@ -494,6 +494,39 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region char->name
+  public sealed class charToName : Primitive
+  { public charToName() : base("char->name", 1, 2) { }
+    
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return core(Ops.ExpectChar(args[0]), args.Length==2 && Ops.IsTrue(args[1]));
+    }
+    
+    internal static string core(char c, bool slashify)
+    { string name;
+      switch((int)c)
+      { case 0:  name="nul"; break;
+        case 7:  name="bel"; break;
+        case 8:  name="bs"; break;
+        case 9:  name="tab"; break;
+        case 10: name="lf"; break;
+        case 11: name="vt"; break;
+        case 12: name="ff"; break;
+        case 13: name="cr"; break;
+        case 27: name="esc"; break;
+        case 28: name="fs"; break;
+        case 29: name="gs"; break;
+        case 30: name="rs"; break;
+        case 31: name="us"; break;
+        case 32: name="space"; break;
+        default: name = c>32 ? c==127 ? "del" : c.ToString() : "C-"+((char)(c+96)).ToString(); break;
+      }
+      return slashify ? "#\\"+name : name;
+    }
+  }
+  #endregion
+
   public static Snippet compile(object obj) { return Ops.CompileRaw(Ops.Call("expand", obj)); }
 
   [SymbolName("compiled-procedure?")]
@@ -1032,6 +1065,68 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     }
   }
 
+  #region name->char
+  public sealed class nameToChar : Primitive
+  { public nameToChar() : base("name->char", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return core(Ops.ExpectString(args[0]));
+    }
+
+    internal static char core(string name)
+    { char c;
+      if(name.Length==0) throw Ops.ValueError("name->char: expected non-empty string");
+      else if(name.Length==1) c=name[0];
+      else if(name.StartsWith("c-") && name.Length==3)
+      { int i = char.ToUpper(name[2])-64;
+        if(i<1 || i>26) throw Ops.ValueError("name->char: invalid control code "+name);
+        c=(char)i;
+      }
+      else
+        switch(name.ToLower())
+        { case "space": c=(char)32; break;
+          case "lf": case "linefeed": c=(char)10; break;
+          case "cr": case "return": c=(char)13; break;
+          case "tab": case "ht": c=(char)9; break;
+          case "bs": case "backspace": c=(char)8; break;
+          case "esc": case "altmode": c=(char)27; break;
+          case "del": case "rubout": c=(char)127; break;
+          case "nul": c=(char)0; break;
+          case "soh": c=(char)1; break;
+          case "stx": c=(char)2; break;
+          case "etx": c=(char)3; break;
+          case "eot": c=(char)4; break;
+          case "enq": c=(char)5; break;
+          case "ack": c=(char)6; break;
+          case "bel": c=(char)7; break;
+          case "vt":  c=(char)11; break;
+          case "ff": case "page": c=(char)12; break;
+          case "so":  c=(char)14; break;
+          case "si":  c=(char)15; break;
+          case "dle": c=(char)16; break;
+          case "dc1": c=(char)17; break;
+          case "dc2": c=(char)18; break;
+          case "dc3": c=(char)19; break;
+          case "dc4": c=(char)20; break;
+          case "nak": c=(char)21; break;
+          case "syn": c=(char)22; break;
+          case "etb": c=(char)23; break;
+          case "can": c=(char)24; break;
+          case "em":  c=(char)25; break;
+          case "sub": case "call": c=(char)26; break;
+          case "fs":  c=(char)28; break;
+          case "gs":  c=(char)29; break;
+          case "rs":  c=(char)30; break;
+          case "us": case "backnext": c=(char)31; break;
+          default: throw Ops.ValueError("name->char: unknown character name '"+name+"'");
+        }
+
+      return c;
+    }
+  }
+  #endregion
+
   #region not
   public sealed class not : Primitive
   { public not() : base("not", 1, 1) { }
@@ -1202,8 +1297,8 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         case TypeCode.SByte: case TypeCode.Int16:  case TypeCode.Int32:  case TypeCode.Int64:
           return obj;
         case TypeCode.Decimal: return Decimal.Round((Decimal)obj, places);
-        case TypeCode.Double:  return Math.Round((double)d, places);
-        case TypeCode.Single:  return Math.Round((float)d, places);
+        case TypeCode.Double:  return Math.Round((double)obj, places);
+        case TypeCode.Single:  return Math.Round((float)obj, places);
         case TypeCode.Object:
           if(obj is Integer) return obj;
           if(obj is Complex)
@@ -1214,7 +1309,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
       }
     }
-    
+
     static object doubleCore(double d)
     { try { return checked((int)d); }
       catch(OverflowException)
