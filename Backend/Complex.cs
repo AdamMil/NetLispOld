@@ -137,6 +137,7 @@ public struct Complex
   public static bool operator!=(Complex a, double b)  { return a.real!=b || a.imag!=0; }
   public static bool operator!=(double a, Complex b)  { return a!=b.real || b.imag!=0; }
   
+  public static readonly Complex Zero = new Complex(0);
   public static readonly Complex I = new Complex(0, 1);
 
   Complex powu(int power)

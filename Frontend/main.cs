@@ -223,6 +223,8 @@ public class App
                                   (if (cddr init) (caddr init) (car init)))
                                 inits)))))))
 
+; fluid-let (needs dynamic-wind)
+
 ; (1+ obj)
 ; (1- obj)
 (define (1+ o) (+ o 1))
