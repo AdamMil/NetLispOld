@@ -197,11 +197,12 @@ public sealed class Parser
       c = ReadChar();
     } while(c!=0 && !IsDelimiter(c));
     lastChar = c;
-    
+
     if(sb.Length==1)
     { if(sb[0]=='.') return Token.Period;
       if(sb[0]=='-') return "-";
     }
+
     string str = sb.ToString();
     Match m = numRegex.Match(str);
     if(ident)
