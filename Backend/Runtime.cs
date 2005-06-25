@@ -55,13 +55,12 @@ public abstract class SimpleProcedure : IProcedure
                                   " arguments, but received "+num.ToString());
   }
 
-  internal  bool IsPrimitive;
   protected string name;
   protected int min, max;
 }
 
 public abstract class Primitive : SimpleProcedure
-{ public Primitive(string name, int min, int max) : base(name, min, max) { IsPrimitive=true; }
+{ public Primitive(string name, int min, int max) : base(name, min, max) { }
   public override string ToString() { return string.Format("#<primitive procedure '{0}'>", name); }
 }
 #endregion
@@ -96,9 +95,9 @@ public sealed class Binding
 public abstract class Closure : IProcedure
 { public int MinArgs { get { return Template.NumParams; } }
   public int MaxArgs { get { return Template.HasList ? -1 : Template.NumParams; } }
-  public string Name { get { return "#<lambda>"; } }
 
   public abstract object Call(params object[] args);
+  public override string ToString() { return Template.Name==null ? "#<lambda>" : "#<lambda '"+Template.Name+"'>"; }
 
   public Template Template;
   public LocalEnvironment Environment;
@@ -701,17 +700,6 @@ public sealed class Ops
     return (object[])items.ToArray(typeof(object));
   }
 
-  public static int Length(Pair pair)
-  { if(pair==null) return 0;
-    int total=1;
-    while(true)
-    { pair = pair.Cdr as Pair;
-      if(pair==null) break;
-      total++;
-    }
-    return total;
-  }
-
   public static Delegate MakeDelegate(object callable, Type delegateType)
   { IProcedure proc = callable as IProcedure;
     if(proc==null) throw new ArgumentException("delegate: expected a procedure");
@@ -1074,10 +1062,12 @@ public sealed class Pair
 { public Pair(object car, object cdr) { Car=car; Cdr=cdr; }
 
   public override string ToString()
-  { System.Text.StringBuilder sb = new System.Text.StringBuilder();
+  { if(Builtins.circularListP.core(this)) return "(!!)";
+
+    System.Text.StringBuilder sb = new System.Text.StringBuilder();
     sb.Append('(');
     bool sep=false;
-    
+
     Pair pair=this, next;
     do
     { if(sep) sb.Append(' ');
@@ -1145,6 +1135,7 @@ public sealed class Template
     return args;
   }
 
+  public readonly string Name;
   public readonly IntPtr FuncPtr;
   public readonly int  NumParams;
   public readonly bool HasList;

@@ -72,22 +72,22 @@ public sealed class AST
     if(sym!=null)
       switch(sym.Name)
       { case "if":
-        { int len = Ops.Length(pair);
+        { int len = Builtins.length.core(pair);
           if(len<3 || len>4) throw new Exception("if: expects 3 or 4 forms"); // FIXME: SyntaxException
           pair = (Pair)pair.Cdr;
           Pair next = (Pair)pair.Cdr;
           return new IfNode(Parse(pair.Car), Parse(next.Car), next.Cdr==null ? null : Parse(Ops.FastCadr(next)));
         }
         case "begin":
-        { if(Ops.Length(pair)<2) throw new Exception("begin: no forms given");
+        { if(Builtins.length.core(pair)<2) throw new Exception("begin: no forms given");
           return ParseBody((Pair)pair.Cdr);
         }
         case "let":
-        { if(Ops.Length(pair)<3) throw new Exception("too few for let");
+        { if(Builtins.length.core(pair)<3) throw new Exception("too few for let");
           pair = (Pair)pair.Cdr;
 
           Pair bindings = (Pair)pair.Car;
-          string[] names = new string[Ops.Length(bindings)];
+          string[] names = new string[Builtins.length.core(bindings)];
           Node[]   inits = new Node[names.Length];
           for(int i=0; i<names.Length; bindings=(Pair)bindings.Cdr,i++)
           { if(bindings.Car is Pair)
@@ -101,24 +101,24 @@ public sealed class AST
           return new LetNode(names, inits, ParseBody((Pair)pair.Cdr));
         }
         case "lambda":
-        { if(Ops.Length(pair)<3) throw new Exception("too few for lambda"); // FIXME: SyntaxException
+        { if(Builtins.length.core(pair)<3) throw new Exception("too few for lambda"); // FIXME: SyntaxException
           pair = (Pair)pair.Cdr;
           bool hasList;
           return new LambdaNode(ParseLambaList(pair.Car, out hasList), hasList, ParseBody((Pair)pair.Cdr));
         }
         case "quote":
-        { if(Ops.Length(pair)!=2) throw new Exception("wrong number for quote"); // FIXME: ex
+        { if(Builtins.length.core(pair)!=2) throw new Exception("wrong number for quote"); // FIXME: ex
           return Quote(Ops.FastCadr(pair));
         }
         case "set!":
-        { if(Ops.Length(pair)!=3) throw new Exception("wrong number for set!"); // FIXME: SyntaxException
+        { if(Builtins.length.core(pair)!=3) throw new Exception("wrong number for set!"); // FIXME: SyntaxException
           pair = (Pair)pair.Cdr;
           sym = pair.Car as Symbol;
           if(sym==null) throw new Exception("set must set symbol"); // FIXME: SyntaxException
           return new SetNode(sym.Name, ParseBody((Pair)pair.Cdr));
         }
         case "define":
-        { int length = Ops.Length(pair);
+        { int length = Builtins.length.core(pair);
           if(length!=3) throw new Exception("wrong number for define"); // FIXME: ex
           pair = (Pair)pair.Cdr;
           sym = (Symbol)pair.Car;

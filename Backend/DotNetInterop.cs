@@ -760,7 +760,7 @@ public sealed class Interop
           cg.EmitArgGet(0); // if(args.Length==ptypes.Length) {
           cg.ILG.Emit(OpCodes.Ldlen);
           cg.EmitInt(sig.Params.Length);
-          cg.ILG.Emit(OpCodes.Bne_Un_S, pack);
+          cg.ILG.Emit(OpCodes.Bne_Un, pack);
           
           cg.EmitArgGet(0); // sa = args[numNP] as Array;
           cg.EmitInt(numnp);
@@ -768,7 +768,7 @@ public sealed class Interop
           cg.ILG.Emit(OpCodes.Isinst, typeof(Array));
           cg.ILG.Emit(OpCodes.Dup);
           sa.EmitSet(cg);
-          cg.ILG.Emit(OpCodes.Brfalse_S, pack); // if(sa==null) goto pack
+          cg.ILG.Emit(OpCodes.Brfalse, pack); // if(sa==null) goto pack
           
           sa.EmitGet(cg); // conv = Ops.ConvertTo(sa.GetType(), ptypes[numNP]);
           cg.EmitCall(typeof(Array), "GetType");
@@ -787,7 +787,7 @@ public sealed class Interop
           cg.ILG.MarkLabel(is2);
           sa.EmitGet(cg);
           cg.ILG.Emit(OpCodes.Castclass, sig.Params[numnp]);
-          cg.ILG.Emit(OpCodes.Br_S, call);
+          cg.ILG.Emit(OpCodes.Br, call);
           #endregion
 
           #region Handle array conversion
