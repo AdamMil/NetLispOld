@@ -424,6 +424,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   #endregion
   #endregion
   
+  // TODO: vector->list (and related)
   #region List functions
   #region append
   public sealed class append : Primitive
@@ -455,6 +456,58 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     }
   }
   #endregion
+  #region append!
+  public sealed class appendN : Primitive
+  { public appendN() : base("append!", 0, -1) { }
+    public override object Call(object[] args)
+    { if(args.Length==0) return null;
+      if(args.Length==1) return args[0];
+      
+      Pair head=null, prev=null;
+      int i;
+      for(i=0; i<args.Length-1; i++)
+      { if(args[i]==null) continue;
+        Pair pair=Ops.ExpectPair(args[i]);
+        if(prev==null) head=pair;
+        else prev.Cdr=pair;
+        do
+        { prev = pair;
+          pair = pair.Cdr as Pair;
+        } while(pair!=null);
+      }
+      if(prev==null) return args[i];
+      prev.Cdr = args[i];
+      return head;
+    }
+  }
+  #endregion
+
+  #region circular-list?
+  public sealed class circularListP : Primitive
+  { public circularListP() : base("circular-list?", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Pair pair = args[0] as Pair;
+      return pair==null ? Ops.FALSE : Ops.FromBool(core(pair));
+    }
+
+    internal static bool core(Pair slow)
+    { if(slow==null) return false;
+      
+      Pair fast = slow.Cdr as Pair;
+      if(fast==null) return false;
+
+      while(true)
+      { if(slow==fast) return true;
+        slow = (Pair)slow.Cdr;
+        fast = fast.Cdr as Pair;
+        if(fast==null) return false;
+        fast = fast.Cdr as Pair;
+        if(fast==null) return false;
+      }
+    }
+  }
+  #endregion
 
   #region cons*
   public sealed class consAll : Primitive
@@ -467,9 +520,117 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  #region last
-  public sealed class last : Primitive
-  { public last() : base("last", 1, 1) { }
+  #region except-last-pair
+  public sealed class exceptLastPair : Primitive
+  { public exceptLastPair() : base("except-last-pair", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Pair head=Ops.ExpectPair(args[0]), prev=head, pair=prev.Cdr as Pair;
+      if(pair==null) return null;
+      head = prev = new Pair(head.Car, null);
+      while(true)
+      { Pair next = pair.Cdr as Pair;
+        if(next==null) return head;
+        prev.Cdr=pair=new Pair(pair.Car, null); prev=pair; pair=next;
+      }
+    }
+  }
+  #endregion
+  #region except-last-pair!
+  public sealed class exceptLastPairN : Primitive
+  { public exceptLastPairN() : base("except-last-pair!", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Pair head=Ops.ExpectPair(args[0]), prev=head, pair=prev.Cdr as Pair;
+      if(pair==null) return null;
+      while(true)
+      { Pair next = pair.Cdr as Pair;
+        if(next==null) { prev.Cdr=null; return head; }
+        prev=pair; pair=next;
+      }
+    }
+  }
+  #endregion
+
+  #region for-each
+  public sealed class forEach : Primitive
+  { public forEach() : base("for-each", 1, -1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      if(args.Length==1) return null;
+
+      IProcedure func = Ops.ExpectProcedure(args[0]);
+
+      if(args.Length==2)
+      { Pair p = Ops.ExpectList(args[1]);
+        args = new object[1];
+        while(p!=null)
+        { args[0] = p.Car;
+          p = p.Cdr as Pair;
+          func.Call(args);
+        }
+        return null;
+      }
+      else
+      { Pair[] pairs = new Pair[args.Length-1];
+        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
+
+        args = new object[pairs.Length];
+
+        while(true)
+        { for(int i=0; i<pairs.Length; i++)
+          { if(pairs[i]==null) return null;
+            args[i] = pairs[i].Car;
+            pairs[i] = pairs[i].Cdr as Pair;
+          }
+          func.Call(args);
+        }
+      }
+    }
+  }
+  #endregion
+
+  #region for-each-pair
+  public sealed class forEachPair : Primitive
+  { public forEachPair() : base("for-each-pair", 1, -1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      if(args.Length==1) return null;
+
+      IProcedure func = Ops.ExpectProcedure(args[0]);
+      if(args.Length==2)
+      { Pair p = Ops.ExpectList(args[1]);
+        args = new object[1];
+        while(p!=null)
+        { args[0] = p;
+          p = p.Cdr as Pair;
+          func.Call(args);
+        }
+        return null;
+      }
+      else
+      { Pair[] pairs = new Pair[args.Length-1];
+        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
+
+        args = new object[pairs.Length];
+        while(true)
+        { for(int i=0; i<pairs.Length; i++)
+          { if(pairs[i]==null) return null;
+            args[i] = pairs[i];
+            pairs[i] = pairs[i].Cdr as Pair;
+          }
+          func.Call(args);
+        }
+      }
+    }
+  }
+  #endregion
+
+  #region last-pair
+  public sealed class lastPair : Primitive
+  { public lastPair() : base("last-pair", 1, 1) { }
   
     public override object Call(object[] args)
     { CheckArity(args);
@@ -479,6 +640,29 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       { Pair next = pair.Cdr as Pair;
         if(next==null) return pair;
         pair = next;
+      }
+    }
+  }
+  #endregion
+
+  #region list?
+  public sealed class listP : Primitive
+  { public listP() : base("list?", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Pair slow = args[0] as Pair;
+      if(slow==null) return Ops.FALSE;
+      
+      Pair fast = slow.Cdr as Pair;
+      if(fast==null) return slow.Cdr==null ? Ops.TRUE : Ops.FALSE;
+    
+      while(true)
+      { if(slow==fast) return Ops.FALSE;
+        slow = (Pair)slow.Cdr;
+        Pair next = fast.Cdr as Pair;
+        if(next==null) return fast.Cdr==null ? Ops.TRUE : Ops.FALSE;
+        fast = next.Cdr as Pair;
+        if(fast==null) return next.Cdr==null ? Ops.TRUE : Ops.FALSE;
       }
     }
   }
@@ -502,22 +686,224 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     }
   }
   #endregion
+  
+  #region list-head
+  public sealed class listHead : Primitive
+  { public listHead() : base("list-head", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return core(Name, Ops.ExpectList(args[0]), Ops.ExpectInt(args[1]));
+    }
+    
+    internal static Pair core(string name, Pair pair, int length)
+    { if(length<=0) return null;
 
-  public static Pair map(IProcedure func, params Pair[] pairs)
-  { Pair head=null, tail=null;
-    object[] args = new object[pairs.Length];
-
-    while(true)
-    { for(int i=0; i<pairs.Length; i++)
-      { if(pairs[i]==null) return head;
-        args[i] = pairs[i].Car;
-        pairs[i] = pairs[i].Cdr as Pair;
-      }
-      Pair next = new Pair(func.Call(args), null);
-      if(head==null) head=tail=next;
-      else { tail.Cdr=next; tail=next; }
+      Pair head=null, tail=null;
+      do
+      { if(pair==null) throw new ArgumentException(name+": list is not long enough");
+        Pair next = new Pair(pair.Car, null);
+        if(head==null) head=tail=next;
+        else { tail.Cdr=next; tail=next; }
+        pair = pair.Cdr as Pair;
+      } while(--length != 0);
+      return head;
     }
   }
+  #endregion
+
+  #region list-ref
+  public sealed class listRef : Primitive
+  { public listRef() : base("list-ref", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Pair p = listTail.core(Name, Ops.ExpectPair(args[0]), Ops.ExpectInt(args[1]));
+      if(p==null) throw new ArgumentException(Name+": list is not long enough");
+      return p.Car;
+    }
+  }
+  #endregion
+
+  #region list-tail
+  public sealed class listTail : Primitive
+  { public listTail() : base("list-tail", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return core(Name, Ops.ExpectList(args[0]), Ops.ExpectInt(args[1]));
+    }
+    
+    internal static Pair core(string name, Pair pair, int length)
+    { for(int i=0; i<length; i++)
+      { Pair next = pair.Cdr as Pair;
+        if(next==null)
+        { if(pair.Cdr==null && i==length-1) return null;
+          throw new ArgumentException(name+": list is not long enough");
+        }
+        pair = next;
+      }
+      return pair;
+    }
+  }
+  #endregion
+
+  #region length
+  public sealed class length : Primitive
+  { public length() : base("length", 1, 1) { }
+  
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return core(Ops.ExpectList(args[0]));
+    }
+
+    internal static int core(Pair pair)
+    { if(pair==null) return 0;
+      int total=1;
+      while(true)
+      { pair = pair.Cdr as Pair;
+        if(pair==null) break;
+        total++;
+      }
+      return total;
+    }
+  }
+  #endregion
+  #region length+
+  public sealed class lengthPlus : Primitive
+  { public lengthPlus() : base("length+", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Pair slow = Ops.ExpectList(args[0]);
+      if(slow==null) return 0;
+      
+      Pair fast = slow.Cdr as Pair;
+      if(fast==null) return 1;
+    
+      int length=1;
+      while(true)
+      { if(slow==fast) return Ops.FALSE;
+        slow = (Pair)slow.Cdr;
+        fast = fast.Cdr as Pair;
+        if(fast==null) return length+1;
+        fast = fast.Cdr as Pair;
+        length += 2;
+        if(fast==null) return length;
+      }
+    }
+  }
+  #endregion
+
+  #region make-list
+  public sealed class makeList : Primitive
+  { public makeList() : base("make-list", 1, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      int length  = Ops.ExpectInt(args[0]);
+      object fill = args.Length==2 ? args[1] : null;
+
+      Pair head=null, tail=null;
+      for(int i=0; i<length; i++)
+      { Pair next = new Pair(fill, null);
+        if(head==null) head=tail=next;
+        else { tail.Cdr=next; tail=next; }
+      }
+      return head;
+    }
+  }
+  #endregion
+
+  #region map
+  public sealed class map : Primitive
+  { public map() : base("map", 1, -1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      if(args.Length==1) return null;
+
+      IProcedure func = Ops.ExpectProcedure(args[0]);
+
+      if(args.Length==2)
+      { Pair p=Ops.ExpectList(args[1]), head=null, tail=null;
+        args = new object[1];
+        while(p!=null)
+        { args[0] = p.Car;
+          p = p.Cdr as Pair;
+          Pair next = new Pair(func.Call(args), null);
+          if(head==null) head=tail=next;
+          else { tail.Cdr=next; tail=next; }
+        }
+        return head;
+      }
+      else
+      { Pair[] pairs = new Pair[args.Length-1];
+        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
+
+        args = new object[pairs.Length];
+
+        Pair head=null, tail=null;
+        while(true)
+        { for(int i=0; i<pairs.Length; i++)
+          { if(pairs[i]==null) return head;
+            args[i] = pairs[i].Car;
+            pairs[i] = pairs[i].Cdr as Pair;
+          }
+          Pair next = new Pair(func.Call(args), null);
+          if(head==null) head=tail=next;
+          else { tail.Cdr=next; tail=next; }
+        }
+      }
+    }
+  }
+  #endregion
+
+  #region reverse
+  public sealed class reverse : Primitive
+  { public reverse() : base("reverse", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Pair pair=Ops.ExpectList(args[0]), list=null;
+      while(pair!=null)
+      { list = new Pair(pair.Car, list);
+        pair = pair.Cdr as Pair;
+      }
+      return list;
+    }
+  }
+  #endregion
+  #region reverse!
+  public sealed class reverseN : Primitive
+  { public reverseN() : base("reverse!", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Pair pair=Ops.ExpectList(args[0]);
+      if(pair==null) return null;
+      Pair next = pair.Cdr as Pair;
+      if(next==null) return pair;
+
+      pair.Cdr = null;
+      do
+      { Pair nnext = next.Cdr as Pair;
+        next.Cdr = pair;
+        pair=next; next=nnext;
+      } while(next!=null);
+      return pair;
+    }
+  }
+  #endregion
+
+  #region sublist
+  public sealed class sublist : Primitive
+  { public sublist() : base("sublist", 3, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Pair  pair = Ops.ExpectList(args[0]);
+      int  start = Ops.ExpectInt(args[1]);
+      int length = Ops.ExpectInt(args[2]);
+
+      if(start!=0) pair = listTail.core(Name, pair, start);
+      return listHead.core(Name, pair, length);
+    }
+  }
+  #endregion
 
   #region tree-copy
   public sealed class treeCopy : Primitive
@@ -1611,7 +1997,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
       int  alen = args.Length-2;
       Pair pair = Ops.ExpectPair(args[alen+1]);
-      object[] nargs = new object[Ops.Length(pair) + alen];
+      object[] nargs = new object[Builtins.length.core(pair) + alen];
       if(alen!=0) Array.Copy(args, 1, nargs, 0, alen);
 
       do
@@ -1680,7 +2066,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   #endregion
   #endregion
 
-  // TODO: more to do
+  // TODO: string-search-chars (and related)
   #region String functions
   #region list->string
   public sealed class listToString : Primitive
@@ -1696,6 +2082,22 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       try { while(pair!=null) { sb.Append((char)pair.Car); pair=pair.Cdr as Pair; } }
       catch(InvalidCastException) { throw new Exception(name+": expects a list of characters"); }
       return sb.ToString();
+    }
+  }
+  #endregion
+  #region string->list
+  public sealed class stringToList : Primitive
+  { public stringToList() : base("string->list", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      string str = Ops.ExpectString(args[0]);
+      Pair head=null, tail=null;
+      for(int i=0; i<str.Length; i++)
+      { Pair next = new Pair(str[i], null);
+        if(head==null) head=tail=next;
+        else { tail.Cdr=next; tail=next; }
+      }
+      return head;
     }
   }
   #endregion
@@ -1869,11 +2271,31 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
   #region string-compare
   public sealed class stringCompare : Primitive
-  { public stringCompare() : base("string-compare", 2, 3) { }
+  { public stringCompare() : base("string-compare", 2, 7) { }
   
     public override object Call(object[] args)
     { CheckArity(args);
-      return string.Compare(Ops.ExpectString(args[0]), Ops.ExpectString(args[1]), args.Length==3 && Ops.IsTrue(args[2]));
+      string str1, str2;
+      int start1, start2, len;
+
+      switch(args.Length)
+      { case 2: case 3:
+          str1=Ops.ExpectString(args[0]); str2=Ops.ExpectString(args[1]);
+          start1=start2=0; len=Math.Min(str1.Length, str2.Length);
+          break;
+        case 6: case 7:
+          str1   = Ops.ExpectString(args[0]); str2   = Ops.ExpectString(args[3]);
+          start1 = Ops.ExpectInt(args[1]);    start2 = Ops.ExpectInt(args[4]);
+          len = Math.Min(Ops.ExpectInt(args[2]), Ops.ExpectInt(args[5]));
+          if(len<0 || start1<0 || start2<0 || len+start1>str1.Length || len+start2>str2.Length)
+            throw new ArgumentException(name+": start+length exceeded one of the string parameters, "+
+                                        "or a parameter was negative");
+          break;
+        default: throw new ArgumentException(name+": expects either 2, 3, 6, or 7 arguments, but received "+
+                                             args.Length.ToString());
+      }
+
+      return string.Compare(str1, start1, str2, start2, len, (args.Length&1)!=0 && Ops.IsTrue(args[args.Length-1]));
     }
   }
   #endregion
@@ -1954,6 +2376,99 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region string-match
+  public sealed class stringMatch : Primitive
+  { public stringMatch() : base("string-match", 2, 6) { }
+
+    public override object Call(object[] args)
+    { string str1, str2;
+      int pos, len, start1, start2;
+      handleArgs(Name, args, out str1, out str2, out len, out start1, out start2);
+      for(pos=0; pos<len; pos++) if(str1[pos+start1] != str2[pos+start2]) break;
+      return pos;
+    }
+
+    internal static void handleArgs(string name, object[] args, out string str1, out string str2, out int len,
+                                    out int start1, out int start2)
+    { switch(args.Length)
+      { case 2:
+          str1=Ops.ExpectString(args[0]); str2=Ops.ExpectString(args[1]);
+          start1=start2=0; len=Math.Min(str1.Length, str2.Length);
+          break;
+        case 6:
+          str1   = Ops.ExpectString(args[0]); str2   = Ops.ExpectString(args[3]);
+          start1 = Ops.ExpectInt(args[1]);    start2 = Ops.ExpectInt(args[4]);
+          len = Math.Min(Ops.ExpectInt(args[2]), Ops.ExpectInt(args[5]));
+          if(len<0 || start1<0 || start2<0 || len+start1>str1.Length || len+start2>str2.Length)
+            throw new ArgumentException(name+": start+length exceeded one of the string parameters, "+
+                                        "or a parameter was negative");
+          break;
+        default: throw new ArgumentException(name+": expects either 2 or 6 arguments, but received "+args.Length);
+      }
+    }
+  }
+  #endregion
+  #region string-match-ci
+  public sealed class stringMatchCi : Primitive
+  { public stringMatchCi() : base("string-match-ci", 2, 6) { }
+
+    public override object Call(object[] args)
+    { string str1, str2;
+      int pos, len, start1, start2;
+      stringMatch.handleArgs(Name, args, out str1, out str2, out len, out start1, out start2);
+      for(pos=0; pos<len; pos++) if(char.ToLower(str1[pos+start1]) != char.ToLower(str2[pos+start2])) break;
+      return pos;
+    }
+  }
+  #endregion
+  #region string-match-backward
+  public sealed class stringMatchBackward : Primitive
+  { public stringMatchBackward() : base("string-match-backward", 2, 6) { }
+
+    public override object Call(object[] args)
+    { string str1, str2;
+      int pos, len, start1, start2;
+      handleArgs(Name, args, out str1, out str2, out len, out start1, out start2);
+      for(pos=0; pos<len; pos++) if(str1[start1-pos] != str2[start2-pos]) break;
+      return pos;
+    }
+
+    internal static void handleArgs(string name, object[] args, out string str1, out string str2, out int len,
+                                    out int start1, out int start2)
+    { switch(args.Length)
+      { case 2:
+          str1=Ops.ExpectString(args[0]); str2=Ops.ExpectString(args[1]);
+          len=Math.Min(str1.Length, str2.Length); start1=str1.Length-1; start2=str2.Length-1;
+          break;
+        case 6:
+          { int len1=Ops.ExpectInt(args[2]), len2=Ops.ExpectInt(args[5]);
+            str1=Ops.ExpectString(args[0]); str2=Ops.ExpectString(args[3]);
+            start1=Ops.ExpectInt(args[1])+len1-1; start2=Ops.ExpectInt(args[4])+len2-1;
+            len = Math.Min(len1, len2);
+            if(len<0 || start1>=str1.Length || start2>=str2.Length)
+              throw new ArgumentException(name+": start+length exceeded one of the string parameters, "+
+                                          "or a parameter was negative");
+          }
+          break;
+        default: throw new ArgumentException(name+": expects either 2 or 6 arguments, but received "+args.Length);
+      }
+    }
+  }
+  #endregion
+  #region string-match-backward-ci
+  public sealed class stringMatchBackwardCi : Primitive
+  { public stringMatchBackwardCi() : base("string-match-backward-ci", 2, 6) { }
+
+    public override object Call(object[] args)
+    { string str1, str2;
+      int pos, len, start1, start2;
+      stringMatchBackward.handleArgs(Name, args, out str1, out str2, out len, out start1, out start2);
+      for(pos=0; pos<len; pos++) if(char.ToLower(str1[start1-pos]) != char.ToLower(str2[start2-pos])) break;
+      return pos;
+    }
+  }
+  #endregion
+
   #region string-null?
   public sealed class stringNullP : Primitive
   { public stringNullP() : base("string-null?", 1, 1) { }
@@ -1986,6 +2501,62 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region string-prefix?
+  public sealed class stringPrefixP : Primitive
+  { public stringPrefixP() : base("string-prefix?", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.FromBool(Ops.ExpectString(args[1]).StartsWith(Ops.ExpectString(args[0])));
+    }
+  }
+  #endregion
+  #region string-suffix?
+  public sealed class stringSuffixP : Primitive
+  { public stringSuffixP() : base("string-suffix?", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.FromBool(Ops.ExpectString(args[1]).EndsWith(Ops.ExpectString(args[0])));
+    }
+  }
+  #endregion
+
+  #region string-replace
+  public sealed class stringReplace : Primitive
+  { public stringReplace() : base("string-replace", 3, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+
+      string str = Ops.ExpectString(args[0]);
+      string search = args[1] as string;
+      return search!=null ? str.Replace(search, Ops.ExpectString(args[2]))
+                          : str.Replace(Ops.ExpectChar(args[1]), Ops.ExpectChar(args[2]));
+    }
+  }
+  #endregion
+
+  #region string-reverse
+  public sealed class stringReverse : Primitive
+  { public stringReverse() : base("string-reverse", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      string str = Ops.ExpectString(args[0]);
+      if(str.Length==0) return str;
+      unsafe
+      { char* dest = stackalloc char[str.Length];
+        fixed(char* src=str)
+        { int end=str.Length-1, hlen=(str.Length+1)/2;
+          for(int i=0; i<hlen; i++)
+          { int ei=end-i;
+            dest[i]  = src[ei];
+            dest[ei] = src[i];
+          }
+        }
+        return new string(dest, 0, str.Length);
+      }
+    }
+  }
+  #endregion
+  
   #region string-search
   public sealed class stringSearch : Primitive
   { public stringSearch() : base("string-search", 2, 4) { }
@@ -2000,7 +2571,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     }
   }
   #endregion
-
   #region string-search-all
   public sealed class stringSearchAll : Primitive
   { public stringSearchAll() : base("string-search-all", 2, 4) { }
@@ -2015,17 +2585,19 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         while(pos<end)
         { index = haystack.IndexOf(needle, pos);
           if(index==-1) break;
-          tail = new Pair(index, tail);
-          if(head==null) head=tail;
-          pos = index+1;
+          Pair next = new Pair(index, null);
+          if(head==null) head=tail=next;
+          else { tail.Cdr=next; tail=next; }
+          pos = index+needle.Length;
         }
       else
       { char c = Ops.ExpectChar(args[0]);
         while(pos<end)
-        { index = haystack.IndexOf(needle, pos);
+        { index = haystack.IndexOf(c, pos);
           if(index==-1) break;
-          tail = new Pair(index, tail);
-          if(head==null) head=tail;
+          Pair next = new Pair(index, null);
+          if(head==null) head=tail=next;
+          else { tail.Cdr=next; tail=next; }
           pos = index+1;
         }
       }
@@ -2033,10 +2605,9 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     }
   }
   #endregion
-
-  #region string-search-backwards
-  public sealed class stringSearchBackwards : Primitive
-  { public stringSearchBackwards() : base("string-search-backwards", 2, 4) { }
+  #region string-search-backward
+  public sealed class stringSearchBackward : Primitive
+  { public stringSearchBackward() : base("string-search-backward", 2, 4) { }
     public override object Call(object[] args)
     { CheckArity(args);
       string haystack=Ops.ExpectString(args[1]), needle=args[0] as string;
@@ -2279,17 +2850,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     public override object Call(object[] args)
     { CheckArity(args);
       return new Symbol((args.Length==0 ? "#<g" : "#<"+Ops.ExpectString(args[0])) + gensyms.Next + ">");
-    }
-  }
-  #endregion
-
-  #region length
-  public sealed class length : Primitive
-  { public length() : base("length", 1, 1) { }
-  
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return args[0]==null ? 0 : Ops.Length(Ops.ExpectPair(args[0]));
     }
   }
   #endregion
