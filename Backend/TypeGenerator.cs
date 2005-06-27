@@ -41,6 +41,7 @@ public sealed class TypeGenerator
     return cg;
   }
 
+  public CodeGenerator DefineDefaultConstructor() { return DefineDefaultConstructor(MethodAttributes.Public); }
   public CodeGenerator DefineDefaultConstructor(MethodAttributes attrs)
   { ConstructorBuilder cb = TypeBuilder.DefineDefaultConstructor(attrs);
     return new CodeGenerator(this, cb, cb.GetILGenerator());

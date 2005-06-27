@@ -35,7 +35,7 @@ public sealed class Name
 
 public sealed class Options
 { private Options() { }
-  public static bool AllowInternal, Debug, Optimize;
+  public static bool Debug, Optimize;
 }
 
 public sealed class Singleton
@@ -56,9 +56,15 @@ public sealed class AST
   { // wrapping it in a lambda node is done so we can keep the preprocessing code simple, and so that we can support
     // top-level closures. it's unwrapped later on by SnippetMaker.Generate()
     Node body = Parse(obj);
-    LambdaNode node = new LambdaNode(new string[0], false, new BodyNode(new Node[1] { body }));
-    node.Preprocess();
-    return node;
+    if(body is ModuleNode)
+    { body.Preprocess();
+      return (ModuleNode)body;
+    }
+    else
+    { LambdaNode node = new LambdaNode(new string[0], false, new BodyNode(new Node[1] { body }));
+      node.Preprocess();
+      return node;
+    }
   }
 
   static Node Parse(object obj)
@@ -123,6 +129,17 @@ public sealed class AST
           pair = (Pair)pair.Cdr;
           sym = (Symbol)pair.Car;
           return new DefineNode(sym.Name, ParseBody((Pair)pair.Cdr)); // (define name value)
+        }
+        // (module name-symbol import-symbol (provide ...) body...)
+        case "#%module":
+        { if(Builtins.length.core(pair)<4) goto moduleError;
+          pair = (Pair)pair.Cdr;
+          string name=((Symbol)pair.Car).Name;
+          pair = (Pair)pair.Cdr;
+          return new ModuleNode(name, ((Symbol)pair.Car).Name, (CallNode)Parse(Ops.FastCadr(pair)),
+                                ParseBody((Pair)Ops.FastCddr(pair)));
+          moduleError: throw new Exception("module definition should be of this form: "+
+                                           "(module name-symbol import-symbol body ...)");
         }
       }
 
@@ -194,11 +211,9 @@ public abstract class Node
 { public abstract void Emit(CodeGenerator cg);
   public virtual object Evaluate() { throw new NotSupportedException(); }
 
-  public virtual void Preprocess()
-  { MarkTail(true);
-    Walk(new NodeDecorator((LambdaNode)this));
-  }
-  
+  public virtual void MarkTail(bool tail) { Tail=tail; }
+  public virtual void Preprocess() { MarkTail(true); }
+
   public virtual void Walk(IWalker w)
   { w.Walk(this);
     w.PostWalk(this);
@@ -206,98 +221,6 @@ public abstract class Node
   
   public LambdaNode InFunc;
   public bool Tail;
-
-  internal virtual void MarkTail(bool tail) { Tail=tail; }
-
-  sealed class NodeDecorator : IWalker
-  { public NodeDecorator(LambdaNode top) { func=this.top=top; }
-
-    public bool Walk(Node node)
-    { node.InFunc = func;
-
-      if(node is LambdaNode)
-      { LambdaNode oldFunc=func;
-        ArrayList  oldBound=bound, oldFree=free;
-
-        func  = (LambdaNode)node;
-        free  = new ArrayList();
-        bound = new ArrayList(func.Parameters);
-
-        func.Body.Walk(this);
-
-        foreach(Name name in free)
-        { int index = IndexOf(oldBound, name.String);
-          if(index==-1)
-          { if(oldFunc==top) name.Depth=Name.Global;
-            else
-            { if(func.MaxNames!=0) name.Depth++;
-              oldFree.Add(name);
-            }
-          }
-          else
-          { Name bname  = (Name)oldBound[index];
-            if(bname.Depth==Name.Local && IndexOf(oldFunc.Parameters, name.String)==-1)
-            { bname.Depth = 0;
-              bname.Index = name.Index = oldFunc.MaxNames++;
-            }
-            else name.Index=bname.Index;
-            if(func.MaxNames!=0) name.Depth++;
-          }
-        }
-
-        func=oldFunc; bound=oldBound; free=oldFree;
-        return false;
-      }
-      else if(node is LetNode)
-      { LetNode let = (LetNode)node;
-        foreach(Node n in let.Inits) if(n!=null) n.Walk(this);
-        foreach(Name name in let.Names) bound.Add(name);
-        let.Body.Walk(this);
-        return false;
-      }
-      else if(node is VariableNode || node is SetNode)
-      { Name name = node is SetNode ? ((SetNode)node).Name : ((VariableNode)node).Name;
-        int index = IndexOf(bound, name.String);
-        if(index==-1)
-        { if(func==top) name.Depth=Name.Global;
-          else
-          { index = IndexOf(free, name.String);
-            if(index==-1) { free.Add(name); name.Depth=0; }
-            else
-            { Name bname = (Name)free[index];
-              if(node is SetNode) ((SetNode)node).Name=bname;
-              else ((VariableNode)node).Name=bname;
-            }
-          }
-        }
-        else
-        { Name bname = (Name)bound[index];
-          if(node is SetNode) ((SetNode)node).Name=bname;
-          else ((VariableNode)node).Name=bname;
-        }
-      }
-      return true;
-    }
-    
-    public void PostWalk(Node node)
-    { if(node is LetNode)
-      { LetNode let = (LetNode)node;
-        bound.RemoveRange(bound.Count-let.Names.Length, let.Names.Length);
-      }
-      else if(node is DefineNode)
-      { DefineNode def = (DefineNode)node;
-        if(def.InFunc==top) def.InFunc=null;
-      }
-    }
-
-    LambdaNode func, top;
-    ArrayList bound=new ArrayList(), free;
-
-    static int IndexOf(IList list, string name)
-    { for(int i=list.Count-1; i>=0; i--) if(((Name)list[i]).String==name) return i;
-      return -1;
-    }
-  }
 }
 #endregion
 
@@ -317,6 +240,10 @@ public sealed class BodyNode : Node
     foreach(Node n in Forms) ret = n.Evaluate();
     return ret;
   }
+  
+  public override void MarkTail(bool tail)
+  { for(int i=0; i<Forms.Length; i++) Forms[i].MarkTail(tail && i==Forms.Length-1);
+  }
 
   public override void Walk(IWalker w)
   { if(w.Walk(this)) foreach(Node n in Forms) n.Walk(w);
@@ -324,10 +251,6 @@ public sealed class BodyNode : Node
   }
 
   public readonly Node[] Forms;
-  
-  internal override void MarkTail(bool tail)
-  { for(int i=0; i<Forms.Length; i++) Forms[i].MarkTail(tail && i==Forms.Length-1);
-  }
 }
 #endregion
 
@@ -490,6 +413,12 @@ public sealed class CallNode : Node
     cg.EmitCall(typeof(IProcedure), "Call");
     if(Tail) cg.EmitReturn();
   }
+  
+  public override void MarkTail(bool tail)
+  { Tail=tail;
+    Function.MarkTail(false);
+    foreach(Node n in Args) n.MarkTail(false);
+  }
 
   public override void Walk(IWalker w)
   { if(w.Walk(this))
@@ -501,12 +430,6 @@ public sealed class CallNode : Node
 
   public readonly Node Function;
   public readonly Node[] Args;
-  
-  internal override void MarkTail(bool tail)
-  { Tail=tail;
-    Function.MarkTail(false);
-    foreach(Node n in Args) n.MarkTail(false);
-  }
 }
 #endregion
 
@@ -524,6 +447,8 @@ public sealed class DefineNode : Node
     cg.EmitConstantObject(Symbol.Get(Name.String));
     if(Tail) cg.EmitReturn();
   }
+  
+  public override void MarkTail(bool tail) { Tail=tail; Value.MarkTail(false); }
 
   public override void Walk(IWalker w)
   { if(w.Walk(this)) Value.Walk(w);
@@ -532,8 +457,6 @@ public sealed class DefineNode : Node
 
   public readonly Name Name;
   public readonly Node Value;
-  
-  internal override void MarkTail(bool tail) { Tail=tail; Value.MarkTail(false); }
 }
 #endregion
 
@@ -559,6 +482,13 @@ public sealed class IfNode : Node
     else if(IfFalse!=null) return IfFalse.Evaluate();
     else return null;
   }
+  
+  public override void MarkTail(bool tail)
+  { Tail=tail;
+    Test.MarkTail(false);
+    IfTrue.MarkTail(tail);
+    if(IfFalse!=null) IfFalse.MarkTail(tail);
+  }
 
   public override void Walk(IWalker w)
   { if(w.Walk(this))
@@ -570,19 +500,13 @@ public sealed class IfNode : Node
   }
 
   public readonly Node Test, IfTrue, IfFalse;
-  
-  internal override void MarkTail(bool tail)
-  { Tail=tail;
-    Test.MarkTail(false);
-    IfTrue.MarkTail(tail);
-    if(IfFalse!=null) IfFalse.MarkTail(tail);
-  }
 }
 #endregion
 
 #region LambdaNode
-public sealed class LambdaNode : Node
-{ public LambdaNode(string[] names, bool hasList, BodyNode body)
+public class LambdaNode : Node
+{ public LambdaNode(Node body) { Parameters=new Name[0]; Body=body; }
+  public LambdaNode(string[] names, bool hasList, Node body)
   { Body=body; HasList=hasList; MaxNames=names.Length;
 
     Parameters=new Name[names.Length];
@@ -609,6 +533,16 @@ public sealed class LambdaNode : Node
     if(Tail) cg.EmitReturn();
   }
 
+  public override void MarkTail(bool tail)
+  { Tail=tail;
+    Body.MarkTail(true);
+  }
+
+  public override void Preprocess()
+  { base.Preprocess();
+    Walk(new NodeDecorator((LambdaNode)this));
+  }
+
   public override void Walk(IWalker w)
   { if(w.Walk(this)) Body.Walk(w);
     w.PostWalk(this);
@@ -619,12 +553,7 @@ public sealed class LambdaNode : Node
   public int MaxNames;
   public readonly bool HasList;
 
-  internal override void MarkTail(bool tail)
-  { Tail=tail;
-    Body.MarkTail(true);
-  }
-
-  CodeGenerator MakeImplMethod(CodeGenerator cg)
+  protected CodeGenerator MakeImplMethod(CodeGenerator cg)
   { CodeGenerator icg;
     icg = cg.TypeGenerator.DefineStaticMethod("lambda$" + index, typeof(object),
                                               new Type[] { typeof(LocalEnvironment), typeof(object[]) });
@@ -647,6 +576,96 @@ public sealed class LambdaNode : Node
     Body.Emit(icg);
     icg.Finish();
     return icg;
+  }
+
+  sealed class NodeDecorator : IWalker
+  { public NodeDecorator(LambdaNode top) { func=this.top=top; }
+
+    public bool Walk(Node node)
+    { node.InFunc = func;
+
+      if(node is LambdaNode)
+      { LambdaNode oldFunc=func;
+        ArrayList  oldBound=bound, oldFree=free;
+
+        func  = (LambdaNode)node;
+        free  = new ArrayList();
+        bound = new ArrayList(func.Parameters);
+
+        func.Body.Walk(this);
+
+        foreach(Name name in free)
+        { int index = IndexOf(oldBound, name.String);
+          if(index==-1)
+          { if(oldFunc==top) name.Depth=Name.Global;
+            else
+            { if(func.MaxNames!=0) name.Depth++;
+              oldFree.Add(name);
+            }
+          }
+          else
+          { Name bname  = (Name)oldBound[index];
+            if(bname.Depth==Name.Local && IndexOf(oldFunc.Parameters, name.String)==-1)
+            { bname.Depth = 0;
+              bname.Index = name.Index = oldFunc.MaxNames++;
+            }
+            else name.Index=bname.Index;
+            if(func.MaxNames!=0) name.Depth++;
+          }
+        }
+
+        func=oldFunc; bound=oldBound; free=oldFree;
+        return false;
+      }
+      else if(node is LetNode)
+      { LetNode let = (LetNode)node;
+        foreach(Node n in let.Inits) if(n!=null) n.Walk(this);
+        foreach(Name name in let.Names) bound.Add(name);
+        let.Body.Walk(this);
+        return false;
+      }
+      else if(node is VariableNode || node is SetNode)
+      { Name name = node is SetNode ? ((SetNode)node).Name : ((VariableNode)node).Name;
+        int index = IndexOf(bound, name.String);
+        if(index==-1)
+        { if(func==top) name.Depth=Name.Global;
+          else
+          { index = IndexOf(free, name.String);
+            if(index==-1) { free.Add(name); name.Depth=0; }
+            else
+            { Name bname = (Name)free[index];
+              if(node is SetNode) ((SetNode)node).Name=bname;
+              else ((VariableNode)node).Name=bname;
+            }
+          }
+        }
+        else
+        { Name bname = (Name)bound[index];
+          if(node is SetNode) ((SetNode)node).Name=bname;
+          else ((VariableNode)node).Name=bname;
+        }
+      }
+      return true;
+    }
+    
+    public void PostWalk(Node node)
+    { if(node is LetNode)
+      { LetNode let = (LetNode)node;
+        bound.RemoveRange(bound.Count-let.Names.Length, let.Names.Length);
+      }
+      else if(node is DefineNode)
+      { DefineNode def = (DefineNode)node;
+        if(def.InFunc==top) def.InFunc=null;
+      }
+    }
+
+    LambdaNode func, top;
+    ArrayList bound=new ArrayList(), free;
+
+    static int IndexOf(IList list, string name)
+    { for(int i=list.Count-1; i>=0; i--) if(((Name)list[i]).String==name) return i;
+      return -1;
+    }
   }
 
   long index;
@@ -733,6 +752,11 @@ public sealed class LetNode : Node
     for(int i=0; i<Names.Length; i++) cg.Namespace.RemoveSlot(Names[i]);
   }
 
+  public override void MarkTail(bool tail)
+  { foreach(Node n in Inits) if(n!=null) n.MarkTail(false);
+    Body.MarkTail(tail);
+  }
+
   public override void Walk(IWalker w)
   { if(w.Walk(this))
     { foreach(Node n in Inits) if(n!=null) n.Walk(w);
@@ -744,10 +768,99 @@ public sealed class LetNode : Node
   public Name[] Names;
   public Node[] Inits;
   public Node Body;
+}
+#endregion
 
-  internal override void MarkTail(bool tail)
-  { foreach(Node n in Inits) if(n!=null) n.MarkTail(false);
-    Body.MarkTail(tail);
+// FIXME: this doesn't get expanded correctly (it doesn't have a chance to do any require's before being expanded)
+//        plus, it gets expanded in the environment of its parent
+#region ModuleNode
+public sealed class ModuleNode : LambdaNode
+{ public ModuleNode(string moduleName, string importName, CallNode provide, Node body) : base(body)
+  { if(!(provide.Function is VariableNode) || ((VariableNode)provide.Function).Name.String != "provides")
+      goto badProvides;
+
+    Name=moduleName; Import=importName;
+    
+    ModuleWalker mw = new ModuleWalker(); // FIXME: the macro walking will be wrong because (expand) remove macros
+    Walk(mw);
+
+    ArrayList exports = new ArrayList();
+
+    try
+    { foreach(Node n in provide.Args)
+        if(n is VariableNode) exports.Add(new Module.Export(((VariableNode)n).Name.String));
+        else if(n is CallNode)
+        { CallNode cn = (CallNode)n;
+          switch(((VariableNode)cn.Function).Name.String)
+          { case "rename":
+            { if(cn.Args.Length!=2) goto badProvides;
+              string name = ((VariableNode)cn.Args[0]).Name.String;
+              exports.Add(new Module.Export(name, ((VariableNode)cn.Args[1]).Name.String,
+                                            mw.Macros.Contains(name) ? TopLevel.NS.Macro : TopLevel.NS.Main));
+              break;
+            }
+            case "all-defined":
+              foreach(string name in mw.Defines) exports.Add(new Module.Export(name));
+              foreach(string name in mw.Macros) exports.Add(new Module.Export(name, TopLevel.NS.Macro));
+              break;
+            case "all-defined-except":
+              foreach(string name in mw.Defines) if(!Except(name, cn.Args)) exports.Add(new Module.Export(name));
+              foreach(string name in mw.Macros)
+                if(!Except(name, cn.Args)) exports.Add(new Module.Export(name, TopLevel.NS.Macro));
+              break;
+          }
+        }
+        else goto badProvides;
+     }
+     catch { goto badProvides; }
+     
+    Exports = (Module.Export[])exports.ToArray(typeof(Module.Export));
+
+    return;
+    badProvides: throw new SyntaxErrorException("Invalid 'provides' declaration");
+  }
+
+  public override void Emit(CodeGenerator cg)
+  { TopLevel.Current.SetModule(Name, ModuleGenerator.Generate(this));
+    cg.EmitConstantObject(Symbol.Get(Name));
+    if(Tail) cg.EmitReturn();
+  }
+
+  public override void MarkTail(bool tail)
+  { Body.MarkTail(false);
+  }
+
+  public override void Walk(IWalker w)
+  { if(w.Walk(this)) Body.Walk(w);
+    w.PostWalk(this);
+  }
+
+  public readonly string Name, Import;
+  public readonly Module.Export[] Exports;
+  
+  sealed class ModuleWalker : IWalker
+  { public bool Walk(Node node)
+    { if(node is DefineNode) Defines.Add(((DefineNode)node).Name.String);
+      else if(node is CallNode)
+      { CallNode cn = (CallNode)node;
+        VariableNode vn = cn.Function as VariableNode;
+        if(vn!=null && vn.Name.String=="install-expander")
+        { LiteralNode lit = cn.Args.Length==0 ? null : cn.Args[0] as LiteralNode;
+          Symbol sym = lit==null ? null : lit.Value as Symbol;
+          if(sym!=null) Macros.Add(sym.Name);
+        }
+      }
+      return false;
+    }
+
+    public void PostWalk(Node node) { }
+
+    public ArrayList Defines=new ArrayList(), Macros=new ArrayList();
+  }
+  
+  static bool Except(string name, Node[] nodes)
+  { foreach(VariableNode n in nodes) if(n.Name.String==name) return true;
+    return false;
   }
 }
 #endregion
@@ -763,6 +876,11 @@ public sealed class SetNode : Node
     if(Tail) cg.EmitReturn();
   }
 
+  public override void MarkTail(bool tail)
+  { Tail=tail;
+    Value.MarkTail(false);
+  }
+
   public override void Walk(IWalker w)
   { if(w.Walk(this)) Value.Walk(w);
     w.PostWalk(this);
@@ -770,11 +888,6 @@ public sealed class SetNode : Node
 
   public Name Name;
   public readonly Node Value;
-
-  internal override void MarkTail(bool tail)
-  { Tail=tail;
-    Value.MarkTail(false);
-  }
 }
 #endregion
 

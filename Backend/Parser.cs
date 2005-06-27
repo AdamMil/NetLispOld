@@ -255,11 +255,9 @@ public sealed class Parser
             }
             return Token.Literal;
           }
-          case '_':
-          { if(!Options.AllowInternal)
-              throw SyntaxError("internal symbols (#_*) are disallowed outside the standard library");
-            StringBuilder sb = new StringBuilder();
-            sb.Append("#_");
+          case '%':
+          { StringBuilder sb = new StringBuilder();
+            sb.Append("#%");
             while(true)
             { c = ReadChar();
               if(IsDelimiter(c)) { lastChar=c; break; }

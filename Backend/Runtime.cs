@@ -20,9 +20,15 @@ public class RestListAttribute : Attribute { }
 [AttributeUsage(AttributeTargets.Method)]
 public class WantListAttribute : Attribute { }
 
+[AttributeUsage(AttributeTargets.Class|AttributeTargets.Struct)]
+public class LispCodeAttribute : Attribute
+{ public LispCodeAttribute(string code) { Code=code; }
+  public readonly string Code;
+}
+
 public class SymbolNameAttribute : Attribute
 { public SymbolNameAttribute(string name) { Name=name; }
-  public string Name;
+  public readonly string Name;
 }
 #endregion
 
@@ -151,7 +157,7 @@ public sealed class RG
 
 #region Environments
 public sealed class TopLevel
-{ public TopLevel() { Globals=new Hashtable(); }
+{ public enum NS { Main, Macro }
 
   public void Bind(string name, object value)
   { Binding bind = (Binding)Globals[name];
@@ -180,14 +186,23 @@ public sealed class TopLevel
     return obj;
   }
 
+  public Module GetModule(string name)
+  { return Modules==null ? null : (Module)Modules[name];
+  }
+
   public void Set(string name, object value)
   { Binding obj = (Binding)Globals[name];
     if(obj==null) throw new Exception("no such name"); // FIXME: ex
     obj.Value = value;
   }
 
-  public Hashtable Globals;
-  public Hashtable Macros = new Hashtable();
+  public void SetModule(string name, Module module)
+  { if(Modules==null) Modules = new ListDictionary();
+    Modules[name] = module;
+  }
+
+  public Hashtable Globals=new Hashtable(), Macros=new Hashtable();
+  public ListDictionary Modules;
   
   [ThreadStatic] public static TopLevel Current;
 }
@@ -206,6 +221,61 @@ public sealed class LocalEnvironment
   public override string ToString()
   {
     return base.ToString ();
+  }
+}
+#endregion
+
+#region Module
+public sealed class Module
+{ public Module(string name) { Name=name; TopLevel=new TopLevel(); }
+
+  public IDictionary GetExportDict()
+  { Hashtable hash = new Hashtable();
+    foreach(Export e in Exports) hash[e.AsName] = TopLevel.Get(e.Name);
+    return hash;
+  }
+
+  public struct Export
+  { public Export(string name) { Name=name; AsName=name; NS=TopLevel.NS.Main; }
+    public Export(string name, TopLevel.NS ns) { Name=name; AsName=name; NS=ns; }
+    public Export(string name, string asName) { Name=name; AsName=asName; NS=TopLevel.NS.Main; }
+    public Export(string name, string asName, TopLevel.NS ns) { Name=name; AsName=asName; NS=ns; }
+    public readonly string Name, AsName;
+    public readonly TopLevel.NS NS;
+  }
+
+  public void ImportAll(TopLevel top)
+  { foreach(Export e in Exports)
+      if(e.NS==TopLevel.NS.Main) top.Bind(e.AsName, TopLevel.Get(e.Name));
+      else top.Macros[e.AsName] = TopLevel.Macros[e.Name];
+  }
+
+  public readonly TopLevel TopLevel;
+  public readonly string Name;
+  public Export[] Exports;
+
+  internal void AddBuiltins(Type type)
+  { foreach(MethodInfo mi in type.GetMethods())
+    { object[] attrs = mi.GetCustomAttributes(typeof(SymbolNameAttribute), false);
+      string name = attrs.Length==0 ? mi.Name : ((SymbolNameAttribute)attrs[0]).Name;
+      TopLevel.Bind(name, Interop.MakeFunctionWrapper(mi, true));
+    }
+
+    foreach(Type ptype in typeof(Builtins).GetNestedTypes(BindingFlags.Public))
+      if(ptype.IsSubclassOf(typeof(Primitive)))
+      { Primitive prim = (Primitive)ptype.GetConstructor(Type.EmptyTypes).Invoke(null);
+        TopLevel.Bind(prim.Name, prim);
+      }
+  }
+
+  internal void CreateExports() // FIXME: this exports objects imported from the base (parent) module
+  { Hashtable hash = new Hashtable();
+    foreach(DictionaryEntry de in TopLevel.Globals) hash[de.Key] = new Module.Export((string)de.Key);
+    foreach(DictionaryEntry de in TopLevel.Macros)
+      hash[de.Key] = new Module.Export((string)de.Key, TopLevel.NS.Macro);
+
+    Exports = new Export[hash.Count];
+    hash.Values.CopyTo(Exports, 0);
   }
 }
 #endregion
