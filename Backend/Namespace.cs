@@ -54,8 +54,9 @@ public sealed class LocalNamespace : Namespace
 #region TopLevelNamespace
 public sealed class TopLevelNamespace : Namespace
 { public TopLevelNamespace(CodeGenerator cg) : base(null, cg) { TopSlot = new TopLevelSlot(); }
+  public TopLevelNamespace(CodeGenerator cg, Slot top) : base(null, cg) { TopSlot = top; }
 
-  public TopLevelSlot TopSlot;
+  public readonly Slot TopSlot;
 
   protected override Slot MakeSlot(Name name) { return new NamedFrameSlot(TopSlot, name.String); }
 }
