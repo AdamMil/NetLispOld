@@ -87,7 +87,7 @@ namespace NetLisp.Backend
         (e `(define ,(caadr x) (lambda ,(cdadr x) ,@(cddr x))) e)
            `(define ,@(map (lambda (x) (e x e)) (cdr x))))))
 
-(define (#%body-expander x e)
+(define (#_body-expander x e)
   (set! x (e x e))
   (if (if (pair? (car x)) (eq? (caar x) 'define) #f)
       (let ((dar (cdar x)))
@@ -108,7 +108,7 @@ namespace NetLisp.Backend
                                 (caddr x)))
             (e `(letrec ((,name (lambda ,(map car bindings) ,@(cdddr x))))
                   (,name ,@(map cadr bindings))) e))
-          `(let ,bindings ,@(#%body-expander (cddr x) e))))))
+          `(let ,bindings ,@(#_body-expander (cddr x) e))))))
 
 (install-expander 'if
   (lambda (x e) `(if ,@(map (lambda (x) (e x e)) (cdr x)))))
@@ -117,7 +117,7 @@ namespace NetLisp.Backend
   (lambda (x e) `(set! ,(cadr x) ,(e (caddr x) e))))
 
 (install-expander 'lambda
-  (lambda (x e) `(lambda ,(cadr x) ,@(#%body-expander (cddr x) e))))
+  (lambda (x e) `(lambda ,(cadr x) ,@(#_body-expander (cddr x) e))))
 
 (install-expander 'defmacro
   (lambda (x e)
@@ -243,25 +243,31 @@ namespace NetLisp.Backend
           (if (equal? (caar alist) obj) (car alist)
               (assoc obj (cdr alist))))))
 
-(install-expander 'module
-  (lambda (x e)
-    (#%null-expander `(#%module ,@(cdr x)) e))))
-
 (install-expander 'require
   (lambda (x e)
-    (#%import-syntax (cadr x))
+    (e `(#%import-module ',(cadr x)) e)))
+
+(install-expander 'require-for-syntax
+  (lambda (x e)
+    (#%import-module (cadr x))
     nil))
+
+(install-expander 'module
+  (lambda (x e)
+    (#_null-expander (caddr x) `(#%module ,(cadr x) ,@(cdddr x)) e)))
 
 (install-expander 'install-expander
   (lambda (x e)
-    (let ((name (cadr x)))
-      (install-expander name (eval (caddr x)))
-      name)))
+    (let ((name (cadr x)) (body (e (caddr x) e)))
+      (install-expander name (eval body))
+      `(install-expander ,name ,body))))
 ")]
 #endregion
 public sealed class Builtins
 { static Builtins()
-  { Instance = new Module("Builtins");
+  { builtins["srfi-1"] = typeof(Mods.Srfi1);
+
+    Instance = new Module("Builtins");
     Instance.AddBuiltins(typeof(Builtins));
 
     TopLevel old = TopLevel.Current;
@@ -741,44 +747,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  #region circular-list?
-  public sealed class circularListP : Primitive
-  { public circularListP() : base("circular-list?", 1, 1) { }
-    public override object Call(object[] args)
-    { CheckArity(args);
-      Pair pair = args[0] as Pair;
-      return pair==null ? Ops.FALSE : Ops.FromBool(core(pair));
-    }
-
-    internal static bool core(Pair slow)
-    { if(slow==null) return false;
-      
-      Pair fast = slow.Cdr as Pair;
-      if(fast==null) return false;
-
-      while(true)
-      { if(slow==fast) return true;
-        slow = (Pair)slow.Cdr;
-        fast = fast.Cdr as Pair;
-        if(fast==null) return false;
-        fast = fast.Cdr as Pair;
-        if(fast==null) return false;
-      }
-    }
-  }
-  #endregion
-
-  #region cons*
-  public sealed class consAll : Primitive
-  { public consAll() : base("cons*", 1, -1) { }
-  
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return Ops.ConsAll(args);
-    }
-  }
-  #endregion
-
   #region except-last-pair
   public sealed class exceptLastPair : Primitive
   { public exceptLastPair() : base("except-last-pair", 1, 1) { }
@@ -850,60 +818,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  #region for-each-pair
-  public sealed class forEachPair : Primitive
-  { public forEachPair() : base("for-each-pair", 1, -1) { }
-
-    public override object Call(object[] args)
-    { CheckArity(args);
-      if(args.Length==1) return null;
-
-      IProcedure func = Ops.ExpectProcedure(args[0]);
-      if(args.Length==2)
-      { Pair p = Ops.ExpectList(args[1]);
-        args = new object[1];
-        while(p!=null)
-        { args[0] = p;
-          p = p.Cdr as Pair;
-          func.Call(args);
-        }
-        return null;
-      }
-      else
-      { Pair[] pairs = new Pair[args.Length-1];
-        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
-
-        args = new object[pairs.Length];
-        while(true)
-        { for(int i=0; i<pairs.Length; i++)
-          { if(pairs[i]==null) return null;
-            args[i] = pairs[i];
-            pairs[i] = pairs[i].Cdr as Pair;
-          }
-          func.Call(args);
-        }
-      }
-    }
-  }
-  #endregion
-
-  #region last-pair
-  public sealed class lastPair : Primitive
-  { public lastPair() : base("last-pair", 1, 1) { }
-  
-    public override object Call(object[] args)
-    { CheckArity(args);
-      if(args[0]==null) return null;
-      Pair pair = Ops.ExpectPair(args[0]);
-      while(true)
-      { Pair next = pair.Cdr as Pair;
-        if(next==null) return pair;
-        pair = next;
-      }
-    }
-  }
-  #endregion
-
   #region list?
   public sealed class listP : Primitive
   { public listP() : base("list?", 1, 1) { }
@@ -927,49 +841,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  #region list-copy
-  public sealed class listCopy : Primitive
-  { public listCopy() : base("list-copy", 1, 1) { }
-
-    public override object Call(object[] args)
-    { CheckArity(args);
-      if(args[0]==null) return null;
-      Pair list=Ops.ExpectPair(args[0]), head=new Pair(list.Car, list.Cdr), tail=head;
-      while(true)
-      { list = list.Cdr as Pair;
-        if(list==null) return head;
-        Pair next = new Pair(list.Car, list.Cdr);
-        tail.Cdr = next;
-        tail = next;
-      }
-    }
-  }
-  #endregion
-  
-  #region list-head
-  public sealed class listHead : Primitive
-  { public listHead() : base("list-head", 2, 2) { }
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return core(Name, Ops.ExpectList(args[0]), Ops.ExpectInt(args[1]));
-    }
-    
-    internal static Pair core(string name, Pair pair, int length)
-    { if(length<=0) return null;
-
-      Pair head=null, tail=null;
-      do
-      { if(pair==null) throw new ArgumentException(name+": list is not long enough");
-        Pair next = new Pair(pair.Car, null);
-        if(head==null) head=tail=next;
-        else { tail.Cdr=next; tail=next; }
-        pair = pair.Cdr as Pair;
-      } while(--length != 0);
-      return head;
-    }
-  }
-  #endregion
-
   #region list-ref
   public sealed class listRef : Primitive
   { public listRef() : base("list-ref", 2, 2) { }
@@ -978,28 +849,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       Pair p = listTail.core(Name, Ops.ExpectPair(args[0]), Ops.ExpectInt(args[1]));
       if(p==null) throw new ArgumentException(Name+": list is not long enough");
       return p.Car;
-    }
-  }
-  #endregion
-
-  #region list-tail
-  public sealed class listTail : Primitive
-  { public listTail() : base("list-tail", 2, 2) { }
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return core(Name, Ops.ExpectList(args[0]), Ops.ExpectInt(args[1]));
-    }
-    
-    internal static Pair core(string name, Pair pair, int length)
-    { for(int i=0; i<length; i++)
-      { Pair next = pair.Cdr as Pair;
-        if(next==null)
-        { if(pair.Cdr==null && i==length-1) return null;
-          throw new ArgumentException(name+": list is not long enough");
-        }
-        pair = next;
-      }
-      return pair;
     }
   }
   #endregion
@@ -1022,50 +871,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         total++;
       }
       return total;
-    }
-  }
-  #endregion
-  #region length+
-  public sealed class lengthPlus : Primitive
-  { public lengthPlus() : base("length+", 1, 1) { }
-
-    public override object Call(object[] args)
-    { CheckArity(args);
-      Pair slow = Ops.ExpectList(args[0]);
-      if(slow==null) return 0;
-      
-      Pair fast = slow.Cdr as Pair;
-      if(fast==null) return 1;
-    
-      int length=1;
-      while(true)
-      { if(slow==fast) return Ops.FALSE;
-        slow = (Pair)slow.Cdr;
-        fast = fast.Cdr as Pair;
-        if(fast==null) return length+1;
-        fast = fast.Cdr as Pair;
-        length += 2;
-        if(fast==null) return length;
-      }
-    }
-  }
-  #endregion
-
-  #region make-list
-  public sealed class makeList : Primitive
-  { public makeList() : base("make-list", 1, 2) { }
-    public override object Call(object[] args)
-    { CheckArity(args);
-      int length  = Ops.ExpectInt(args[0]);
-      object fill = args.Length==2 ? args[1] : null;
-
-      Pair head=null, tail=null;
-      for(int i=0; i<length; i++)
-      { Pair next = new Pair(fill, null);
-        if(head==null) head=tail=next;
-        else { tail.Cdr=next; tail=next; }
-      }
-      return head;
     }
   }
   #endregion
@@ -1204,13 +1009,13 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   
   public sealed class _nullExpander : Primitive
-  { public _nullExpander() : base("#%null-expander", 2, 2) { }
+  { public _nullExpander() : base("#_null-expander", 3, 3) { }
     public override object Call(object[] args)
     { CheckArity(args);
       TopLevel old = TopLevel.Current;
       try
-      { TopLevel.Current = new TopLevel();
-        return Ops.ExpectProcedure(args[1]).Call(args);
+      { TopLevel.Current = new TopLevel(); // FIXME: ignores args[0] (base module)
+        return Ops.ExpectProcedure(args[2]).Call(args[1], args[2]);
       }
       finally { TopLevel.Current = old; }
     }
@@ -3126,6 +2931,11 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  [SymbolName("#%import-module")]
+  public static void _importModule(object module)
+  { Importer.GetModule(module).ImportAll(TopLevel.Current);
+  }
+
   #region make-ref
   public sealed class makeRef : Primitive
   { public makeRef() : base("make-ref", 0, 1) { }
@@ -3183,6 +2993,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
   public static readonly Module Instance;
 
+  internal static System.Collections.Specialized.ListDictionary builtins = new System.Collections.Specialized.ListDictionary();
   static Index gensyms = new Index();
 }
 

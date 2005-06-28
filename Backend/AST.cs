@@ -55,16 +55,9 @@ public sealed class AST
 { public static LambdaNode Create(object obj)
   { // wrapping it in a lambda node is done so we can keep the preprocessing code simple, and so that we can support
     // top-level closures. it's unwrapped later on by SnippetMaker.Generate()
-    Node body = Parse(obj);
-    if(body is ModuleNode)
-    { body.Preprocess();
-      return (ModuleNode)body;
-    }
-    else
-    { LambdaNode node = new LambdaNode(new string[0], false, new BodyNode(new Node[1] { body }));
-      node.Preprocess();
-      return node;
-    }
+    LambdaNode node = new LambdaNode(new string[0], false, Parse(obj));
+    node.Preprocess();
+    return node;
   }
 
   static Node Parse(object obj)
@@ -130,16 +123,17 @@ public sealed class AST
           sym = (Symbol)pair.Car;
           return new DefineNode(sym.Name, ParseBody((Pair)pair.Cdr)); // (define name value)
         }
-        // (module name-symbol import-symbol (provide ...) body...)
+        // (module name-symbol (provides ...) body...)
         case "#%module":
         { if(Builtins.length.core(pair)<4) goto moduleError;
           pair = (Pair)pair.Cdr;
           string name=((Symbol)pair.Car).Name;
           pair = (Pair)pair.Cdr;
-          return new ModuleNode(name, ((Symbol)pair.Car).Name, (CallNode)Parse(Ops.FastCadr(pair)),
-                                ParseBody((Pair)Ops.FastCddr(pair)));
+          CallNode provide=(CallNode)Parse(pair.Car);
+          pair = (Pair)pair.Cdr;
+          return new ModuleNode(name, provide, ParseBody(pair));
           moduleError: throw new Exception("module definition should be of this form: "+
-                                           "(module name-symbol import-symbol body ...)");
+                                           "(module name-symbol (provide ...) body ...)");
         }
       }
 
@@ -597,14 +591,14 @@ public class LambdaNode : Node
         foreach(Name name in free)
         { int index = IndexOf(oldBound, name.String);
           if(index==-1)
-          { if(oldFunc==top) name.Depth=Name.Global;
+          { if(oldFunc==top || oldFunc is ModuleNode) name.Depth=Name.Global;
             else
             { if(func.MaxNames!=0) name.Depth++;
               oldFree.Add(name);
             }
           }
           else
-          { Name bname  = (Name)oldBound[index];
+          { Name bname = (Name)oldBound[index];
             if(bname.Depth==Name.Local && IndexOf(oldFunc.Parameters, name.String)==-1)
             { bname.Depth = 0;
               bname.Index = name.Index = oldFunc.MaxNames++;
@@ -655,7 +649,7 @@ public class LambdaNode : Node
       }
       else if(node is DefineNode)
       { DefineNode def = (DefineNode)node;
-        if(def.InFunc==top) def.InFunc=null;
+        if(def.InFunc==top || def.InFunc is ModuleNode) def.InFunc=null;
       }
     }
 
@@ -771,17 +765,15 @@ public sealed class LetNode : Node
 }
 #endregion
 
-// FIXME: this doesn't get expanded correctly (it doesn't have a chance to do any require's before being expanded)
-//        plus, it gets expanded in the environment of its parent
 #region ModuleNode
 public sealed class ModuleNode : LambdaNode
-{ public ModuleNode(string moduleName, string importName, CallNode provide, Node body) : base(body)
+{ public ModuleNode(string moduleName, CallNode provide, Node body) : base(body)
   { if(!(provide.Function is VariableNode) || ((VariableNode)provide.Function).Name.String != "provides")
       goto badProvides;
 
-    Name=moduleName; Import=importName;
+    Name=moduleName;
     
-    ModuleWalker mw = new ModuleWalker(); // FIXME: the macro walking will be wrong because (expand) remove macros
+    ModuleWalker mw = new ModuleWalker(); // FIXME: the macro walking will be wrong because (expand) removes macros
     Walk(mw);
 
     ArrayList exports = new ArrayList();
@@ -826,16 +818,12 @@ public sealed class ModuleNode : LambdaNode
     if(Tail) cg.EmitReturn();
   }
 
-  public override void MarkTail(bool tail)
-  { Body.MarkTail(false);
-  }
-
   public override void Walk(IWalker w)
   { if(w.Walk(this)) Body.Walk(w);
     w.PostWalk(this);
   }
 
-  public readonly string Name, Import;
+  public readonly string Name;
   public readonly Module.Export[] Exports;
   
   sealed class ModuleWalker : IWalker

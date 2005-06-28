@@ -37,7 +37,7 @@ public sealed class TypeGenerator
     CodeGenerator cg = new CodeGenerator(this, cb, cb.GetILGenerator());
     cg.EmitThis();
     for(int i=0; i<pi.Length; i++) cg.EmitArgGet(i);
-    cg.ILG.Emit(OpCodes.Call, parent);
+    cg.EmitCall(parent);
     return cg;
   }
 

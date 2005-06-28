@@ -226,7 +226,7 @@ public sealed class LocalEnvironment
 #endregion
 
 #region Module
-public sealed class Module
+public class Module
 { public Module(string name) { Name=name; TopLevel=new TopLevel(); }
 
   public IDictionary GetExportDict()
@@ -270,9 +270,10 @@ public sealed class Module
 
   internal void CreateExports() // FIXME: this exports objects imported from the base (parent) module
   { Hashtable hash = new Hashtable();
-    foreach(DictionaryEntry de in TopLevel.Globals) hash[de.Key] = new Module.Export((string)de.Key);
-    foreach(DictionaryEntry de in TopLevel.Macros)
-      hash[de.Key] = new Module.Export((string)de.Key, TopLevel.NS.Macro);
+    foreach(string name in TopLevel.Globals.Keys)
+      if(!name.StartsWith("#_")) hash[name] = new Module.Export(name);
+    foreach(string name in TopLevel.Macros.Keys)
+      if(!name.StartsWith("#_")) hash[name] = new Module.Export(name, TopLevel.NS.Macro);
 
     Exports = new Export[hash.Count];
     hash.Values.CopyTo(Exports, 0);
@@ -500,13 +501,6 @@ public sealed class Ops
       }
     }
     return string.Compare(TypeName(a), TypeName(b));
-  }
-
-  public static object ConsAll(object[] args)
-  { int i = args.Length-1;
-    object obj = args[i];
-    while(i-- != 0) obj = new Pair(args[i], obj);
-    return obj;
   }
 
   public static object ConvertTo(object o, Type type)
