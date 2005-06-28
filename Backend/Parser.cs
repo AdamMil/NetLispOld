@@ -255,9 +255,9 @@ public sealed class Parser
             }
             return Token.Literal;
           }
-          case '%':
+          case '%': case '_':
           { StringBuilder sb = new StringBuilder();
-            sb.Append("#%");
+            sb.Append('#').Append(c);
             while(true)
             { c = ReadChar();
               if(IsDelimiter(c)) { lastChar=c; break; }
