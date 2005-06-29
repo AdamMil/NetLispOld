@@ -1,11 +1,3 @@
-/*
-(module name base
-  form ...)
-
-(fluid-let ((*package* (get-package name)))
-  (use-package base)
-  form ...)
-*/
 using System;
 using System.Collections;
 using System.IO;
@@ -18,6 +10,9 @@ namespace NetLisp.Backend
 #region Importer
 public sealed class Importer
 { Importer() { }
+  static Importer()
+  { builtins["srfi/srfi-1"] = typeof(Mods.Srfi1);
+  }
 
   public static Module GetModule(object obj)
   { Module module;
@@ -80,7 +75,13 @@ public sealed class Importer
           }
           break;
         }
-        default: module = LoadModuleFromFile("lib/"+mp.Name); break; // TODO: get the library path from elsewhere
+        default:
+        { string name = mp.Collection+"/"+mp.Name;
+          Type type = (Type)builtins[name];
+          // TODO: get the library path from elsewhere
+          module = type==null ? LoadModuleFromFile("lib/"+name) : ModuleGenerator.Generate(type);
+          break;
+        }
       }
 
       if(module!=null) modules[mp] = module;
@@ -107,6 +108,7 @@ public sealed class Importer
 
   static string currentDir;
   static Hashtable modules = new Hashtable();
+  static System.Collections.Specialized.ListDictionary builtins = new System.Collections.Specialized.ListDictionary();
 }
 #endregion
 
@@ -183,6 +185,7 @@ public sealed class ModuleGenerator
 
   public static Module Generate(Type type)
   { Module ret = new Module(type.FullName);
+    Builtins.Instance.ImportAll(ret.TopLevel);
     ret.AddBuiltins(type);
 
     object[] attrs = type.GetCustomAttributes(typeof(LispCodeAttribute), false);
@@ -192,6 +195,7 @@ public sealed class ModuleGenerator
       { TopLevel.Current = ret.TopLevel;
         Builtins.eval(Parser.FromString(((LispCodeAttribute)attrs[0]).Code).Parse());
       }
+catch(Exception e) { Console.WriteLine(e); }
       finally { TopLevel.Current = old; }
     }
 

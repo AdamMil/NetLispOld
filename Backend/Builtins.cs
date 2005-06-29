@@ -153,7 +153,7 @@ namespace NetLisp.Backend
 (defmacro and items
   (if (null? items) #t
       (if (null? (cdr items)) (car items)
-          `(if ,(car items) (and ,@(cdr items))))))
+          `(if ,(car items) (and ,@(cdr items)) #f))))
 
 (defmacro letrec (bindings . body)
   `(let ,(map (lambda (init) (if (pair? init) (car init) init)) bindings)
@@ -163,7 +163,7 @@ namespace NetLisp.Backend
 (defmacro let* (bindings . body)
   (let rec ((bindings bindings))
     (if (null? bindings) `(begin ,@body)
-        `(let (,(if (pair? (car bindings)) `(,(caar bindings) ,(cdar bindings))
+        `(let (,(if (pair? (car bindings)) `(,(caar bindings) ,(cadar bindings))
                     (car bindings)))
            ,(rec (cdr bindings))))))
 
@@ -193,56 +193,6 @@ namespace NetLisp.Backend
 (define (1+ o) (+ o 1))
 (define (1- o) (- o 1))
 
-; (memq   obj list)
-; (memv   obj list)
-; (member obj list)
-
-(define (memq obj list)
-  (if (null? list) #f
-      (if (not (pair? list))
-          (error ""2nd arg to memq not a list: "" list)
-          (if (eq? obj (car list)) list
-              (memq obj (cdr list))))))
-
-(define (memv obj list)
-  (if (null? list) #f
-      (if (not (pair? list))
-          (error ""2nd arg to memv not a list: "" list)
-          (if (eqv? obj (car list)) list
-              (memv obj (cdr list))))))
-
-(define (member obj list)
-  (if (null? list) #f
-      (if (not (pair? list))
-          (error ""2nd arg to member not a list: "" list)
-          (if (equal? obj (car list)) list
-              (member obj (cdr list))))))
-
-; (assq  obj alist)
-; (assv  obj alist)
-; (assoc obj alist)
-
-(define (assq obj alist)
-  (if (null? alist) #f
-      (if (not (pair? alist))
-          (error ""2nd argument to assq not a list: "" alist)
-          (if (eq? (caar alist) obj) (car alist)
-              (assq obj (cdr alist))))))
-
-(define (assv obj alist)
-  (if (null? alist) #f
-      (if (not (pair? alist))
-          (error ""2nd argument to assv not a list: "" alist)
-          (if (eqv? (caar alist) obj) (car alist)
-              (assv obj (cdr alist))))))
-
-(define (assoc obj alist)
-  (if (null? alist) #f
-      (if (not (pair? alist))
-          (error ""2nd argument to assoc not a list: "" alist)
-          (if (equal? (caar alist) obj) (car alist)
-              (assoc obj (cdr alist))))))
-
 (install-expander 'require
   (lambda (x e)
     (e `(#%import-module ',(cadr x)) e)))
@@ -265,9 +215,7 @@ namespace NetLisp.Backend
 #endregion
 public sealed class Builtins
 { static Builtins()
-  { builtins["srfi-1"] = typeof(Mods.Srfi1);
-
-    Instance = new Module("Builtins");
+  { Instance = new Module("Builtins");
     Instance.AddBuiltins(typeof(Builtins));
 
     TopLevel old = TopLevel.Current;
@@ -747,6 +695,71 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region assq
+  public sealed class assq : Primitive
+  { public assq() : base("assq", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj=args[0];
+      Pair  list=Ops.ExpectList(args[1]);
+      while(list!=null)
+      { Pair pair = list.Car as Pair;
+        if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+        if(pair.Car==obj) return list;
+        list = list.Cdr as Pair;
+      }
+      return Ops.FALSE;
+    }
+  }
+  #endregion
+  #region assv
+  public sealed class assv : Primitive
+  { public assv() : base("assv", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj=args[0];
+      Pair  list=Ops.ExpectList(args[1]);
+      while(list!=null)
+      { Pair pair = list.Car as Pair;
+        if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+        if(Ops.EqvP(obj, pair.Car)) return list;
+        list = list.Cdr as Pair;
+      }
+      return Ops.FALSE;
+    }
+  }
+  #endregion
+  #region assoc
+  public sealed class assoc : Primitive
+  { public assoc() : base("assoc", 2, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj=args[0];
+      Pair  list=Ops.ExpectList(args[1]);
+      if(args.Length==2)
+        while(list!=null)
+        { Pair pair = list.Car as Pair;
+          if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+          if(Ops.EqualP(obj, pair.Car)) return list;
+          list = list.Cdr as Pair;
+        }
+      else
+      { IProcedure pred = Ops.ExpectProcedure(args[2]);
+        args = new object[2];
+        args[1] = obj;
+        while(list!=null)
+        { Pair pair = list.Car as Pair;
+          if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+          args[0] = pair.Car;
+          if(Ops.IsTrue(pred.Call(args))) return list;
+          list = list.Cdr as Pair;
+        }
+      }
+      return Ops.FALSE;
+    }
+  }
+  #endregion
+
   #region except-last-pair
   public sealed class exceptLastPair : Primitive
   { public exceptLastPair() : base("except-last-pair", 1, 1) { }
@@ -846,7 +859,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   { public listRef() : base("list-ref", 2, 2) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      Pair p = listTail.core(Name, Ops.ExpectPair(args[0]), Ops.ExpectInt(args[1]));
+      Pair p = Mods.Srfi1.drop.core(Name, Ops.ExpectPair(args[0]), Ops.ExpectInt(args[1]));
       if(p==null) throw new ArgumentException(Name+": list is not long enough");
       return p.Car;
     }
@@ -919,6 +932,63 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region memq
+  public sealed class memq : Primitive
+  { public memq() : base("memq", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj=args[0];
+      Pair  list=Ops.ExpectList(args[1]);
+      while(list!=null)
+      { if(list.Car==obj) return list;
+        list = list.Cdr as Pair;
+      }
+      return Ops.FALSE;
+    }
+  }
+  #endregion
+  #region memv
+  public sealed class memv : Primitive
+  { public memv() : base("memv", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj=args[0];
+      Pair  list=Ops.ExpectList(args[1]);
+      while(list!=null)
+      { if(Ops.EqvP(obj, list.Car)) return list;
+        list = list.Cdr as Pair;
+      }
+      return Ops.FALSE;
+    }
+  }
+  #endregion
+  #region member
+  public sealed class member : Primitive
+  { public member() : base("member", 2, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj=args[0];
+      Pair  list=Ops.ExpectList(args[1]);
+      if(args.Length==2)
+        while(list!=null)
+        { if(Ops.EqualP(obj, list.Car)) return list;
+          list = list.Cdr as Pair;
+        }
+      else
+      { IProcedure pred = Ops.ExpectProcedure(args[2]);
+        args = new object[2];
+        args[1] = obj;
+        while(list!=null)
+        { args[0] = list.Car;
+          if(Ops.IsTrue(pred.Call(args))) return list;
+          list = list.Cdr as Pair;
+        }
+      }
+      return Ops.FALSE;
+    }
+  }
+  #endregion
+
   #region reverse
   public sealed class reverse : Primitive
   { public reverse() : base("reverse", 1, 1) { }
@@ -963,8 +1033,8 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       int  start = Ops.ExpectInt(args[1]);
       int length = Ops.ExpectInt(args[2]);
 
-      if(start!=0) pair = listTail.core(Name, pair, start);
-      return listHead.core(Name, pair, length);
+      if(start!=0) pair = Mods.Srfi1.drop.core(Name, pair, start);
+      return Mods.Srfi1.take.core(Name, pair, length);
     }
   }
   #endregion
@@ -1589,6 +1659,30 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region max
+  public sealed class max : Primitive
+  { public max() : base("max", 1, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object max=args[0];
+      for(int i=1; i<args.Length; i++) if(Ops.Compare(args[i], max)>0) max=args[i];
+      return max;
+    }
+  }
+  #endregion
+
+  #region min
+  public sealed class min : Primitive
+  { public min() : base("min", 1, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object min=args[0];
+      for(int i=1; i<args.Length; i++) if(Ops.Compare(args[i], min)<0) min=args[i];
+      return min;
+    }
+  }
+  #endregion
+
   #region negative?
   public sealed class negativeP : Primitive
   { public negativeP() : base("negative?", 1, 1) { }
@@ -1610,28 +1704,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
           goto default;
         default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
       }
-    }
-  }
-  #endregion
-
-  #region not
-  public sealed class not : Primitive
-  { public not() : base("not", 1, 1) { }
-  
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return !Ops.IsTrue(args[0]) ? Ops.TRUE : Ops.FALSE;
-    }
-  }
-  #endregion
-
-  #region null?
-  public sealed class nullP : Primitive
-  { public nullP() : base("null?", 1, 1) { }
-  
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return args[0]==null ? Ops.TRUE : Ops.FALSE;
     }
   }
   #endregion
@@ -2873,9 +2945,9 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     public override object Call(object[] args)
     { CheckArity(args);
       IProcedure thunk=Ops.ExpectProcedure(args[0]), func=Ops.ExpectProcedure(args[1]);
-      MultipleValues mv = thunk.Call(Ops.EmptyArray) as MultipleValues;
-      if(mv==null) throw new ArgumentException("call-with-values: thunk must return using (values)");
-      return func.Call(mv.Values);
+      object ret = thunk.Call(Ops.EmptyArray);
+      MultipleValues mv = ret as MultipleValues;
+      return mv==null ? func.Call(ret) : func.Call(mv.Values);
     }
   }
   #endregion
@@ -2947,6 +3019,28 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  #region not
+  public sealed class not : Primitive
+  { public not() : base("not", 1, 1) { }
+  
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return !Ops.IsTrue(args[0]) ? Ops.TRUE : Ops.FALSE;
+    }
+  }
+  #endregion
+
+  #region null?
+  public sealed class nullP : Primitive
+  { public nullP() : base("null?", 1, 1) { }
+  
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return args[0]==null ? Ops.TRUE : Ops.FALSE;
+    }
+  }
+  #endregion
+
   #region ref-get
   public sealed class refGet : Primitive
   { public refGet() : base("ref-get", 1, 1) { }
@@ -2986,14 +3080,13 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   
     public override object Call(object[] args)
     { CheckArity(args);
-      return new MultipleValues(args);
+      return args.Length==1 ? args[0] : new MultipleValues(args);
     }
   }
   #endregion
 
   public static readonly Module Instance;
 
-  internal static System.Collections.Specialized.ListDictionary builtins = new System.Collections.Specialized.ListDictionary();
   static Index gensyms = new Index();
 }
 
