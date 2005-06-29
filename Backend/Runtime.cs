@@ -1194,8 +1194,8 @@ public sealed class Symbol
 
 #region Template
 public sealed class Template
-{ public Template(IntPtr func, int numParams, bool hasList)
-  { FuncPtr=func; NumParams=numParams; HasList=hasList;
+{ public Template(IntPtr func, string name, int numParams, bool hasList)
+  { FuncPtr=func; Name=name; NumParams=numParams; HasList=hasList;
   }
 
   public object[] FixArgs(object[] args)

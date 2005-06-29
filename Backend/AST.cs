@@ -114,14 +114,14 @@ public sealed class AST
           pair = (Pair)pair.Cdr;
           sym = pair.Car as Symbol;
           if(sym==null) throw new Exception("set must set symbol"); // FIXME: SyntaxException
-          return new SetNode(sym.Name, ParseBody((Pair)pair.Cdr));
+          return new SetNode(sym.Name, Parse(Ops.FastCadr(pair)));
         }
         case "define":
         { int length = Builtins.length.core(pair);
           if(length!=3) throw new Exception("wrong number for define"); // FIXME: ex
           pair = (Pair)pair.Cdr;
           sym = (Symbol)pair.Car;
-          return new DefineNode(sym.Name, ParseBody((Pair)pair.Cdr)); // (define name value)
+          return new DefineNode(sym.Name, Parse(Ops.FastCadr(pair))); // (define name value)
         }
         // (module name-symbol (provides ...) body...)
         case "#%module":
@@ -144,7 +144,13 @@ public sealed class AST
       if(pair==null) break;
       args.Add(Parse(pair.Car));
     }
-    return new CallNode(func, (Node[])args.ToArray(typeof(Node)));
+    if(Options.Optimize && func is LambdaNode) // optimization: transform ((lambda (a) ...) x) into (let ((a x)) ...)
+    { LambdaNode fl = (LambdaNode)func;
+      string[] names = new string[fl.Parameters.Length];
+      for(int i=0; i<names.Length; i++) names[i] = fl.Parameters[i].String;
+      return new LetNode(names, (Node[])args.ToArray(typeof(Node)), fl.Body);
+    }
+    else return new CallNode(func, (Node[])args.ToArray(typeof(Node)));
   }
 
   static BodyNode ParseBody(Pair start)
@@ -265,141 +271,157 @@ public sealed class CallNode : Node
   static Hashtable ops;
 
   public override void Emit(CodeGenerator cg)
-  { if(Function is VariableNode)
-    { string name=((VariableNode)Function).Name.String, opname=(string)ops[name];
-      switch(name)
-      { case "eq?": case "eqv?": case "equal?":
-        { if(Args.Length!=2) goto normal;
-          Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
-          Args[0].Emit(cg);
-          Args[1].Emit(cg);
-          if(name=="eq?") cg.ILG.Emit(OpCodes.Ceq);
-          else cg.EmitCall(typeof(Ops), name=="eqv?" ? "EqvP" : "EqualP");
-          cg.ILG.Emit(OpCodes.Brtrue_S, yes);
-          cg.EmitFieldGet(typeof(Ops), "FALSE");
-          cg.ILG.Emit(OpCodes.Br_S, end);
-          cg.ILG.MarkLabel(yes);
-          cg.EmitFieldGet(typeof(Ops), "TRUE");
-          cg.ILG.MarkLabel(end);
-          goto ret;
+  { if(Options.Optimize && Function is VariableNode)
+    { VariableNode vn = (VariableNode)Function;
+      if(Tail && FuncNameMatch(vn.Name, InFunc))
+      { int positional = InFunc.Parameters.Length-(InFunc.HasList ? 1 : 0);
+        if(Args.Length<positional)
+          throw new Exception(string.Format("{0} expects {1}{2} args, but is being passed {3}",
+                                            vn.Name, InFunc.HasList ? "at least " : "", positional, Args.Length));
+        for(int i=0; i<positional; i++)
+        { Args[i].Emit(cg);
+          cg.EmitSet(InFunc.Parameters[i]);
         }
-        case "null?": case "pair?": case "char?": case "symbol?": case "string?": case "procedure?":
-        case "not": case "string-null?":
-        { if(Args.Length!=1) goto normal;
-          Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
-          Args[0].Emit(cg);
-          Type type=null;
-          switch(name)
-          { case "pair?": type=typeof(Pair); break;
-            case "char?": type=typeof(char); break;
-            case "symbol?": type=typeof(Symbol); break;
-            case "string?": type=typeof(string); break;
-            case "procedure?": type=typeof(IProcedure); break;
-            case "not": cg.EmitCall(typeof(Ops), "IsTrue"); break;
-            case "string-null?":
-              cg.ILG.Emit(OpCodes.Castclass, typeof(string));
-              cg.EmitPropGet(typeof(string), "Length");
-              break;
-          }
-          if(type!=null)
-          { cg.ILG.Emit(OpCodes.Isinst, type);
-            cg.ILG.Emit(OpCodes.Brtrue_S, yes);
-          }
-          else cg.ILG.Emit(OpCodes.Brfalse_S, yes);
-          cg.EmitFieldGet(typeof(Ops), "FALSE");
-          cg.ILG.Emit(OpCodes.Br_S, end);
-          cg.ILG.MarkLabel(yes);
-          cg.EmitFieldGet(typeof(Ops), "TRUE");
-          cg.ILG.MarkLabel(end);
-          goto ret;
-        }
-        case "string-length":
-          if(Args.Length!=1) goto normal;
-          Args[0].Emit(cg);
-          cg.ILG.Emit(OpCodes.Castclass, typeof(string));
-          cg.EmitPropGet(typeof(string), "Length");
-          cg.ILG.Emit(OpCodes.Box, typeof(int));
-          goto ret;
-        case "string-ref":
-          if(Args.Length!=2) goto normal;
-          Args[0].Emit(cg);
-          cg.ILG.Emit(OpCodes.Castclass, typeof(string));
-          Args[1].Emit(cg);
-          cg.EmitCall(typeof(Ops), "ToInt");
-          cg.EmitPropGet(typeof(string), "Chars");
-          cg.ILG.Emit(OpCodes.Box, typeof(char));
-          goto ret;
-        case "car": case "cdr":
-          if(Args.Length!=1) goto normal;
-          Args[0].Emit(cg);
-          cg.ILG.Emit(OpCodes.Castclass, typeof(Pair));
-          cg.EmitFieldGet(typeof(Pair), name=="car" ? "Car" : "Cdr");
-          goto ret;
-        case "char-upcase": case "char-downcase":
-          if(Args.Length!=1) goto normal;
-          cg.ILG.Emit(OpCodes.Unbox, typeof(char));
-          cg.ILG.Emit(OpCodes.Ldind_I2);
-          cg.EmitCall(typeof(char), name=="char-upcase" ? "ToUpper" : "ToLower", new Type[] { typeof(char) });
-          cg.ILG.Emit(OpCodes.Box, typeof(char));
-          goto ret;
-        case "set-car!": case "set-cdr!":
-          if(Args.Length!=2) goto normal;
-          Slot tmp = cg.AllocLocalTemp(typeof(object));
-          Args[1].Emit(cg);
-          tmp.EmitSet(cg);
-          Args[0].Emit(cg);
-          cg.ILG.Emit(OpCodes.Castclass, typeof(Pair));
-          tmp.EmitGet(cg);
-          cg.EmitFieldSet(typeof(Pair), name=="set-car!" ? "Car" : "Cdr");
-          tmp.EmitGet(cg);
-          cg.FreeLocalTemp(tmp);
-          goto ret;
-        case "-": case "bitnot":
-          if(Args.Length==1)
-          { opname = "Negate";
-            Args[0].Emit(cg);
-            break;
-          }
-          else goto plusetc;
-        case "+": case "*": case "/": case "//": case "%": case "bitand": case "bitor": case "bitxor": plusetc:
-          if(Args.Length<2) goto normal;
-          Args[0].Emit(cg);
-          for(int i=1; i<Args.Length-1; i++)
-          { Args[i].Emit(cg);
-            cg.EmitCall(typeof(Ops), opname);
-          }
-          Args[Args.Length-1].Emit(cg);
-          break;
-        case "=": case "!=": case "<": case ">": case "<=": case ">=":
-          if(Args.Length!=2) goto normal; // TODO: do the code generation for more than 2 arguments
-          Args[0].Emit(cg);
-          Args[1].Emit(cg);
-          break;
-        case "expt": case "lshift": case "rshift":
-          if(Args.Length!=2) goto normal;
-          Args[0].Emit(cg);
-          Args[1].Emit(cg);
-          break;
-        case "exptmod":
-          if(Args.Length!=3) goto normal;
-          Args[0].Emit(cg);
-          Args[1].Emit(cg);
-          Args[2].Emit(cg);
-          break;
-        case "values":
-          if(Args.Length==1) cg.EmitExpression(Args[0]);
-          else
-          { cg.EmitObjectArray(Args);
-            cg.EmitNew(typeof(MultipleValues), new Type[] { typeof(object[]) });
-          }
-          goto ret;
-        default: goto normal;
+        if(InFunc.HasList) cg.EmitList(Args, positional);
+        cg.ILG.Emit(OpCodes.Br, InFunc.StartLabel);
+        return;
       }
-      if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
-      cg.EmitCall(typeof(Ops), opname);
-      ret:
-      if(Tail) cg.EmitReturn();
-      return;
+      else
+      { string name=vn.Name.String, opname=(string)ops[name];
+        switch(name)
+        { case "eq?": case "eqv?": case "equal?":
+          { if(Args.Length!=2) goto normal;
+            Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
+            Args[0].Emit(cg);
+            Args[1].Emit(cg);
+            if(name=="eq?") cg.ILG.Emit(OpCodes.Ceq);
+            else cg.EmitCall(typeof(Ops), name=="eqv?" ? "EqvP" : "EqualP");
+            cg.ILG.Emit(OpCodes.Brtrue_S, yes);
+            cg.EmitFieldGet(typeof(Ops), "FALSE");
+            cg.ILG.Emit(OpCodes.Br_S, end);
+            cg.ILG.MarkLabel(yes);
+            cg.EmitFieldGet(typeof(Ops), "TRUE");
+            cg.ILG.MarkLabel(end);
+            goto ret;
+          }
+          case "null?": case "pair?": case "char?": case "symbol?": case "string?": case "procedure?":
+          case "not": case "string-null?":
+          { if(Args.Length!=1) goto normal;
+            Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
+            Args[0].Emit(cg);
+            Type type=null;
+            switch(name)
+            { case "pair?": type=typeof(Pair); break;
+              case "char?": type=typeof(char); break;
+              case "symbol?": type=typeof(Symbol); break;
+              case "string?": type=typeof(string); break;
+              case "procedure?": type=typeof(IProcedure); break;
+              case "not": cg.EmitCall(typeof(Ops), "IsTrue"); break;
+              case "string-null?":
+                cg.ILG.Emit(OpCodes.Castclass, typeof(string));
+                cg.EmitPropGet(typeof(string), "Length");
+                break;
+            }
+            if(type!=null)
+            { cg.ILG.Emit(OpCodes.Isinst, type);
+              cg.ILG.Emit(OpCodes.Brtrue_S, yes);
+            }
+            else cg.ILG.Emit(OpCodes.Brfalse_S, yes);
+            cg.EmitFieldGet(typeof(Ops), "FALSE");
+            cg.ILG.Emit(OpCodes.Br_S, end);
+            cg.ILG.MarkLabel(yes);
+            cg.EmitFieldGet(typeof(Ops), "TRUE");
+            cg.ILG.MarkLabel(end);
+            goto ret;
+          }
+          case "string-length":
+            if(Args.Length!=1) goto normal;
+            Args[0].Emit(cg);
+            cg.ILG.Emit(OpCodes.Castclass, typeof(string));
+            cg.EmitPropGet(typeof(string), "Length");
+            cg.ILG.Emit(OpCodes.Box, typeof(int));
+            goto ret;
+          case "string-ref":
+            if(Args.Length!=2) goto normal;
+            Args[0].Emit(cg);
+            cg.ILG.Emit(OpCodes.Castclass, typeof(string));
+            Args[1].Emit(cg);
+            cg.EmitCall(typeof(Ops), "ToInt");
+            cg.EmitPropGet(typeof(string), "Chars");
+            cg.ILG.Emit(OpCodes.Box, typeof(char));
+            goto ret;
+          case "car": case "cdr":
+            if(Args.Length!=1) goto normal;
+            Args[0].Emit(cg);
+            cg.ILG.Emit(OpCodes.Castclass, typeof(Pair));
+            cg.EmitFieldGet(typeof(Pair), name=="car" ? "Car" : "Cdr");
+            goto ret;
+          case "char-upcase": case "char-downcase":
+            if(Args.Length!=1) goto normal;
+            cg.ILG.Emit(OpCodes.Unbox, typeof(char));
+            cg.ILG.Emit(OpCodes.Ldind_I2);
+            cg.EmitCall(typeof(char), name=="char-upcase" ? "ToUpper" : "ToLower", new Type[] { typeof(char) });
+            cg.ILG.Emit(OpCodes.Box, typeof(char));
+            goto ret;
+          case "set-car!": case "set-cdr!":
+            if(Args.Length!=2) goto normal;
+            Slot tmp = cg.AllocLocalTemp(typeof(object));
+            Args[1].Emit(cg);
+            tmp.EmitSet(cg);
+            Args[0].Emit(cg);
+            cg.ILG.Emit(OpCodes.Castclass, typeof(Pair));
+            tmp.EmitGet(cg);
+            cg.EmitFieldSet(typeof(Pair), name=="set-car!" ? "Car" : "Cdr");
+            tmp.EmitGet(cg);
+            cg.FreeLocalTemp(tmp);
+            goto ret;
+          case "-": case "bitnot":
+            if(Args.Length==1)
+            { opname = "Negate";
+              Args[0].Emit(cg);
+              break;
+            }
+            else goto plusetc;
+          case "+": case "*": case "/": case "//": case "%": case "bitand": case "bitor": case "bitxor": plusetc:
+            if(Args.Length<2) goto normal;
+            Args[0].Emit(cg);
+            for(int i=1; i<Args.Length-1; i++)
+            { Args[i].Emit(cg);
+              cg.EmitCall(typeof(Ops), opname);
+            }
+            Args[Args.Length-1].Emit(cg);
+            break;
+          case "=": case "!=": case "<": case ">": case "<=": case ">=":
+            if(Args.Length!=2) goto normal; // TODO: do the code generation for more than 2 arguments
+            Args[0].Emit(cg);
+            Args[1].Emit(cg);
+            break;
+          case "expt": case "lshift": case "rshift":
+            if(Args.Length!=2) goto normal;
+            Args[0].Emit(cg);
+            Args[1].Emit(cg);
+            break;
+          case "exptmod":
+            if(Args.Length!=3) goto normal;
+            Args[0].Emit(cg);
+            Args[1].Emit(cg);
+            Args[2].Emit(cg);
+            break;
+          case "values":
+            if(Args.Length==1) cg.EmitExpression(Args[0]);
+            else
+            { cg.EmitObjectArray(Args);
+              cg.EmitNew(typeof(MultipleValues), new Type[] { typeof(object[]) });
+            }
+            goto ret;
+          default: goto normal;
+        }
+        if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
+        cg.EmitCall(typeof(Ops), opname);
+        ret:
+        if(Tail) cg.EmitReturn();
+        return;
+      }
     }
     
     normal:
@@ -427,12 +449,21 @@ public sealed class CallNode : Node
 
   public readonly Node Function;
   public readonly Node[] Args;
+  
+  static bool FuncNameMatch(Name var, LambdaNode func)
+  { Name binding = func.Binding;
+    return binding!=null && var.Index==binding.Index && var.String==binding.String &&
+           var.Depth==binding.Depth+(func.MaxNames!=0 ? 1 : 0);
+  }
 }
 #endregion
 
 #region DefineNode
 public sealed class DefineNode : Node
-{ public DefineNode(string name, Node value) { Name=new Name(name, Name.Global); Value=value; }
+{ public DefineNode(string name, Node value)
+  { Name=new Name(name, Name.Global); Value=value;
+    if(value is LambdaNode) ((LambdaNode)value).Name = name;
+  }
 
   public override void Emit(CodeGenerator cg)
   { if(InFunc!=null) throw new SyntaxErrorException("define: only allowed at toplevel scope");
@@ -518,9 +549,10 @@ public class LambdaNode : Node
     if(!cg.TypeGenerator.GetNamedConstant("template"+index, typeof(Template), out tmpl))
     { CodeGenerator icg = cg.TypeGenerator.GetInitializer();
       icg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)impl.MethodBase);
+      icg.EmitString(Name!=null ? Name : Binding!=null ? Binding.String : null);
       icg.EmitInt(Parameters.Length);
       icg.EmitBool(HasList);
-      icg.EmitNew(typeof(Template), new Type[] { typeof(IntPtr), typeof(int), typeof(bool) });
+      icg.EmitNew(typeof(Template), new Type[] { typeof(IntPtr), typeof(string), typeof(int), typeof(bool) });
       tmpl.EmitSet(icg);
     }
 
@@ -547,6 +579,9 @@ public class LambdaNode : Node
 
   public readonly Name[] Parameters;
   public readonly Node Body;
+  public Name Binding;
+  public string Name;
+  public Label StartLabel;
   public int MaxNames;
   public readonly bool HasList;
 
@@ -570,6 +605,8 @@ public class LambdaNode : Node
       icg.EmitArgSet(0);
     }
 
+    StartLabel = icg.ILG.DefineLabel();
+    icg.ILG.MarkLabel(StartLabel);
     Body.Emit(icg);
     icg.Finish();
     return icg;
@@ -583,72 +620,101 @@ public class LambdaNode : Node
 
       if(node is LambdaNode)
       { LambdaNode oldFunc=func;
-        ArrayList  oldBound=bound, oldFree=free;
+        int oldFree=freeStart, oldBound=boundStart;
 
         func  = (LambdaNode)node;
-        free  = new ArrayList();
-        bound = new ArrayList(func.Parameters);
+        freeStart = free.Count;
+        boundStart = bound.Count;
+
+        foreach(Name name in func.Parameters)
+        { bound.Add(name);
+          values.Add(null);
+        }
 
         func.Body.Walk(this);
 
-        foreach(Name name in free)
-        { int index = IndexOf(oldBound, name.String);
+        for(int i=freeStart; i<free.Count; i++)
+        { Name name = (Name)free[i];
+          int index = IndexOf(name.String, bound, oldBound, boundStart);
           if(index==-1)
-          { if(oldFunc==top || oldFunc is ModuleNode) name.Depth=Name.Global;
+          { if(oldFunc==top || oldFunc is ModuleNode) name.Depth=Backend.Name.Global;
             else
             { if(func.MaxNames!=0) name.Depth++;
-              oldFree.Add(name);
+              free[freeStart++] = name;
             }
           }
           else
-          { Name bname = (Name)oldBound[index];
-            if(bname.Depth==Name.Local && IndexOf(oldFunc.Parameters, name.String)==-1)
+          { Name bname = (Name)bound[index];
+            if(bname.Depth==Backend.Name.Local && IndexOf(name.String, oldFunc.Parameters)==-1)
             { bname.Depth = 0;
               bname.Index = name.Index = oldFunc.MaxNames++;
             }
             else name.Index=bname.Index;
             if(func.MaxNames!=0) name.Depth++;
+
+            LambdaNode lambda = values[index] as LambdaNode;
+            if(lambda!=null) lambda.Binding = name;
           }
         }
 
-        func=oldFunc; bound=oldBound; free=oldFree;
+        values.RemoveRange(boundStart, bound.Count-boundStart);
+        bound.RemoveRange(boundStart, bound.Count-boundStart);
+        free.RemoveRange(freeStart, free.Count-freeStart);
+        func=oldFunc; boundStart=oldBound; freeStart=oldFree;
         return false;
       }
       else if(node is LetNode)
       { LetNode let = (LetNode)node;
         foreach(Node n in let.Inits) if(n!=null) n.Walk(this);
-        foreach(Name name in let.Names) bound.Add(name);
+        for(int i=0; i<let.Names.Length; i++)
+        { bound.Add(let.Names[i]);
+          values.Add(let.Inits[i]==null ? Backend.Binding.Unbound : let.Inits[i]);
+        }
         let.Body.Walk(this);
         return false;
       }
       else if(node is VariableNode || node is SetNode)
       { Name name = node is SetNode ? ((SetNode)node).Name : ((VariableNode)node).Name;
-        int index = IndexOf(bound, name.String);
+        int index = IndexOf(name.String, bound);
         if(index==-1)
-        { if(func==top) name.Depth=Name.Global;
+        { if(func==top) name.Depth=Backend.Name.Global;
           else
-          { index = IndexOf(free, name.String);
+          { index = IndexOf(name.String, free);
             if(index==-1) { free.Add(name); name.Depth=0; }
             else
-            { Name bname = (Name)free[index];
+            { Name bname = name = (Name)free[index];
               if(node is SetNode) ((SetNode)node).Name=bname;
               else ((VariableNode)node).Name=bname;
             }
           }
         }
         else
-        { Name bname = (Name)bound[index];
-          if(node is SetNode) ((SetNode)node).Name=bname;
+        { Name bname = name = (Name)bound[index];
+          if(node is SetNode)
+          { SetNode set = (SetNode)node;
+            set.Name=bname;
+
+            if(values[index]==Backend.Binding.Unbound) values[index]=set.Value;
+            else values[index]=null;
+          }
           else ((VariableNode)node).Name=bname;
         }
       }
       return true;
     }
-    
+
     public void PostWalk(Node node)
     { if(node is LetNode)
       { LetNode let = (LetNode)node;
-        bound.RemoveRange(bound.Count-let.Names.Length, let.Names.Length);
+        int start=bound.Count-let.Names.Length, len=let.Names.Length;
+
+        for(int i=start; i<values.Count; i++)
+        { LambdaNode lambda = values[i] as LambdaNode;
+          if(lambda!=null) lambda.Binding = (Name)bound[i];
+        }
+
+        bound.RemoveRange(start, len);
+        values.RemoveRange(start, len);
       }
       else if(node is DefineNode)
       { DefineNode def = (DefineNode)node;
@@ -656,11 +722,18 @@ public class LambdaNode : Node
       }
     }
 
-    LambdaNode func, top;
-    ArrayList bound=new ArrayList(), free;
+    int IndexOf(string name, IList list) // these are kind of DWIMish
+    { if(list==bound) return IndexOf(name, list, boundStart, list.Count);
+      if(list==free)  return IndexOf(name, list, freeStart, list.Count);
+      return IndexOf(name, list, 0, list.Count);
+    }
 
-    static int IndexOf(IList list, string name)
-    { for(int i=list.Count-1; i>=0; i--) if(((Name)list[i]).String==name) return i;
+    LambdaNode func, top;
+    ArrayList bound=new ArrayList(), free=new ArrayList(), values=new ArrayList();
+    int boundStart, freeStart;
+
+    static int IndexOf(string name, IList list, int start, int end)
+    { for(end--; end>=start; end--) if(((Name)list[end]).String==name) return end;
       return -1;
     }
   }
@@ -677,21 +750,7 @@ public sealed class ListNode : Node
 
   public override void Emit(CodeGenerator cg)
   { Slot pair = cg.AllocLocalTemp(typeof(Pair));
-    ConstructorInfo cons = typeof(Pair).GetConstructor(new Type[] { typeof(object), typeof(object) });
-
-    cg.EmitExpression(Items[Items.Length-1]);
-    cg.EmitExpression(Dot);
-    cg.EmitNew(cons);
-    pair.EmitSet(cg);
-    for(int i=Items.Length-2; i>=0; i--)
-    { Items[i].Emit(cg);
-      pair.EmitGet(cg);
-      cg.EmitNew(cons);
-      pair.EmitSet(cg);
-    }
-    pair.EmitGet(cg);
-    cg.FreeLocalTemp(pair);
-
+    cg.EmitList(Items);
     if(Tail) cg.EmitReturn();
   }
 
@@ -826,7 +885,6 @@ public sealed class ModuleNode : LambdaNode
     w.PostWalk(this);
   }
 
-  public readonly string Name;
   public readonly Module.Export[] Exports;
   
   sealed class ModuleWalker : IWalker

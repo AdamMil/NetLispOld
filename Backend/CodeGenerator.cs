@@ -149,6 +149,17 @@ public sealed class CodeGenerator
       ILG.MarkSequencePoint(TypeGenerator.Assembly.Symbols, line, 0, line+1, 0);
   }
 
+  public void EmitList(Node[] items) { EmitList(items, 0); }
+  public void EmitList(Node[] items, int start)
+  { if(start==items.Length) ILG.Emit(OpCodes.Ldnull);
+    else
+    { ConstructorInfo cons = typeof(Pair).GetConstructor(new Type[] { typeof(object), typeof(object) });
+      for(int i=start; i<items.Length; i++) items[i].Emit(this);
+      ILG.Emit(OpCodes.Ldnull);
+      for(int i=start; i<items.Length; i++) EmitNew(cons);
+    }
+  }
+
   public void EmitNew(Type type) { ILG.Emit(OpCodes.Newobj, type.GetConstructor(Type.EmptyTypes)); }
   public void EmitNew(Type type, Type[] paramTypes)
   { ILG.Emit(OpCodes.Newobj, type.GetConstructor(SearchAll, null, paramTypes, null));
