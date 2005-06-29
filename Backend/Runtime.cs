@@ -308,18 +308,19 @@ public sealed class MultipleValues
 public sealed class Ops
 { Ops() { }
 
+  public static object AreEqual(object a, object b) { return FromBool(EqvP(a, b)); }
+
   public static object Add(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return IntOps.Add((bool)a ? 1 : 0, b);
-      case TypeCode.Byte:    return IntOps.Add((int)(byte)a, b);
+    { case TypeCode.Byte: return IntOps.Add((int)(byte)a, b);
       case TypeCode.Char:
         if(b is string) return (char)a+(string)b;
         break;
       case TypeCode.Decimal:
         if(b is Decimal) return (Decimal)a + (Decimal)b;
         try { return (Decimal)a + Convert.ToDecimal(b); }
-        catch { break; }
-      case TypeCode.Double:  return FloatOps.Add((double)a, b);
+        catch(InvalidCastException) { break; }
+      case TypeCode.Double: return FloatOps.Add((double)a, b);
       case TypeCode.Int16: return IntOps.Add((int)(short)a, b);
       case TypeCode.Int32: return IntOps.Add((int)a, b);
       case TypeCode.Int64: return LongOps.Add((long)a, b);
@@ -348,18 +349,15 @@ public sealed class Ops
 
   public static object BitwiseAnd(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean:
-        if(b is bool) return FromBool((bool)a && (bool)b);
-        return IntOps.BitwiseAnd((bool)a ? 1 : 0, b);
-      case TypeCode.Byte:  return IntOps.BitwiseAnd((int)(byte)a, b);
-      case TypeCode.Int16: return IntOps.BitwiseAnd((int)(short)a, b);
+    { case TypeCode.Byte:  return IntOps.BitwiseAnd((byte)a, b);
+      case TypeCode.Int16: return IntOps.BitwiseAnd((short)a, b);
       case TypeCode.Int32: return IntOps.BitwiseAnd((int)a, b);
       case TypeCode.Int64: return LongOps.BitwiseAnd((long)a, b);
       case TypeCode.Object:
         if(a is Integer) return IntegerOps.BitwiseAnd((Integer)a, b);
         break;
-      case TypeCode.SByte: return IntOps.BitwiseAnd((int)(sbyte)a, b);
-      case TypeCode.UInt16: return IntOps.BitwiseAnd((int)(short)a, b);
+      case TypeCode.SByte: return IntOps.BitwiseAnd((sbyte)a, b);
+      case TypeCode.UInt16: return IntOps.BitwiseAnd((short)a, b);
       case TypeCode.UInt32:
       { uint v = (uint)a;
         return v<=int.MaxValue ? IntOps.BitwiseAnd((int)v, b) : LongOps.BitwiseAnd((long)v, b);
@@ -374,18 +372,15 @@ public sealed class Ops
 
   public static object BitwiseOr(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean:
-        if(b is bool) return FromBool((bool)a || (bool)b);
-        return IntOps.BitwiseOr((bool)a ? 1 : 0, b);
-      case TypeCode.Byte:  return IntOps.BitwiseOr((int)(byte)a, b);
-      case TypeCode.Int16: return IntOps.BitwiseOr((int)(short)a, b);
+    { case TypeCode.Byte:  return IntOps.BitwiseOr((byte)a, b);
+      case TypeCode.Int16: return IntOps.BitwiseOr((short)a, b);
       case TypeCode.Int32: return IntOps.BitwiseOr((int)a, b);
       case TypeCode.Int64: return LongOps.BitwiseOr((long)a, b);
       case TypeCode.Object:
         if(a is Integer) return IntegerOps.BitwiseOr((Integer)a, b);
         break;
-      case TypeCode.SByte: return IntOps.BitwiseOr((int)(sbyte)a, b);
-      case TypeCode.UInt16: return IntOps.BitwiseOr((int)(short)a, b);
+      case TypeCode.SByte: return IntOps.BitwiseOr((sbyte)a, b);
+      case TypeCode.UInt16: return IntOps.BitwiseOr((short)a, b);
       case TypeCode.UInt32:
       { uint v = (uint)a;
         return v<=int.MaxValue ? IntOps.BitwiseOr((int)v, b) : LongOps.BitwiseOr((long)v, b);
@@ -400,18 +395,15 @@ public sealed class Ops
 
   public static object BitwiseXor(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean:
-        if(b is bool) return FromBool((bool)a != (bool)b);
-        return IntOps.BitwiseXor((bool)a ? 1 : 0, b);
-      case TypeCode.Byte:  return IntOps.BitwiseXor((int)(byte)a, b);
-      case TypeCode.Int16: return IntOps.BitwiseXor((int)(short)a, b);
+    { case TypeCode.Byte:  return IntOps.BitwiseXor((byte)a, b);
+      case TypeCode.Int16: return IntOps.BitwiseXor((short)a, b);
       case TypeCode.Int32: return IntOps.BitwiseXor((int)a, b);
       case TypeCode.Int64: return LongOps.BitwiseXor((long)a, b);
       case TypeCode.Object:
         if(a is Integer) return IntegerOps.BitwiseXor((Integer)a, b);
         break;
-      case TypeCode.SByte: return IntOps.BitwiseXor((int)(sbyte)a, b);
-      case TypeCode.UInt16: return IntOps.BitwiseXor((int)(short)a, b);
+      case TypeCode.SByte: return IntOps.BitwiseXor((sbyte)a, b);
+      case TypeCode.UInt16: return IntOps.BitwiseXor((short)a, b);
       case TypeCode.UInt32:
       { uint v = (uint)a;
         return v<=int.MaxValue ? IntOps.BitwiseXor((int)v, b) : LongOps.BitwiseXor((long)v, b);
@@ -426,8 +418,7 @@ public sealed class Ops
 
   public static object BitwiseNegate(object a)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return (bool)a ? -2 : -1;
-      case TypeCode.Byte:  return ~(int)(byte)a;
+    { case TypeCode.Byte:  return ~(int)(byte)a;
       case TypeCode.Int16: return ~(int)(short)a;
       case TypeCode.Int32: return ~(int)a;
       case TypeCode.Int64: return ~(long)a;
@@ -464,50 +455,39 @@ public sealed class Ops
   public static Snippet CompileRaw(object obj) { return SnippetMaker.Generate(AST.Create(obj)); }
 
   public static int Compare(object a, object b)
-  { if(a==b) return 0;
-    switch(Convert.GetTypeCode(a))
+  { switch(Convert.GetTypeCode(a))
     { case TypeCode.Boolean:
         if(b is bool) return (bool)a ? (bool)b ? 0 : 1 : (bool)b ? -1 : 0;
-        return IntOps.Compare((bool)a ? 1 : 0, b);
+        break;
       case TypeCode.Byte: return IntOps.Compare((int)(byte)a, b);
       case TypeCode.Char:
-      { string sb = b as string;
-        if(sb!=null)
-        { if(sb.Length==0) return 1;
-          int diff = (int)(char)a - (int)sb[0];
-          return diff!=0 ? diff : sb.Length==1 ? 0 : -1;
-        }
-        else if(b is char) return (int)(char)a - (int)(char)b;
+        if(b is char) return (int)(char)a - (int)(char)b;
         break;
-      }
       case TypeCode.Decimal:
         if(b is Decimal) return ((Decimal)a).CompareTo(b);
         try { return ((Decimal)a).CompareTo(Convert.ToDecimal(b)); }
-        catch { break; }
+        catch(InvalidCastException) { break; }
       case TypeCode.Double: return FloatOps.Compare((double)a, b);
       case TypeCode.Empty: return b==null ? 0 : -1;
-      case TypeCode.Int16: return IntOps.Compare((int)(short)a, b);
+      case TypeCode.Int16: return IntOps.Compare((short)a, b);
       case TypeCode.Int32: return IntOps.Compare((int)a, b);
       case TypeCode.Int64: return LongOps.Compare((long)a, b);
       case TypeCode.Object:
         if(a is Integer) return IntegerOps.Compare((Integer)a, b);
-        if(a is Complex) return ComplexOps.Compare((Complex)a, b);
+        if(a is Complex)
+        { Complex c = (Complex)a;
+          if(c.imag==0) return FloatOps.Compare(c.real, b);
+        }
         break;
-      case TypeCode.SByte: return IntOps.Compare((int)(sbyte)a, b);
+      case TypeCode.SByte: return IntOps.Compare((sbyte)a, b);
       case TypeCode.Single: return FloatOps.Compare((float)a, b);
       case TypeCode.String:
       { string sb = b as string;
-        if(sb!=null) return ((string)a).CompareTo(sb);
-        else if(b is char)
-        { string sa = (string)a;
-          if(sa.Length==0) return -1;
-          int diff = (int)sa[0] - (int)(char)b;
-          return diff!=0 ? diff : sa.Length==1 ? 0 : 1;
-        }
+        if(sb!=null) return string.Compare((string)a, sb);
         break;
       }
-      case TypeCode.UInt16: return IntOps.Compare((int)(short)a, b);
-      case TypeCode.UInt32: 
+      case TypeCode.UInt16: return IntOps.Compare((short)a, b);
+      case TypeCode.UInt32:
       { uint v = (uint)a;
         return v<=int.MaxValue ? IntOps.Compare((int)v, b) : LongOps.Compare((long)v, b);
       }
@@ -516,7 +496,7 @@ public sealed class Ops
         return v<=long.MaxValue ? LongOps.Compare((long)v, b) : IntegerOps.Compare(new Integer(v), b);
       }
     }
-    return b.GetHashCode()-a.GetHashCode(); // FIXME: this should be an error and we should have another method for checking equality
+    throw Ops.TypeError("can't compare types: {0} and {1}", Ops.TypeName(a), Ops.TypeName(b));
   }
 
   public static object ConvertTo(object o, Type type)
@@ -568,24 +548,23 @@ public sealed class Ops
 
   public static object Divide(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return (bool)a ? IntOps.Divide(1, b) : 0;
-      case TypeCode.Byte:    return IntOps.Divide((byte)a, b);
+    { case TypeCode.Byte: return IntOps.Divide((byte)a, b, false);
       case TypeCode.Decimal:
         if(b is Decimal) return (Decimal)a / (Decimal)b;
         try { return (Decimal)a / Convert.ToDecimal(b); }
-        catch { break; }
-      case TypeCode.Double:  return FloatOps.Divide((double)a, b);
-      case TypeCode.Int16: return IntOps.Divide((short)a, b);
-      case TypeCode.Int32: return IntOps.Divide((int)a, b);
-      case TypeCode.Int64: return LongOps.Divide((long)a, b);
+        catch(InvalidCastException) { break; }
+      case TypeCode.Double:  return FloatOps.Divide((double)a, b, false);
+      case TypeCode.Int16: return IntOps.Divide((short)a, b, false);
+      case TypeCode.Int32: return IntOps.Divide((int)a, b, false);
+      case TypeCode.Int64: return LongOps.Divide((long)a, b, false);
       case TypeCode.Object:
         if(a is Integer) return IntegerOps.Divide((Integer)a, b);
         if(a is Complex) return ComplexOps.Divide((Complex)a, b);
         break;
-      case TypeCode.SByte: return IntOps.Divide((sbyte)a, b);
-      case TypeCode.Single: return FloatOps.Divide((float)a, b);
-      case TypeCode.UInt16: return IntOps.Divide((short)a, b);
-      case TypeCode.UInt32: return LongOps.Divide((uint)a, b);
+      case TypeCode.SByte: return IntOps.Divide((sbyte)a, b, false);
+      case TypeCode.Single: return FloatOps.Divide((float)a, b, false);
+      case TypeCode.UInt16: return IntOps.Divide((short)a, b, false);
+      case TypeCode.UInt32: return LongOps.Divide((uint)a, b, false);
       case TypeCode.UInt64: return IntegerOps.Divide(new Integer((ulong)a), b);
     }
     throw TypeError("unsupported operand types for /: '{0}' and '{1}'", TypeName(a), TypeName(b));
@@ -600,6 +579,59 @@ public sealed class Ops
     }
     tail.Cdr = last;
     return head;
+  }
+
+  public static bool EqualP(object a, object b)
+  { if(a==b) return true;
+
+    Pair pa=a as Pair;
+    if(pa!=null)
+    { Pair pb=b as Pair;
+      if(pb!=null)
+      { do
+        { if(!EqualP(pa.Car, pb.Car)) return false;
+          Pair next=pa.Cdr as Pair;
+          if(next==null && pa.Cdr!=null) return EqualP(pa.Cdr, pb.Cdr);
+          pa = next;
+          pb = pb.Cdr as Pair;
+        } while(pa!=null && pb!=null);
+        return pa==pb;
+      }
+    }
+    else if(!(b is Pair)) return EqvP(a, b);
+    return false;
+  }
+
+  public static bool EqvP(object a, object b)
+  { if(a==b) return true;
+    switch(Convert.GetTypeCode(a))
+    { case TypeCode.Boolean: return b is bool && (bool)a==(bool)b;
+      case TypeCode.Byte: return IntOps.AreEqual((byte)a, b);
+      case TypeCode.Char: return IntOps.AreEqual((int)(char)a, b);
+      case TypeCode.Decimal: return b is Decimal ? (Decimal)a==(Decimal)b
+                                                 : FloatOps.AreEqual(Decimal.ToDouble((Decimal)a), b);
+      case TypeCode.Double: return FloatOps.AreEqual((double)a, b);
+      case TypeCode.Int16: return IntOps.AreEqual((short)a, b);
+      case TypeCode.Int32: return IntOps.AreEqual((int)a, b);
+      case TypeCode.Int64: return LongOps.AreEqual((long)a, b);
+      case TypeCode.Object:
+        if(a is Integer) return IntegerOps.AreEqual((Integer)a, b);
+        if(a is Complex) return ComplexOps.AreEqual((Complex)a, b);
+        return a.Equals(b);
+      case TypeCode.SByte: return IntOps.AreEqual((sbyte)a, b);
+      case TypeCode.Single: return FloatOps.AreEqual((float)a, b);
+      case TypeCode.String: return b is string ? (string)a==(string)b : false;
+      case TypeCode.UInt16: return IntOps.AreEqual((ushort)a, b);
+      case TypeCode.UInt32:
+      { uint v = (uint)a;
+        return v<=int.MaxValue ? IntOps.AreEqual((int)v, b) : LongOps.AreEqual((long)v, b);
+      }
+      case TypeCode.UInt64:
+      { ulong v = (ulong)a;
+        return v<=long.MaxValue ? LongOps.AreEqual((long)v, b) : IntegerOps.AreEqual(new Integer(v), b);
+      }
+    }
+    return false;
   }
 
   public static char ExpectChar(object obj)
@@ -648,100 +680,53 @@ public sealed class Ops
     return ret;
   }
 
-  public static object Equal(object a, object b)
-  { return FromBool(a is Complex ? ((Complex)a).Equals(b) : Compare(a, b)==0);
-  }
-
-  public static bool EqualP(object a, object b)
-  { if(a==b) return true;
-
-    Pair pa=a as Pair;
-    if(pa!=null)
-    { Pair pb=b as Pair;
-      if(pb!=null)
-      { do
-        { if(!EqualP(pa.Car, pb.Car)) return false;
-          Pair next=pa.Cdr as Pair;
-          if(next==null && pa.Cdr!=null) return EqualP(pa.Cdr, pb.Cdr);
-          pa = next;
-          pb = pb.Cdr as Pair;
-        } while(pa!=null && pb!=null);
-        return pa==pb;
-      }
-    }
-    else if(!(b is Pair)) return EqvP(a, b);
-    return false;
-  }
-
-  public static bool EqvP(object a, object b)
-  { return a==b || (a is Complex ? ((Complex)a).Equals(b) : Compare(a, b)==0);
-  }
-
   public static object FastCadr(Pair pair) { return ((Pair)pair.Cdr).Car; }
   public static object FastCddr(Pair pair) { return ((Pair)pair.Cdr).Cdr; }
 
   public static object FloorDivide(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return (bool)a ? IntOps.FloorDivide(1, b) : 0;
-      case TypeCode.Byte:    return IntOps.FloorDivide((byte)a, b);
-      case TypeCode.Double:  return FloatOps.FloorDivide((double)a, b);
-      case TypeCode.Int16: return IntOps.FloorDivide((short)a, b);
-      case TypeCode.Int32: return IntOps.FloorDivide((int)a, b);
-      case TypeCode.Int64: return LongOps.FloorDivide((long)a, b);
+    { case TypeCode.Byte:   return IntOps.Divide((byte)a, b, true);
+      case TypeCode.Double: return FloatOps.Divide((double)a, b, true);
+      case TypeCode.Int16:  return IntOps.Divide((short)a, b, true);
+      case TypeCode.Int32:  return IntOps.Divide((int)a, b, true);
+      case TypeCode.Int64:  return LongOps.Divide((long)a, b, true);
       case TypeCode.Object:
         if(a is Integer) return IntegerOps.FloorDivide((Integer)a, b);
+        if(a is Complex)
+        { Complex c = (Complex)b;
+          if(c.imag==0) return FloatOps.Divide(c.real, b, true);
+        }
+        else
+        { IConvertible ic = b as IConvertible;
+          if(ic!=null) return FloatOps.Divide(ic.ToDouble(NumberFormatInfo.InvariantInfo), b, true);
+        }
         break;
-      case TypeCode.SByte: return IntOps.FloorDivide((sbyte)a, b);
-      case TypeCode.Single: return FloatOps.FloorDivide((float)a, b);
-      case TypeCode.UInt16: return IntOps.FloorDivide((short)a, b);
+      case TypeCode.SByte: return IntOps.Divide((sbyte)a, b, true);
+      case TypeCode.Single: return FloatOps.Divide((float)a, b, true);
+      case TypeCode.UInt16: return IntOps.Divide((short)a, b, true);
       case TypeCode.UInt32: 
       { uint v = (uint)a;
-        return v<=int.MaxValue ? IntOps.FloorDivide((int)v, b) : LongOps.FloorDivide((long)v, b);
+        return v<=int.MaxValue ? IntOps.Divide((int)v, b, true) : LongOps.Divide((long)v, b, true);
       }
       case TypeCode.UInt64:
       { ulong v = (ulong)a;
-        return v<=long.MaxValue ? LongOps.FloorDivide((long)v, b) : IntegerOps.FloorDivide(new Integer(v), b);
+        return v<=long.MaxValue ? LongOps.Divide((long)v, b, true) : IntegerOps.Divide(new Integer(v), b);
       }
     }
-    throw TypeError("unsupported operand types for /: '{0}' and '{1}'", TypeName(a), TypeName(b));
+    throw TypeError("unsupported operand types for //: '{0}' and '{1}'", TypeName(a), TypeName(b));
   }
 
-  // TODO: check whether we can eliminate this (ie, "(eq? #t #t)" still works)
+  // TODO: check whether we can eliminate this (ie, "(eq? #t #t)" still works reliably)
   public static object FromBool(bool value) { return value ? TRUE : FALSE; }
 
   public static object GetGlobal(string name) { return TopLevel.Current.Get(name); }
   public static bool GetGlobal(string name, out object value) { return TopLevel.Current.Get(name, out value); }
 
-  public static bool IsTrue(object a)
-  { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return (bool)a;
-      case TypeCode.Byte:    return (byte)a!=0;
-      case TypeCode.Char:    return (char)a!=0;
-      case TypeCode.Decimal: return (Decimal)a!=0;
-      case TypeCode.Double:  return (double)a!=0;
-      case TypeCode.Empty:   return false;
-      case TypeCode.Int16:   return (short)a!=0;
-      case TypeCode.Int32:   return (int)a!=0;
-      case TypeCode.Int64:   return (long)a!=0;
-      case TypeCode.Object:
-        if(a is Integer) return (Integer)a!=0;
-        if(a is Complex) return ComplexOps.NonZero((Complex)a);
-        if(a is ICollection) return ((ICollection)a).Count!=0;
-        return true;
-      case TypeCode.SByte:  return (sbyte)a!=0;
-      case TypeCode.Single: return (float)a!=0;
-      case TypeCode.String: return ((string)a).Length>0;
-      case TypeCode.UInt16: return (short)a!=0;
-      case TypeCode.UInt32: return (uint)a!=0;
-      case TypeCode.UInt64: return (ulong)a!=0;
-    }
-    return true;
-  }
+  public static bool IsTrue(object obj) { return obj is bool && (bool)obj; }
 
   public static object LeftShift(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return IntOps.LeftShift((bool)a ? 1 : 0, b);
-      case TypeCode.Byte:  return IntOps.LeftShift((int)(byte)a, b);
+    { case TypeCode.Byte:  return IntOps.LeftShift((int)(byte)a, b);
       case TypeCode.Int16: return IntOps.LeftShift((int)(short)a, b);
       case TypeCode.Int32: return IntOps.LeftShift((int)a, b);
       case TypeCode.Int64: return LongOps.LeftShift((long)a, b);
@@ -756,8 +741,7 @@ public sealed class Ops
         return v<=long.MaxValue ? LongOps.LeftShift((long)v, b) : IntegerOps.LeftShift(new Integer(v), b);
       }
     }
-    throw TypeError("unsupported operand types for <<: '{0}' and '{1}'",
-                    TypeName(a), TypeName(b));
+    throw TypeError("unsupported operand types for <<: '{0}' and '{1}'", TypeName(a), TypeName(b));
   }
 
   public static object Less(object a, object b) { return FromBool(Compare(a,b)<0); }
@@ -787,15 +771,18 @@ public sealed class Ops
 
   public static object Modulus(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return IntOps.Modulus((bool)a ? 1 : 0, b);
-      case TypeCode.Byte:    return IntOps.Modulus((int)(byte)a, b);
-      case TypeCode.Decimal: return FloatOps.Modulus(((IConvertible)a).ToDouble(NumberFormatInfo.InvariantInfo), b);
+    { case TypeCode.Byte:    return IntOps.Modulus((int)(byte)a, b);
+      case TypeCode.Decimal: return FloatOps.Modulus(Decimal.ToDouble((Decimal)a), b);
       case TypeCode.Double:  return FloatOps.Modulus((double)a, b);
       case TypeCode.Int16:   return IntOps.Modulus((int)(short)a, b);
       case TypeCode.Int32:   return IntOps.Modulus((int)a, b);
       case TypeCode.Int64:   return LongOps.Modulus((long)a, b);
       case TypeCode.Object:
         if(a is Integer) return IntegerOps.Modulus((Integer)a, b);
+        if(a is Complex)
+        { Complex c = (Complex)a;
+          if(c.imag==0) return FloatOps.Modulus(c.real, b);
+        }
         break;
       case TypeCode.SByte: return IntOps.Modulus((int)(sbyte)a, b);
       case TypeCode.Single: return FloatOps.Modulus((float)a, b);
@@ -812,16 +799,18 @@ public sealed class Ops
     throw TypeError("unsupported operand types for %: '{0}' and '{1}'", TypeName(a), TypeName(b));
   }
 
+  public static object More(object a, object b) { return FromBool(Compare(a,b)>0); }
+  public static object MoreEqual(object a, object b) { return FromBool(Compare(a,b)>=0); }
+
   public static object Multiply(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return IntOps.Multiply((bool)a ? 1 : 0, b);
-      case TypeCode.Byte:    return IntOps.Multiply((int)(byte)a, b);
+    { case TypeCode.Byte:    return IntOps.Multiply((int)(byte)a, b);
       case TypeCode.Char:    return new string((char)a, ToInt(b));
       case TypeCode.Decimal:
         if(b is Decimal) return (Decimal)a * (Decimal)b;
         try { return (Decimal)a * Convert.ToDecimal(b); }
-        catch { break; }
-      case TypeCode.Double:  return FloatOps.Multiply((double)a, b);
+        catch(InvalidCastException) { break; }
+      case TypeCode.Double: return FloatOps.Multiply((double)a, b);
       case TypeCode.Int16: return IntOps.Multiply((int)(short)a, b);
       case TypeCode.Int32: return IntOps.Multiply((int)a, b);
       case TypeCode.Int64: return LongOps.Multiply((long)a, b);
@@ -845,14 +834,9 @@ public sealed class Ops
     throw TypeError("unsupported operand types for *: '{0}' and '{1}'", TypeName(a), TypeName(b));
   }
 
-  public static object More(object a, object b) { return FromBool(Compare(a,b)>0); }
-  public static object MoreEqual(object a, object b) { return FromBool(Compare(a,b)>=0); }
-
-
   public static object Negate(object a)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return (bool)a ? -1 : 0;
-      case TypeCode.Byte:  return -(int)(byte)a;
+    { case TypeCode.Byte: return -(int)(byte)a;
       case TypeCode.Decimal: return -(Decimal)a;
       case TypeCode.Double: return -(double)a;
       case TypeCode.Int16: return -(int)(short)a;
@@ -877,14 +861,11 @@ public sealed class Ops
     throw TypeError("unsupported operand type for unary -: '{0}'", TypeName(a));
   }
 
-  public static object NotEqual(object a, object b)
-  { return FromBool(a is Complex ? !((Complex)a).Equals(b) : Compare(a, b)!=0);
-  }
+  public static object NotEqual(object a, object b) { return FromBool(!EqvP(a, b)); }
 
   public static object Power(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return IntOps.Power((bool)a ? 1 : 0, b);
-      case TypeCode.Byte:    return IntOps.Power((int)(byte)a, b);
+    { case TypeCode.Byte:    return IntOps.Power((int)(byte)a, b);
       case TypeCode.Double:  return FloatOps.Power((double)a, b);
       case TypeCode.Int16: return IntOps.Power((int)(short)a, b);
       case TypeCode.Int32: return IntOps.Power((int)a, b);
@@ -953,8 +934,7 @@ public sealed class Ops
 
   public static object RightShift(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return IntOps.RightShift((bool)a ? 1 : 0, b);
-      case TypeCode.Byte:  return IntOps.RightShift((int)(byte)a, b);
+    { case TypeCode.Byte:  return IntOps.RightShift((int)(byte)a, b);
       case TypeCode.Int16: return IntOps.RightShift((int)(short)a, b);
       case TypeCode.Int32: return IntOps.RightShift((int)a, b);
       case TypeCode.Int64: return LongOps.RightShift((long)a, b);
@@ -977,12 +957,11 @@ public sealed class Ops
 
   public static object Subtract(object a, object b)
   { switch(Convert.GetTypeCode(a))
-    { case TypeCode.Boolean: return IntOps.Subtract((bool)a ? 1 : 0, b);
-      case TypeCode.Byte:    return IntOps.Subtract((int)(byte)a, b);
+    { case TypeCode.Byte:    return IntOps.Subtract((int)(byte)a, b);
       case TypeCode.Decimal:
         if(b is Decimal) return (Decimal)a - (Decimal)b;
         try { return (Decimal)a - Convert.ToDecimal(b); }
-        catch { break; }
+        catch(InvalidCastException) { break; }
       case TypeCode.Double:  return FloatOps.Subtract((double)a, b);
       case TypeCode.Int16: return IntOps.Subtract((int)(short)a, b);
       case TypeCode.Int32: return IntOps.Subtract((int)a, b);
@@ -1008,6 +987,11 @@ public sealed class Ops
 
   public static double ToFloat(object o)
   { if(o is double) return (double)o;
+    if(o is Complex)
+    { Complex c = (Complex)o;
+      if(c.imag==0) return c.real;
+    }
+
     try { return Convert.ToDouble(o); }
     catch(FormatException) { throw ValueError("string does not contain a valid float"); }
     catch(OverflowException) { throw ValueError("too big for float"); }
@@ -1092,7 +1076,28 @@ public sealed class Ops
   { return new TypeErrorException(Source(node)+string.Format(format, args));
   }
 
-  public static string TypeName(object o) { return o==null ? "nil" : o.GetType().FullName; }
+  public static string TypeName(object o)
+  { switch(Convert.GetTypeCode(o))
+    { case TypeCode.Boolean: return "bool";
+      case TypeCode.Empty: return "nil";
+      case TypeCode.Byte:  case TypeCode.SByte: return "fixnum8";
+      case TypeCode.Int16: case TypeCode.UInt16: return "fixnum16";
+      case TypeCode.Int32: case TypeCode.UInt32: return "fixnum32";
+      case TypeCode.Int64: case TypeCode.UInt64: return "fixnum64";
+      case TypeCode.Char: return "char";
+      case TypeCode.Object:
+        if(o is Symbol) return "symbol";
+        if(o is IProcedure) return "procedure";
+        if(o is Integer) return "bigint";
+        if(o is Complex) return "complex";
+        if(o is MultipleValues) return "multiplevalues";
+        goto default;
+      case TypeCode.Double: return "flonum64";
+      case TypeCode.Single: return "flonum32";
+      case TypeCode.String: return "string";
+      default: return o.GetType().FullName;
+    }
+  }
 
   public static ValueErrorException ValueError(string format, params object[] args)
   { return new ValueErrorException(string.Format(format, args));

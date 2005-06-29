@@ -9,17 +9,15 @@ public sealed class ComplexOps
   public static object Add(Complex a, object b)
   { if(b is Complex) return a + (Complex)b;
     switch(Convert.GetTypeCode(b))
-    { case TypeCode.Boolean: return (bool)b ? a+1 : a;
-      case TypeCode.Byte: return a + (byte)b;
-      case TypeCode.Decimal:
-        return a + ((IConvertible)b).ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo);
+    { case TypeCode.Byte: return a + (byte)b;
+      case TypeCode.Decimal: return a + Decimal.ToDouble((Decimal)b);
       case TypeCode.Double: return a + (double)b;
       case TypeCode.Int16: return a + (short)b;
       case TypeCode.Int32: return a + (int)b;
       case TypeCode.Int64: return a + (long)b;
       case TypeCode.Object:
         IConvertible ic = b as IConvertible;
-        if(ic!=null) return (object)(a + ic.ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo));
+        if(ic!=null) return a + ic.ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo);
         break;
       case TypeCode.SByte: return a + (sbyte)b;
       case TypeCode.Single: return a + (float)b;
@@ -30,24 +28,42 @@ public sealed class ComplexOps
     throw Ops.TypeError("invalid operand types for +: '{0}' and '{1}'", Ops.TypeName(a), Ops.TypeName(b));
   }
 
-  public static int Compare(Complex a, object b)
-  { throw Ops.TypeError("cannot compare complex numbers except for equality/inequality");
+  public static bool AreEqual(Complex a, object b)
+  { if(b is Complex) return a==(Complex)b;
+    if(a.imag!=0) return false;
+
+    switch(Convert.GetTypeCode(b))
+    { case TypeCode.Byte: return a.real==(byte)b;
+      case TypeCode.Decimal: return a.real==Decimal.ToDouble((Decimal)b);
+      case TypeCode.Double: return a.real==(double)b;
+      case TypeCode.Int16: return a.real==(short)b;
+      case TypeCode.Int32: return a.real==(int)b;
+      case TypeCode.Int64: return a.real==(long)b;
+      case TypeCode.Object:
+        IConvertible ic = b as IConvertible;
+        if(ic!=null) return a.real==ic.ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo);
+        break;
+      case TypeCode.SByte: return a.real==(sbyte)b;
+      case TypeCode.Single: return a.real==(float)b;
+      case TypeCode.UInt16: return a.real==(ushort)b;
+      case TypeCode.UInt32: return a.real==(uint)b;
+      case TypeCode.UInt64: return a.real==(ulong)b;
+    }
+    return false;
   }
 
   public static object Divide(Complex a, object b)
   { if(b is Complex) return a / (Complex)b;
     switch(Convert.GetTypeCode(b))
-    { case TypeCode.Boolean: return a / ((bool)b ? 1 : 0);
-      case TypeCode.Byte: return a / (byte)b;
-      case TypeCode.Decimal:
-        return a / ((IConvertible)b).ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo);
+    { case TypeCode.Byte: return a / (byte)b;
+      case TypeCode.Decimal: return a / Decimal.ToDouble((Decimal)b);
       case TypeCode.Double: return a / (double)b;
       case TypeCode.Int16: return a / (short)b;
       case TypeCode.Int32: return a / (int)b;
       case TypeCode.Int64: return a / (long)b;
       case TypeCode.Object:
         IConvertible ic = b as IConvertible;
-        if(ic!=null) return (object)(a / ic.ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo));
+        if(ic!=null) return a / ic.ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo);
         break;
       case TypeCode.SByte: return a / (sbyte)b;
       case TypeCode.Single: return a / (float)b;
@@ -61,17 +77,15 @@ public sealed class ComplexOps
   public static object Multiply(Complex a, object b)
   { if(b is Complex) return a * (Complex)b;
     switch(Convert.GetTypeCode(b))
-    { case TypeCode.Boolean: return (bool)b ? a : new Complex(0);
-      case TypeCode.Byte: return a * (byte)b;
-      case TypeCode.Decimal:
-        return a * ((IConvertible)b).ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo);
+    { case TypeCode.Byte: return a * (byte)b;
+      case TypeCode.Decimal: return a * Decimal.ToDouble((Decimal)b);
       case TypeCode.Double: return a * (double)b;
       case TypeCode.Int16: return a * (short)b;
       case TypeCode.Int32: return a * (int)b;
       case TypeCode.Int64: return a * (long)b;
       case TypeCode.Object:
         IConvertible ic = b as IConvertible;
-        if(ic!=null) return (object)(a * ic.ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo));
+        if(ic!=null) return a * ic.ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo);
         break;
       case TypeCode.SByte: return a * (sbyte)b;
       case TypeCode.Single: return a * (float)b;
@@ -88,10 +102,8 @@ public sealed class ComplexOps
   { if(b is Complex) return a.Pow((Complex)b);
 
     switch(Convert.GetTypeCode(b))
-    { case TypeCode.Boolean: return a.Pow((bool)b ? 1 : 0);
-      case TypeCode.Byte: return a.Pow((byte)b);
-      case TypeCode.Decimal:
-        return a.Pow(((IConvertible)b).ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo));
+    { case TypeCode.Byte: return a.Pow((byte)b);
+      case TypeCode.Decimal: return a.Pow(Decimal.ToDouble((Decimal)b));
       case TypeCode.Double: return a.Pow((double)b);
       case TypeCode.Int16: return a.Pow((short)b);
       case TypeCode.Int32: return a.Pow((int)b);
@@ -108,7 +120,7 @@ public sealed class ComplexOps
     }
     throw Ops.TypeError("invalid operand types for **: '{0}' and '{1}'", Ops.TypeName(a), Ops.TypeName(b));
   }
-  
+
   public static object PowerMod(Complex a, object b, object c)
   { throw Ops.TypeError("complex modulus not supported");
   }
@@ -116,17 +128,15 @@ public sealed class ComplexOps
   public static object Subtract(Complex a, object b)
   { if(b is Complex) return a - (Complex)b;
     switch(Convert.GetTypeCode(b))
-    { case TypeCode.Boolean: return (bool)b ? a-1 : a;
-      case TypeCode.Byte: return a - (byte)b;
-      case TypeCode.Decimal:
-        return a - ((IConvertible)b).ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo);
+    { case TypeCode.Byte: return a - (byte)b;
+      case TypeCode.Decimal: return a - Decimal.ToDouble((Decimal)b);
       case TypeCode.Double: return a - (double)b;
       case TypeCode.Int16: return a - (short)b;
       case TypeCode.Int32: return a - (int)b;
       case TypeCode.Int64: return a - (long)b;
       case TypeCode.Object:
         IConvertible ic = b as IConvertible;
-        if(ic!=null) return (object)(a - ic.ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo));
+        if(ic!=null) return a - ic.ToDouble(System.Globalization.NumberFormatInfo.InvariantInfo);
         break;
       case TypeCode.SByte: return a - (sbyte)b;
       case TypeCode.Single: return a - (float)b;

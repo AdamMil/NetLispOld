@@ -295,7 +295,7 @@ public sealed class CallNode : Node
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             if(name=="eq?") cg.ILG.Emit(OpCodes.Ceq);
-            else cg.EmitCall(typeof(Ops), name=="eqv?" ? "EqvP" : "EqualP");
+            else cg.EmitCall(typeof(Ops), name=="eqv?" ? "AreEqual" : "EqualP");
             cg.ILG.Emit(OpCodes.Brtrue_S, yes);
             cg.EmitFieldGet(typeof(Ops), "FALSE");
             cg.ILG.Emit(OpCodes.Br_S, end);
