@@ -387,8 +387,11 @@ public sealed class CallNode : Node
           Args[2].Emit(cg);
           break;
         case "values":
-          cg.EmitObjectArray(Args);
-          cg.EmitNew(typeof(MultipleValues), new Type[] { typeof(object[]) });
+          if(Args.Length==1) cg.EmitExpression(Args[0]);
+          else
+          { cg.EmitObjectArray(Args);
+            cg.EmitNew(typeof(MultipleValues), new Type[] { typeof(object[]) });
+          }
           goto ret;
         default: goto normal;
       }

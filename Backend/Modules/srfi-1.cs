@@ -4,6 +4,10 @@ using NetLisp.Backend;
 namespace NetLisp.Mods
 {
 
+// TODO: optimize filter, member, etc. to share the longest common tails
+// TODO: optimize methods that cons new lists so they don't do the if(head==null) ... thing inside the loop
+// TODO: list sets
+
 [LispCode(@"
 (define first  car)
 (define second cadr)
@@ -15,6 +19,11 @@ namespace NetLisp.Mods
 (define (eighth  x) (cadddr (cddddr x)))
 (define (ninth   x) (car  (cddddr (cddddr x))))
 (define (tenth   x) (cadr (cddddr (cddddr x))))
+
+(define (alist-cons key datum alist) (cons (cons key datum) alist))
+
+(define (append-map  f . lists) (apply append  (apply map f lists)))
+(define (append-map! f . lists) (apply append! (apply map f lists)))
 
 (define (append-reverse rev-head tail)
   (let lp ((rev-head rev-head) (tail tail))
@@ -36,6 +45,24 @@ namespace NetLisp.Mods
 (define (concatenate lists) (apply append lists))
 (define (concatenate! lists) (apply append! lists))
 
+(define (delete-duplicates lis . maybe-=)
+  (let ((elt= (if (null? maybe-=) equal? (car maybe-=))))
+    (let recur ((lis lis))
+      (if (null-list? lis) lis
+          (let* ((x (car lis))
+                 (tail (cdr lis))
+                 (new-tail (recur (delete x tail elt=))))
+            (if (eq? tail new-tail) lis (cons x new-tail)))))))
+
+(define (delete-duplicates! lis . maybe-=)
+  (let ((elt= (if (null? maybe-=) equal? (car maybe-=))))
+    (let recur ((lis lis))
+      (if (null-list? lis) lis
+          (let* ((x (car lis))
+                 (tail (cdr lis))
+                 (new-tail (recur (delete! x tail elt=))))
+            (if (eq? tail new-tail) lis (cons x new-tail)))))))
+
 (define (drop-right lis k)
   (let recur ((lag lis) (lead (drop lis k)))
     (if (pair? lead)
@@ -43,7 +70,6 @@ namespace NetLisp.Mods
         nil)))
 
 (define (drop-right! lis k)
-  (check-arg integer? k drop-right!)
   (let ((lead (drop lis k)))
     (if (pair? lead)
         (let lp ((lag lis)  (lead (cdr lead)))
@@ -62,11 +88,6 @@ namespace NetLisp.Mods
         ((null? l) #t)
         (else (error ""null-list?: argument out of domain"" l))))
 
-(define (list-tabulate len proc)
-  (do ((i (- len 1) (- i 1))
-       (ans '() (cons (proc i) ans)))
-      ((< i 0) ans)))
-
 (define (proper-list? obj) (or (null? obj) (list? obj)))
 
 (define (reduce f ridentity lis)
@@ -75,9 +96,12 @@ namespace NetLisp.Mods
 
 (define (reduce-right f ridentity lis)
   (if (null-list? lis) ridentity
-      (fold-right f (car lis) (cdr lis))))
+      (let recur ((head (car lis)) (lis (cdr lis)))
+        (if (pair? lis)
+            (f head (recur (car lis) (cdr lis)))
+            head))))
 
-(define (split-at x k) (values (take x k) (drop x k))
+(define (split-at x k) (values (take x k) (drop x k)))
 
 (define (split-at! x k)
   (if (zero? k) (values nil x)
@@ -138,15 +162,199 @@ namespace NetLisp.Mods
 ")]
 public sealed class Srfi1
 { 
-  append-map
-  append-map!
+  #region alist-copy
+  public sealed class alistCopy : Primitive
+  { public alistCopy() : base("alist-copy", 1, 1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      if(args[0]==null) return null;
+      Pair list=Ops.ExpectPair(args[0]), head=null, tail=null;
+      if(list==null) return null;
+      do
+      { Pair pair = list.Car as Pair;
+        if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+        pair = new Pair(new Pair(pair.Car, pair.Cdr), null);
+        if(head==null) head=tail=pair;
+        else { tail.Cdr=pair; tail=pair; }
+        list = list.Cdr as Pair;
+      } while(list!=null);
+      return head;
+    }
+  }
+  #endregion
+
+  #region alist-delete
+  public sealed class alistDelete : Primitive
+  { public alistDelete() : base("alist-delete", 2, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj=args[0];
+      Pair  list=Ops.ExpectList(args[1]), head=null, tail=null;
+      if(args.Length==2)
+        while(list!=null)
+        { Pair pair = list.Car as Pair;
+          if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+          if(!Ops.EqualP(obj, pair.Car))
+          { Pair next=new Pair(list.Car, null);
+            if(head==null) head=tail=next;
+            else { tail.Cdr=next; tail=next; }
+          }
+          list = list.Cdr as Pair;
+        }
+      else
+      { IProcedure pred = Ops.ExpectProcedure(args[2]);
+        args = new object[2];
+        args[1] = obj;
+        while(list!=null)
+        { Pair pair = list.Car as Pair;
+          if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+          args[0] = pair.Car;
+          if(!Ops.IsTrue(pred.Call(args)))
+          { Pair next=new Pair(list.Car, null);
+            if(head==null) head=tail=next;
+            else { tail.Cdr=next; tail=next; }
+          }
+          list = list.Cdr as Pair;
+        }
+      }
+      return head;
+    }
+  }
+  #endregion
+  #region alist-delete!
+  public sealed class alistDeleteN : Primitive
+  { public alistDeleteN() : base("alist-delete!", 2, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj=args[0];
+      Pair  list=Ops.ExpectList(args[1]), head=list, prev=null;
+      if(args.Length==2)
+        while(list!=null)
+        { Pair pair = list.Car as Pair;
+          if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+          Pair next = list.Cdr as Pair;
+          if(Ops.EqualP(obj, pair.Car))
+          { if(prev==null) head=next;
+            else prev.Cdr=next;
+          }
+          else prev=list;
+          list = list.Cdr as Pair;
+        }
+      else
+      { IProcedure pred = Ops.ExpectProcedure(args[2]);
+        args = new object[2];
+        args[1] = obj;
+        while(list!=null)
+        { Pair pair = list.Car as Pair;
+          if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+          args[0] = pair.Car;
+          Pair next = list.Cdr as Pair;
+          if(Ops.IsTrue(pred.Call(args)))
+          { if(prev==null) head=next;
+            else prev.Cdr=next;
+          }
+          else prev=list;
+          list = list.Cdr as Pair;
+        }
+      }
+      return head;
+    }
+  }
+  #endregion
+
+  #region any
+  public sealed class any : Primitive
+  { public any() : base("any", 1, -1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      if(args.Length==1) return Ops.TRUE;
+
+      IProcedure func = Ops.ExpectProcedure(args[0]);
+
+      object ret;
+      if(args.Length==2)
+      { Pair p = Ops.ExpectList(args[1]);
+        args = new object[1];
+        while(p!=null)
+        { args[0] = p.Car;
+          p = p.Cdr as Pair;
+          if(Ops.IsTrue(ret=func.Call(args))) return ret;
+        }
+      }
+      else
+      { Pair[] pairs = new Pair[args.Length-1];
+        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
+
+        args = new object[pairs.Length];
+
+        while(true)
+        { for(int i=0; i<pairs.Length; i++)
+          { if(pairs[i]==null) return null;
+            args[i] = pairs[i].Car;
+            pairs[i] = pairs[i].Cdr as Pair;
+          }
+          if(Ops.IsTrue(ret=func.Call(args))) return ret;
+        }
+      }
+
+      return Ops.FALSE;
+    }
+  }
+  #endregion
+
+  #region break
+  public sealed class @break : Primitive
+  { public @break() : base("break", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure pred=Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), head=null, tail=null;
+
+      args = new object[1];
+      while(list!=null)
+      { args[0] = list.Car;
+        if(Ops.IsTrue(pred.Call(args))) return new MultipleValues(head, list);
+        Pair next = new Pair(list.Car, null);
+        if(head==null) head=tail=next;
+        else { tail.Cdr=next; tail=next; }
+        list = list.Cdr as Pair;
+      }
+      return new MultipleValues(head, null);
+    }
+  }
+  #endregion
+
+  #region break!
+  public sealed class breakN : Primitive
+  { public breakN() : base("break!", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure pred=Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), head=list, prev=null;
+
+      args = new object[1];
+      while(list!=null)
+      { args[0] = list.Car;
+        if(Ops.IsTrue(pred.Call(args)))
+        { prev.Cdr = null;
+          return new MultipleValues(head, list);
+        }
+        prev = list;
+        list = list.Cdr as Pair;
+      }
+      return new MultipleValues(head, null);
+    }
+  }
+  #endregion
 
   #region car+cdr
   public sealed class carAndCdr : Primitive
   { public carAndCdr() : base("car+cdr", 1, 1) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      Pair pair = Ops.ExpectPair(obj);
+      Pair pair = Ops.ExpectPair(args[0]);
       return new MultipleValues(pair.Car, pair.Cdr);
     }
   }
@@ -231,6 +439,80 @@ public sealed class Srfi1
   }
   #endregion
 
+  #region delete
+  public sealed class delete : Primitive
+  { public delete() : base("delete", 2, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj=args[0];
+      Pair  list=Ops.ExpectList(args[1]), head=null, tail=null;
+      if(args.Length==2)
+        while(list!=null)
+        { if(!Ops.EqualP(obj, list.Car))
+          { Pair next=new Pair(list.Car, null);
+            if(head==null) head=tail=next;
+            else { tail.Cdr=next; tail=next; }
+          }
+          list = list.Cdr as Pair;
+        }
+      else
+      { IProcedure pred = Ops.ExpectProcedure(args[2]);
+        args = new object[2];
+        args[1] = obj;
+        while(list!=null)
+        { args[0] = list.Car;
+          if(!Ops.IsTrue(pred.Call(args)))
+          { Pair next=new Pair(list.Car, null);
+            if(head==null) head=tail=next;
+            else { tail.Cdr=next; tail=next; }
+          }
+          list = list.Cdr as Pair;
+        }
+      }
+      return head;
+    }
+  }
+  #endregion
+  #region delete!
+  public sealed class deleteN : Primitive
+  { public deleteN() : base("delete!", 2, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj=args[0];
+      Pair  list=Ops.ExpectList(args[1]), head=list, prev=null;
+      if(list==null) return null;
+
+      if(args.Length==2)
+        do
+        { object cobj = list.Car;
+          Pair next = list.Cdr as Pair;
+          if(Ops.EqualP(obj, cobj))
+          { if(prev==null) head=next;
+            else prev.Cdr=next;
+          }
+          else prev=list;
+          list = next;
+        } while(list!=null);
+      else
+      { IProcedure pred = Ops.ExpectProcedure(args[2]);
+        args = new object[2];
+        args[1] = obj;
+        do
+        { args[0] = list.Car;
+          Pair next = list.Cdr as Pair;
+          if(Ops.IsTrue(pred.Call(args)))
+          { if(prev==null) head=next;
+            else prev.Cdr=next;
+          }
+          else prev=list;
+          list = next;
+        } while(list!=null);
+      }
+      return head;
+    }
+  }
+  #endregion
+
   #region dotted-list?
   public sealed class dottedListP : Primitive
   { public dottedListP() : base("dotted-list?", 1, 1) { }
@@ -272,6 +554,115 @@ public sealed class Srfi1
         pair = next;
       }
       return pair;
+    }
+  }
+  #endregion
+
+  #region drop-while
+  public sealed class dropWhile : Primitive
+  { public dropWhile() : base("drop-while", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure pred=Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]);
+
+      args = new object[1];
+      while(list!=null)
+      { args[0] = list.Car;
+        if(!Ops.IsTrue(pred.Call(args))) return list;
+        list = list.Cdr as Pair;
+      }
+      return null;
+    }
+  }
+  #endregion
+
+  #region every
+  public sealed class every : Primitive
+  { public every() : base("every", 1, -1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      if(args.Length==1) return Ops.TRUE;
+
+      IProcedure func = Ops.ExpectProcedure(args[0]);
+
+      object ret=Ops.TRUE;
+      if(args.Length==2)
+      { Pair p = Ops.ExpectList(args[1]);
+        args = new object[1];
+        while(p!=null)
+        { args[0] = p.Car;
+          p = p.Cdr as Pair;
+          ret=func.Call(args);
+          if(ret is bool && !(bool)ret) return Ops.FALSE;
+        }
+      }
+      else
+      { Pair[] pairs = new Pair[args.Length-1];
+        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
+
+        args = new object[pairs.Length];
+
+        while(true)
+        { for(int i=0; i<pairs.Length; i++)
+          { if(pairs[i]==null) return null;
+            args[i] = pairs[i].Car;
+            pairs[i] = pairs[i].Cdr as Pair;
+          }
+          ret=func.Call(args);
+          if(ret is bool && !(bool)ret) return Ops.FALSE;
+        }
+      }
+
+      return ret;
+    }
+  }
+  #endregion
+
+  #region filter
+  public sealed class filter : Primitive
+  { public filter() : base("filter", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure proc = Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), head=null, tail=null;
+      if(list==null) return null;
+
+      args = new object[1];
+      do
+      { args[0] = list.Car;
+        if(Ops.IsTrue(proc.Call(args)))
+        { Pair next = new Pair(list.Car, null);
+          if(head==null) head=tail=next;
+          else { tail.Cdr=next; tail=next; }
+        }
+        list = list.Cdr as Pair;
+      } while(list!=null);
+      return head;
+    }
+  }
+  #endregion
+
+  #region filter!
+  public sealed class filterN : Primitive
+  { public filterN() : base("filter!", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure proc = Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), head=list, prev=null;
+      if(list==null) return null;
+      args = new object[1];
+      do
+      { args[0] = list.Car;
+        list = list.Cdr as Pair;
+        if(!Ops.IsTrue(proc.Call(args)))
+        { if(prev==null) head=list;
+          else prev.Cdr=list;
+        }
+        else prev=list;
+      } while(list!=null);
+      return head;
     }
   }
   #endregion
@@ -325,6 +716,44 @@ public sealed class Srfi1
   }
   #endregion
 
+  #region find
+  public sealed class find : Primitive
+  { public find() : base("find", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure pred=Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]);
+
+      args = new object[1];
+      while(list!=null)
+      { args[0] = list.Car;
+        if(Ops.IsTrue(pred.Call(args))) return list.Car;
+        list = list.Cdr as Pair;
+      }
+      return Ops.FALSE;
+    }
+  }
+  #endregion
+
+  #region find-tail
+  public sealed class findTail : Primitive
+  { public findTail() : base("find-tail", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure pred=Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]);
+
+      args = new object[1];
+      while(list!=null)
+      { args[0] = list.Car;
+        if(Ops.IsTrue(pred.Call(args))) return list;
+        list = list.Cdr as Pair;
+      }
+      return Ops.FALSE;
+    }
+  }
+  #endregion
+
   #region fold
   public sealed class fold : Primitive
   { public fold() : base("fold", 3, -1) { }
@@ -346,7 +775,7 @@ public sealed class Srfi1
       }
       else
       { Pair[] pairs = new Pair[args.Length-2];
-        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
+        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+2]);
 
         args = new object[pairs.Length+1];
         args[pairs.Length] = ans;
@@ -356,7 +785,7 @@ public sealed class Srfi1
             args[i]  = pairs[i].Car;
             pairs[i] = pairs[i].Cdr as Pair;
           }
-          args[pairs.Length] = func.Call(args);
+          args[pairs.Length] = kons.Call(args);
         }
       }
     }
@@ -374,7 +803,7 @@ public sealed class Srfi1
       if(args.Length==3) return new folder1(kons, ans).Run(Ops.ExpectList(args[2]));
       else
       { Pair[] pairs = new Pair[args.Length-2];
-        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
+        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+2]);
         return new folderN(kons, ans, args.Length-2).Run(pairs);
       }
     }
@@ -402,8 +831,9 @@ public sealed class Srfi1
       public object Run(Pair[] pairs)
       { Pair[] next = new Pair[pairs.Length];
         for(int i=0; i<pairs.Length; i++)
-          if((next[i]=pairs[i].Cdr as Pair)==null) return ans;
+          if((next[i]=pairs[i].Cdr as Pair)==null) { args[pairs.Length]=ans; goto skip; }
         args[pairs.Length] = Run(next);
+        skip:
         for(int i=0; i<pairs.Length; i++) args[i] = pairs[i].Car;
         return kons.Call(args);
       }
@@ -415,39 +845,24 @@ public sealed class Srfi1
   }
   #endregion
 
-  #region for-each-pair
-  public sealed class forEachPair : Primitive
-  { public forEachPair() : base("for-each-pair", 1, -1) { }
-
+  #region list-tabulate
+  public sealed class listTabulate : Primitive
+  { public listTabulate() : base("list-tabulate", 2, 2) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      if(args.Length==1) return null;
+      int length = Ops.ExpectInt(args[0]);
+      IProcedure proc = Ops.ExpectProcedure(args[1]);
+      if(length<=0) return null;
 
-      IProcedure func = Ops.ExpectProcedure(args[0]);
-      if(args.Length==2)
-      { Pair p = Ops.ExpectList(args[1]);
-        args = new object[1];
-        while(p!=null)
-        { args[0] = p;
-          p = p.Cdr as Pair;
-          func.Call(args);
-        }
-        return null;
+      Pair head=null, tail=null;
+      args = new object[1];
+      for(int i=0; i<length; i++)
+      { args[0] = i;
+        Pair next = new Pair(proc.Call(args), null);
+        if(head==null) head=tail=next;
+        else { tail.Cdr=next; tail=next; }
       }
-      else
-      { Pair[] pairs = new Pair[args.Length-1];
-        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
-
-        args = new object[pairs.Length];
-        while(true)
-        { for(int i=0; i<pairs.Length; i++)
-          { if(pairs[i]==null) return null;
-            args[i] = pairs[i];
-            pairs[i] = pairs[i].Cdr as Pair;
-          }
-          func.Call(args);
-        }
-      }
+      return head;
     }
   }
   #endregion
@@ -548,9 +963,49 @@ public sealed class Srfi1
   }
   #endregion
 
-  #region list=?
-  public sealed class listEqP : Primitive
-  { public listEqP() : base("list=?", 1, -1) { }
+  #region list-index
+  public sealed class listIndex : Primitive
+  { public listIndex() : base("list-index", 2, -1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure func = Ops.ExpectProcedure(args[0]);
+
+      int index=0;
+      if(args.Length==2)
+      { Pair p = Ops.ExpectList(args[1]);
+        args = new object[1];
+        while(p!=null)
+        { args[0] = p.Car;
+          p = p.Cdr as Pair;
+          if(Ops.IsTrue(func.Call(args))) return index;
+          index++;
+        }
+        return Ops.FALSE;
+      }
+      else
+      { Pair[] pairs = new Pair[args.Length-1];
+        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
+
+        args = new object[pairs.Length];
+
+        while(true)
+        { for(int i=0; i<pairs.Length; i++)
+          { if(pairs[i]==null) return Ops.FALSE;
+            args[i] = pairs[i].Car;
+            pairs[i] = pairs[i].Cdr as Pair;
+          }
+          if(Ops.IsTrue(func.Call(args))) return index;
+          index++;
+        }
+      }
+    }
+  }
+  #endregion
+
+  #region list=
+  public sealed class listEq : Primitive
+  { public listEq() : base("list=", 1, -1) { }
     public override object Call(object[] args)
     { CheckArity(args);
       if(args.Length<3) return Ops.TRUE;
@@ -562,16 +1017,16 @@ public sealed class Srfi1
       for(int i=2; i<args.Length; i++)
       { Pair cur=Ops.ExpectList(args[i]), cpair=cur;
         while(true)
-        { if(cur==null)
+        { if(cpair==null)
           { if(last!=null) return Ops.FALSE;
             else break;
           }
           else if(last==null) return Ops.FALSE;
           
-          args[0]=last.Car; args[1]=cur.Car;
-          if(!Ops.IsTrue(test.Call(args))) return Ops.FALSE;
+          nargs[0]=last.Car; nargs[1]=cpair.Car;
+          if(!Ops.IsTrue(test.Call(nargs))) return Ops.FALSE;
 
-          last=last.Cdr as Pair; cur=cur.Cdr as Pair;
+          last=last.Cdr as Pair; cpair=cpair.Cdr as Pair;
         }
         last=cur;
       }
@@ -600,9 +1055,9 @@ public sealed class Srfi1
   }
   #endregion
 
-  #region mapN
+  #region map!
   public sealed class mapN : Primitive
-  { public mapN() : base("mapN", 1, -1) { }
+  { public mapN() : base("map!", 1, -1) { }
 
     public override object Call(object[] args)
     { CheckArity(args);
@@ -634,7 +1089,7 @@ public sealed class Srfi1
             pairs[i] = pairs[i].Cdr as Pair;
           }
           tail.Car = func.Call(args);
-          tail = tail.Cdr;
+          tail = tail.Cdr as Pair;
         }
         done: return head;
       }
@@ -655,15 +1110,16 @@ public sealed class Srfi1
         args = new object[2];
         while(true)
         { if(pair==null) return ans;
-          args[0] = pai;
+          args[0] = pair;
           args[1] = ans;
-          ans = kons.Call(args);
-          pair = pair.Cdr as Pair;
+          Pair next = pair.Cdr as Pair;
+          ans  = kons.Call(args);
+          pair = next;
         }
       }
       else
       { Pair[] pairs = new Pair[args.Length-2];
-        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
+        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+2]);
 
         args = new object[pairs.Length+1];
         args[pairs.Length] = ans;
@@ -673,7 +1129,7 @@ public sealed class Srfi1
             args[i]  = pairs[i];
             pairs[i] = pairs[i].Cdr as Pair;
           }
-          args[pairs.Length] = func.Call(args);
+          args[pairs.Length] = kons.Call(args);
         }
       }
     }
@@ -691,7 +1147,7 @@ public sealed class Srfi1
       if(args.Length==3) return new folder1(kons, ans).Run(Ops.ExpectList(args[2]));
       else
       { Pair[] pairs = new Pair[args.Length-2];
-        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
+        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+2]);
         return new folderN(kons, ans, args.Length-2).Run(pairs);
       }
     }
@@ -719,15 +1175,193 @@ public sealed class Srfi1
       public object Run(Pair[] pairs)
       { Pair[] next = new Pair[pairs.Length];
         for(int i=0; i<pairs.Length; i++)
-          if((next[i]=pairs[i].Cdr as Pair)==null) return ans;
+          if((next[i]=pairs[i].Cdr as Pair)==null) { args[pairs.Length]=ans; goto skip; }
         args[pairs.Length] = Run(next);
-        for(int i=0; i<pairs.Length; i++) args[i] = pairs[i];
+        skip: for(int i=0; i<pairs.Length; i++) args[i] = pairs[i];
         return kons.Call(args);
       }
 
       object[] args;
       object ans;
       IProcedure kons;
+    }
+  }
+  #endregion
+
+  #region pair-for-each
+  public sealed class pairForEach : Primitive
+  { public pairForEach() : base("pair-for-each", 1, -1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      if(args.Length==1) return null;
+
+      IProcedure func = Ops.ExpectProcedure(args[0]);
+      if(args.Length==2)
+      { Pair p = Ops.ExpectList(args[1]);
+        args = new object[1];
+        while(p!=null)
+        { args[0] = p;
+          p = p.Cdr as Pair;
+          func.Call(args);
+        }
+        return null;
+      }
+      else
+      { Pair[] pairs = new Pair[args.Length-1];
+        for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
+
+        args = new object[pairs.Length];
+        while(true)
+        { for(int i=0; i<pairs.Length; i++)
+          { if(pairs[i]==null) return null;
+            args[i] = pairs[i];
+            pairs[i] = pairs[i].Cdr as Pair;
+          }
+          func.Call(args);
+        }
+      }
+    }
+  }
+  #endregion
+
+  #region partition
+  public sealed class partition : Primitive
+  { public partition() : base("partition", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure proc = Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), inlist=null, outlist=null, intail=null, outtail=null;
+      args = new object[1];
+      while(list!=null)
+      { Pair next = new Pair(list.Car, null);
+        args[0] = list.Car;
+        if(Ops.IsTrue(proc.Call(args)))
+        { if(inlist==null) inlist=intail=next;
+          else { intail.Cdr=next; intail=next; }
+        }
+        else if(outlist==null) outlist=outtail=next;
+        else { outtail.Cdr=next; outtail=next; }
+        list = list.Cdr as Pair;
+      }
+      return new MultipleValues(inlist, outlist);
+    }
+  }
+  #endregion
+
+  #region partition!
+  public sealed class partitionN : Primitive
+  { public partitionN() : base("partition!", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure proc = Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), inlist=null, outlist=null, inprev=null, outprev=null;
+      args = new object[1]; // FIXME: in this and other places, we're not reallocating the array for each
+      while(list!=null)     // call. this is not a problem when calling other primitives, but if we call
+      { args[0] = list.Car; // a lambda function, it may create a closure around one of the arguments, and
+        if(Ops.IsTrue(proc.Call(args))) // then the closed variable would be modified by the next iteration
+        { if(inprev==null) inlist=inprev=list;
+          else { inprev.Cdr=list; inprev=list; }
+        }
+        else if(outprev==null) outlist=outprev=list;
+        else { outprev.Cdr=list; outprev=list; }
+        list = list.Cdr as Pair;
+      }
+      if(inprev!=null) inprev.Cdr=null;
+      if(outprev!=null) outprev.Cdr=null;
+      return new MultipleValues(inlist, outlist);
+    }
+  }
+  #endregion
+
+  #region remove
+  public sealed class remove : Primitive
+  { public remove() : base("remove", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure proc = Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), head=null, tail=null;
+      if(list==null) return null;
+      args = new object[1];
+      do
+      { args[0] = list.Car;
+        if(!Ops.IsTrue(proc.Call(args)))
+        { Pair next = new Pair(list.Car, null);
+          if(head==null) head=tail=next;
+          else { tail.Cdr=next; tail=next; }
+        }
+        list = list.Cdr as Pair;
+      } while(list!=null);
+      return head;
+    }
+  }
+  #endregion
+
+  #region remove!
+  public sealed class removeN : Primitive
+  { public removeN() : base("remove!", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure proc = Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), head=list, prev=null;
+      if(list==null) return null;
+      args = new object[1];
+      do
+      { args[0] = list.Car;
+        Pair next = list.Cdr as Pair;
+        if(Ops.IsTrue(proc.Call(args)))
+        { if(prev==null) head=next;
+          else prev.Cdr=next;
+        }
+        else prev=list;
+        list = next;
+      } while(list!=null);
+      return head;
+    }
+  }
+  #endregion
+
+  #region span
+  public sealed class span : Primitive
+  { public span() : base("span", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure pred=Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), head=null, tail=null;
+
+      args = new object[1];
+      while(list!=null)
+      { args[0] = list.Car;
+        if(!Ops.IsTrue(pred.Call(args))) return new MultipleValues(head, list);
+        Pair next = new Pair(list.Car, null);
+        if(head==null) head=tail=next;
+        else { tail.Cdr=next; tail=next; }
+        list = list.Cdr as Pair;
+      }
+      return new MultipleValues(head, null);
+    }
+  }
+  #endregion
+
+  #region span!
+  public sealed class spanN : Primitive
+  { public spanN() : base("span!", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure pred=Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), head=list, prev=null;
+
+      args = new object[1];
+      while(list!=null)
+      { args[0] = list.Car;
+        if(!Ops.IsTrue(pred.Call(args)))
+        { prev.Cdr = null;
+          return new MultipleValues(head, list);
+        }
+        prev = list;
+        list = list.Cdr as Pair;
+      }
+      return new MultipleValues(head, null);
     }
   }
   #endregion
@@ -774,6 +1408,53 @@ public sealed class Srfi1
   }
   #endregion
   
+  #region take-while
+  public sealed class takeWhile : Primitive
+  { public takeWhile() : base("take-while", 2, 2) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure pred=Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), head=null, tail=null;
+
+      args = new object[1];
+      while(list!=null)
+      { args[0] = list.Car;
+        if(!Ops.IsTrue(pred.Call(args))) break;
+        Pair next = new Pair(list.Car, null);
+        if(head==null) head=tail=next;
+        else { tail.Cdr=next; tail=next; }
+        list = list.Cdr as Pair;
+      }
+      return head;
+    }
+  }
+  #endregion
+
+  #region take-while!
+  public sealed class takeWhileN : Primitive
+  { public takeWhileN() : base("take-while!", 2, 2) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure pred=Ops.ExpectProcedure(args[0]);
+      Pair list=Ops.ExpectList(args[1]), head=list, prev=null;
+
+      args = new object[1];
+      while(list!=null)
+      { args[0] = list.Car;
+        if(!Ops.IsTrue(pred.Call(args)))
+        { if(prev==null) return null;
+          else { prev.Cdr=null; return head; }
+        }
+        prev = list;
+        list = list.Cdr as Pair;
+      }
+      return head;
+    }
+  }
+  #endregion
+
   #region unfold
   public sealed class unfold : Primitive
   { public unfold() : base("unfold", 4, 5) { }
@@ -789,9 +1470,9 @@ public sealed class Srfi1
         seed=new object[1];
       }
 
-      public object Run(object seed)
-      { seed[0] = seed;
-        if(Ops.IsTrue(seed)) return tail==null ? null : tail.Call(seed);
+      public object Run(object seedval)
+      { seed[0] = seedval;
+        if(Ops.IsTrue(stop.Call(seed))) return tail==null ? null : tail.Call(seed);
         return new Pair(val.Call(seed), Run(next.Call(seed)));
       }
 

@@ -255,13 +255,13 @@ public class Module
   public Export[] Exports;
 
   internal void AddBuiltins(Type type)
-  { foreach(MethodInfo mi in type.GetMethods())
+  { foreach(MethodInfo mi in type.GetMethods(BindingFlags.Public|BindingFlags.Static|BindingFlags.DeclaredOnly))
     { object[] attrs = mi.GetCustomAttributes(typeof(SymbolNameAttribute), false);
       string name = attrs.Length==0 ? mi.Name : ((SymbolNameAttribute)attrs[0]).Name;
       TopLevel.Bind(name, Interop.MakeFunctionWrapper(mi, true));
     }
 
-    foreach(Type ptype in typeof(Builtins).GetNestedTypes(BindingFlags.Public))
+    foreach(Type ptype in type.GetNestedTypes(BindingFlags.Public))
       if(ptype.IsSubclassOf(typeof(Primitive)))
       { Primitive prim = (Primitive)ptype.GetConstructor(Type.EmptyTypes).Invoke(null);
         TopLevel.Bind(prim.Name, prim);
@@ -271,7 +271,9 @@ public class Module
   internal void CreateExports() // FIXME: this exports objects imported from the base (parent) module
   { Hashtable hash = new Hashtable();
     foreach(string name in TopLevel.Globals.Keys)
+{ if(((Binding)TopLevel.Globals[name]).Value==Binding.Unbound) continue; // FIXME: don't allow free variables in modules
       if(!name.StartsWith("#_")) hash[name] = new Module.Export(name);
+}
     foreach(string name in TopLevel.Macros.Keys)
       if(!name.StartsWith("#_")) hash[name] = new Module.Export(name, TopLevel.NS.Macro);
 
@@ -283,11 +285,25 @@ public class Module
 
 #region MultipleValues
 public sealed class MultipleValues
-{ public MultipleValues(object[] values) { Values=values; }
+{ public MultipleValues(params object[] values) { Values=values; }
+
+  public override string ToString()
+  { System.Text.StringBuilder sb = new System.Text.StringBuilder();
+    sb.Append('{');
+    bool sep=false;
+    for(int i=0; i<Values.Length; i++)
+    { if(sep) sb.Append(", ");
+      else sep=true;
+      sb.Append(Ops.Repr(Values[i]));
+    }
+    return sb.Append('}').ToString();
+  }
+
   public object[] Values;
 }
 #endregion
 
+// TODO: make sure we're not using type names for comparison anywhere
 #region Ops
 public sealed class Ops
 { Ops() { }
@@ -500,7 +516,7 @@ public sealed class Ops
         return v<=long.MaxValue ? LongOps.Compare((long)v, b) : IntegerOps.Compare(new Integer(v), b);
       }
     }
-    return string.Compare(TypeName(a), TypeName(b));
+    return b.GetHashCode()-a.GetHashCode(); // FIXME: this should be an error and we should have another method for checking equality
   }
 
   public static object ConvertTo(object o, Type type)
@@ -658,7 +674,7 @@ public sealed class Ops
   }
 
   public static bool EqvP(object a, object b)
-  { return a==b || a is Complex ? ((Complex)a).Equals(b) : Compare(a, b)==0;
+  { return a==b || (a is Complex ? ((Complex)a).Equals(b) : Compare(a, b)==0);
   }
 
   public static object FastCadr(Pair pair) { return ((Pair)pair.Cdr).Car; }
@@ -749,9 +765,8 @@ public sealed class Ops
 
   public static Pair List(params object[] items) { return ListSlice(0, items); }
   public static Pair ListSlice(int start, params object[] items)
-  { if(items.Length<=start) return null;
-    Pair pair = null;
-    for(int i=items.Length-1; i>=0; i--) pair = new Pair(items[i], pair);
+  { Pair pair=null;
+    for(int i=items.Length-1; i>=start; i--) pair = new Pair(items[i], pair);
     return pair;
   }
   
@@ -1126,7 +1141,7 @@ public sealed class Pair
 { public Pair(object car, object cdr) { Car=car; Cdr=cdr; }
 
   public override string ToString()
-  { if(Builtins.circularListP.core(this)) return "(!!)";
+  { if(Mods.Srfi1.circularListP.core(this)) return "(!!)";
 
     System.Text.StringBuilder sb = new System.Text.StringBuilder();
     sb.Append('(');
