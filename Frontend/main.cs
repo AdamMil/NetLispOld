@@ -8,6 +8,7 @@ namespace NetLisp.Frontend
 public class App
 { static void Main()
   { Options.Debug = true;
+    Options.Optimize = true;
 
     TopLevel.Current = new TopLevel();
     Builtins.Instance.ImportAll(TopLevel.Current);
