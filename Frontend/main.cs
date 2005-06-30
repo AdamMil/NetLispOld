@@ -7,7 +7,7 @@ namespace NetLisp.Frontend
 
 public class App
 { static void Main()
-  { Options.Debug = false;
+  { Options.Debug = true;
     Options.Optimize = true;
 
     TopLevel.Current = new TopLevel();
@@ -26,6 +26,7 @@ public class App
         code += line;
       } while(parens>0);
 
+      if(code.Trim().Length==0) continue;
       try { Console.WriteLine(Ops.Repr(Builtins.eval(Parser.FromString(code).Parse()))); }
       catch(Exception e) { Console.WriteLine("ERROR: "+e.ToString()); }
     }

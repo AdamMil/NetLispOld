@@ -220,8 +220,14 @@ public abstract class Node
     set { if(value) Flags|=Flag.Tail; else Flags&=~Flag.Tail; }
   }
 
-  public abstract void Emit(CodeGenerator cg);
+  public void Emit(CodeGenerator cg)
+  { Type type = typeof(object);
+    Emit(cg, ref type);
+  }
+  public abstract void Emit(CodeGenerator cg, ref Type etype);
   public virtual object Evaluate() { throw new NotSupportedException(); }
+
+  public abstract Type GetNodeType();
 
   public virtual void MarkTail(bool tail) { Tail=tail; }
   public virtual void Optimize() { }
@@ -238,6 +244,44 @@ public abstract class Node
   public LambdaNode InFunc;
   public Flag Flags;
   
+  public static bool Compatible(Type type, Type desired)
+  { if((type!=null && type.IsValueType) != desired.IsValueType) return false;
+    Conversion conv = Ops.ConvertTo(type, desired);
+    return conv!=Conversion.None && conv!=Conversion.Unsafe;
+  }
+
+  public static void EmitConstant(CodeGenerator cg, object value, ref Type etype)
+  { if(etype==null) cg.ILG.Emit(OpCodes.Ldnull);
+    else if(etype==typeof(void)) return;
+    else
+    { value = TryConvert(value, ref etype);
+      if(etype.IsValueType)
+      { if(Type.GetTypeCode(etype)!=TypeCode.Object) cg.EmitConstant(value);
+        else
+        { cg.EmitConstantObject(value);
+          cg.ILG.Emit(OpCodes.Unbox, etype);
+          cg.EmitIndirectLoad(etype);
+        }
+      }
+      else cg.EmitConstantObject(value);
+    }
+  }
+
+  public static object TryConvert(object value, ref Type etype)
+  { if(etype==null) return null;
+    if(etype==typeof(object)) return value;
+
+    Type vtype = value==null ? null : value.GetType();
+    if(Compatible(vtype, etype))
+    { value = Ops.ConvertTo(value, etype);
+      etype = value.GetType();
+    }
+    else etype = value.GetType();
+    return value;
+  }
+
+  protected struct negbool { }
+
   sealed class Optimizer : IWalker
   { public bool Walk(Node node) { return true; }
     public void PostWalk(Node node) { node.Optimize(); }
@@ -249,10 +293,21 @@ public abstract class Node
 public sealed class BodyNode : Node
 { public BodyNode(Node[] forms) { Forms=forms; }
 
-  public override void Emit(CodeGenerator cg)
-  { for(int i=0; i<Forms.Length; i++)
-    { Forms[i].Emit(cg);
-      if(i!=Forms.Length-1) cg.ILG.Emit(OpCodes.Pop);
+  public override void Emit(CodeGenerator cg, ref Type etype)
+  { if(Forms.Length==0)
+    { if(etype!=typeof(void))
+      { cg.ILG.Emit(OpCodes.Ldnull);
+        etype = null;
+      }
+    }
+    else
+    { int i;
+      for(i=0; i<Forms.Length-1; i++)
+      { Type type = typeof(void);
+        Forms[i].Emit(cg, ref type);
+        if(type!=typeof(void)) cg.ILG.Emit(OpCodes.Pop);
+      }
+      Forms[i].Emit(cg, ref etype);
     }
   }
 
@@ -261,6 +316,8 @@ public sealed class BodyNode : Node
     foreach(Node n in Forms) ret = n.Evaluate();
     return ret;
   }
+
+  public override Type GetNodeType() { return Forms.Length==0 ? null : Forms[Forms.Length-1].GetNodeType(); }
 
   public override void MarkTail(bool tail)
   { for(int i=0; i<Forms.Length; i++) Forms[i].MarkTail(tail && i==Forms.Length-1);
@@ -310,9 +367,9 @@ public sealed class CallNode : Node
   static string[] constant;
 
   #region Emit
-  public override void Emit(CodeGenerator cg)
+  public override void Emit(CodeGenerator cg, ref Type etype)
   { if(IsConstant)
-    { cg.EmitConstantObject(Evaluate());
+    { EmitConstant(cg, Evaluate(), ref etype);
       if(Tail) cg.EmitReturn();
       return;
     }
@@ -330,30 +387,68 @@ public sealed class CallNode : Node
         }
         if(InFunc.HasList) cg.EmitList(Args, positional);
         cg.ILG.Emit(OpCodes.Br, InFunc.StartLabel);
+        etype = typeof(object);
         return;
       }
       else // inline common functions
       { string name=vn.Name.String, opname=(string)ops[name];
+        switch(name) // functions with side effects
+        { case "set-car!": case "set-cdr!":
+            CheckArity(2);
+            if(etype==typeof(void))
+            { cg.EmitPair(Args[0]);
+              Args[1].Emit(cg);
+              cg.EmitFieldSet(typeof(Pair), name=="set-car!" ? "Car" : "Cdr");
+            }
+            else
+            { Slot tmp = cg.AllocLocalTemp(typeof(object));
+              Args[1].Emit(cg);
+              tmp.EmitSet(cg);
+              cg.EmitPair(Args[0]);
+              tmp.EmitGet(cg);
+              cg.EmitFieldSet(typeof(Pair), name=="set-car!" ? "Car" : "Cdr");
+              tmp.EmitGet(cg);
+              cg.FreeLocalTemp(tmp);
+              goto objret;
+            }
+            goto ret;
+        }
+
         switch(name)
         { case "eq?": case "eqv?": case "equal?":
           { CheckArity(2);
-            Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
+            if(etype==typeof(void)) { EmitVoids(cg, 2); goto ret; }
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             if(name=="eq?") cg.ILG.Emit(OpCodes.Ceq);
             else cg.EmitCall(typeof(Ops), name=="eqv?" ? "EqvP" : "EqualP");
-            cg.ILG.Emit(OpCodes.Brtrue_S, yes);
-            cg.EmitFieldGet(typeof(Ops), "FALSE");
-            cg.ILG.Emit(OpCodes.Br_S, end);
-            cg.ILG.MarkLabel(yes);
-            cg.EmitFieldGet(typeof(Ops), "TRUE");
-            cg.ILG.MarkLabel(end);
+            if(etype!=typeof(bool))
+            { EmitFromBool(cg, true);
+              goto objret;
+            }
+            goto ret;
+          }
+          case "not":
+          { CheckArity(1);
+            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
+            Type type = typeof(bool);
+            Args[0].Emit(cg, ref type);
+            if(etype==typeof(bool))
+            { if(type==typeof(bool)) etype=typeof(negbool);
+              else if(type==typeof(negbool)) etype=typeof(bool);
+              else { cg.EmitIsFalse(); etype=typeof(bool); }
+            }
+            else
+            { if(type!=typeof(bool) && type!=typeof(negbool)) cg.EmitIsTrue();
+              EmitFromBool(cg, type==typeof(negbool));
+              goto objret;
+            }
             goto ret;
           }
           case "null?": case "pair?": case "char?": case "symbol?": case "string?": case "procedure?":
-          case "not": case "string-null?":
+          case "string-null?":
           { CheckArity(1);
-            Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
+            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
             Args[0].Emit(cg);
             Type type=null;
             switch(name)
@@ -368,69 +463,73 @@ public sealed class CallNode : Node
                 cg.EmitPropGet(typeof(string), "Length");
                 break;
             }
-            if(type!=null)
-            { cg.ILG.Emit(OpCodes.Isinst, type);
-              cg.ILG.Emit(OpCodes.Brtrue_S, yes);
+            if(etype==typeof(bool))
+            { if(type!=null) cg.ILG.Emit(OpCodes.Isinst, type);
+              else etype=typeof(Node.negbool);
             }
-            else cg.ILG.Emit(OpCodes.Brfalse_S, yes);
-            cg.EmitFieldGet(typeof(Ops), "FALSE");
-            cg.ILG.Emit(OpCodes.Br_S, end);
-            cg.ILG.MarkLabel(yes);
-            cg.EmitFieldGet(typeof(Ops), "TRUE");
-            cg.ILG.MarkLabel(end);
+            else
+            { if(type!=null) cg.ILG.Emit(OpCodes.Isinst, type);
+              EmitFromBool(cg, type!=null);
+              goto objret;
+            }
             goto ret;
           }
           case "string-length":
             CheckArity(1);
-            Args[0].Emit(cg);
-            cg.ILG.Emit(OpCodes.Castclass, typeof(string));
+            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
+            cg.EmitString(Args[0]);
             cg.EmitPropGet(typeof(string), "Length");
-            cg.ILG.Emit(OpCodes.Box, typeof(int));
+            if(etype!=typeof(int))
+            { cg.ILG.Emit(OpCodes.Box, typeof(int));
+              goto objret;
+            }
             goto ret;
           case "string-ref":
             CheckArity(2);
-            Args[0].Emit(cg);
-            cg.ILG.Emit(OpCodes.Castclass, typeof(string));
-            Args[1].Emit(cg);
-            cg.EmitCall(typeof(Ops), "ToInt");
+            if(etype==typeof(void)) { EmitVoids(cg, 2); goto ret; }
+            cg.EmitString(Args[0]);
+            { Type type=typeof(int);
+              Args[1].Emit(cg, ref type);
+              if(type!=typeof(int)) cg.EmitCall(typeof(Ops), "ToInt");
+            }
             cg.EmitPropGet(typeof(string), "Chars");
-            cg.ILG.Emit(OpCodes.Box, typeof(char));
+            if(etype!=typeof(char))
+            { cg.ILG.Emit(OpCodes.Box, typeof(char));
+              goto objret;
+            }
             goto ret;
           case "car": case "cdr":
             CheckArity(1);
-            Args[0].Emit(cg);
-            cg.ILG.Emit(OpCodes.Castclass, typeof(Pair));
+            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
+            cg.EmitPair(Args[0]);
             cg.EmitFieldGet(typeof(Pair), name=="car" ? "Car" : "Cdr");
-            goto ret;
+            goto objret;
           case "char-upcase": case "char-downcase":
             CheckArity(1);
-            cg.ILG.Emit(OpCodes.Unbox, typeof(char));
-            cg.ILG.Emit(OpCodes.Ldind_I2);
+            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
+            cg.EmitTypedNode(Args[0], typeof(char));
             cg.EmitCall(typeof(char), name=="char-upcase" ? "ToUpper" : "ToLower", new Type[] { typeof(char) });
-            cg.ILG.Emit(OpCodes.Box, typeof(char));
+            if(etype!=typeof(char))
+            { cg.ILG.Emit(OpCodes.Box, typeof(char));
+              goto objret;
+            }
             goto ret;
-          case "set-car!": case "set-cdr!":
-            CheckArity(2);
-            Slot tmp = cg.AllocLocalTemp(typeof(object));
-            Args[1].Emit(cg);
-            tmp.EmitSet(cg);
+          case "bitnot":
+            CheckArity(1);
+            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
             Args[0].Emit(cg);
-            cg.ILG.Emit(OpCodes.Castclass, typeof(Pair));
-            tmp.EmitGet(cg);
-            cg.EmitFieldSet(typeof(Pair), name=="set-car!" ? "Car" : "Cdr");
-            tmp.EmitGet(cg);
-            cg.FreeLocalTemp(tmp);
-            goto ret;
-          case "bitnot": CheckArity(1); Args[0].Emit(cg); break;
+            break;
           case "-":
             if(Args.Length==1)
-            { opname = "Negate";
+            { if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
+              opname = "Negate";
               Args[0].Emit(cg);
               break;
             }
             else goto plusetc;
           case "+": case "*": case "/": case "//": case "%": case "bitand": case "bitor": case "bitxor": plusetc:
             CheckArity(2, -1);
+            if(etype==typeof(void)) { EmitVoids(cg, Args.Length); goto ret; }
             Args[0].Emit(cg);
             for(int i=1; i<Args.Length-1; i++)
             { Args[i].Emit(cg);
@@ -440,22 +539,46 @@ public sealed class CallNode : Node
             break;
           case "=": case "!=": case "<": case ">": case "<=": case ">=":
             CheckArity(2, -1);
+            if(etype==typeof(void)) { EmitVoids(cg, Args.Length); goto ret; }
             if(Args.Length!=2) goto normal; // TODO: do the code generation for more than 2 arguments
             Args[0].Emit(cg);
             Args[1].Emit(cg);
+            if(etype==typeof(bool))
+            { switch(name)
+              { case "=": case "!=":
+                  cg.EmitCall(typeof(Ops), "EqvP");
+                  if(name=="!=") etype = typeof(negbool);
+                  break;
+                default:
+                  cg.EmitCall(typeof(Ops), "Compare");
+                  cg.EmitInt(0);
+                  switch(name)
+                  { case "<":  cg.ILG.Emit(OpCodes.Clt); break;
+                    case "<=": cg.ILG.Emit(OpCodes.Cgt); etype=typeof(negbool); break;
+                    case ">":  cg.ILG.Emit(OpCodes.Cgt); break;
+                    case ">=": cg.ILG.Emit(OpCodes.Clt); etype=typeof(negbool); break;
+                  }
+                  break;
+              }
+              goto ret;
+            }
             break;
           case "expt": case "lshift": case "rshift":
             CheckArity(2);
+            if(etype==typeof(void)) { EmitVoids(cg, 2); goto ret; }
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             break;
           case "exptmod":
             CheckArity(3);
+            if(etype==typeof(void)) { EmitVoids(cg, 3); goto ret; }
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             Args[2].Emit(cg);
             break;
           case "values":
+            CheckArity(1, -1);
+            if(etype==typeof(void)) { EmitVoids(cg, Args.Length); goto ret; }
             if(Args.Length==1) cg.EmitExpression(Args[0]);
             else
             { cg.EmitObjectArray(Args);
@@ -464,8 +587,11 @@ public sealed class CallNode : Node
             goto ret;
           default: goto normal;
         }
+
         if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
         cg.EmitCall(typeof(Ops), opname);
+        objret:
+        etype = typeof(object);
         ret:
         if(Tail) cg.EmitReturn();
         return;
@@ -478,11 +604,11 @@ public sealed class CallNode : Node
     cg.EmitObjectArray(Args);
     if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
     cg.EmitCall(typeof(IProcedure), "Call");
+    etype = typeof(object);
     if(Tail) cg.EmitReturn();
   }
   #endregion
   
-
   #region Evaluate
   public override object Evaluate()
   { object[] a = new object[Args.Length];
@@ -612,6 +738,23 @@ public sealed class CallNode : Node
   }
   #endregion
 
+  #region GetNodeType
+  public override Type GetNodeType()
+  { if(Options.Optimize && Function is VariableNode)
+      switch(((VariableNode)Function).Name.String)
+      { case "eq?": case "eqv?": case "equal?":
+        case "null?": case "pair?": case "char?": case "symbol?": case "string?": case "procedure?":
+        case "not": case "string-null?":
+          return typeof(bool);
+        case "string-ref": case "char-upcase": case "char-downcase":
+          return typeof(char);
+        case "string-length":
+          return typeof(int);
+      }
+    return typeof(object);
+  }
+  #endregion
+
   public override void MarkTail(bool tail)
   { Tail=tail;
     Function.MarkTail(false);
@@ -660,6 +803,24 @@ public sealed class CallNode : Node
                                               Ops.TypeName(args[num])));
   }
 
+  void EmitVoids(CodeGenerator cg, int num)
+  { for(int i=0; i<num; i++)
+    { Type type = typeof(void);
+      Args[i].Emit(cg, ref type);
+      if(type!=typeof(void)) cg.ILG.Emit(OpCodes.Pop);
+    }
+  }
+
+  static void EmitFromBool(CodeGenerator cg, bool brtrue)
+  { Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
+    cg.ILG.Emit(brtrue ? OpCodes.Brtrue_S : OpCodes.Brfalse_S, yes);
+    cg.EmitFieldGet(typeof(Ops), "FALSE");
+    cg.ILG.Emit(OpCodes.Br_S, end);
+    cg.ILG.MarkLabel(yes);
+    cg.EmitFieldGet(typeof(Ops), "TRUE");
+    cg.ILG.MarkLabel(end);
+  }
+
   static bool FuncNameMatch(Name var, LambdaNode func)
   { Name binding = func.Binding;
     return binding!=null && var.Index==binding.Index && var.String==binding.String &&
@@ -677,17 +838,22 @@ public sealed class DefineNode : Node
     if(value is LambdaNode) ((LambdaNode)value).Name = name;
   }
 
-  public override void Emit(CodeGenerator cg)
+  public override void Emit(CodeGenerator cg, ref Type etype)
   { if(InFunc!=null) throw new SyntaxErrorException("define: only allowed at toplevel scope");
     cg.EmitFieldGet(typeof(TopLevel), "Current");
     cg.EmitString(Name.String);
     Value.Emit(cg);
     cg.EmitCall(typeof(TopLevel), "Bind");
     cg.Namespace.GetSlot(Name); // side effect of creating the slot
-    cg.EmitConstantObject(Symbol.Get(Name.String));
+    if(etype!=typeof(void))
+    { cg.EmitConstantObject(Symbol.Get(Name.String));
+      etype = typeof(Symbol);
+    }
     if(Tail) cg.EmitReturn();
   }
-  
+
+  public override Type GetNodeType() { return typeof(Symbol); }
+
   public override void MarkTail(bool tail) { Tail=tail; Value.MarkTail(false); }
 
   public override void Walk(IWalker w)
@@ -704,22 +870,30 @@ public sealed class DefineNode : Node
 public sealed class IfNode : Node
 { public IfNode(Node test, Node iftrue, Node iffalse) { Test=test; IfTrue=iftrue; IfFalse=iffalse; }
 
-  public override void Emit(CodeGenerator cg)
+  public override void Emit(CodeGenerator cg, ref Type etype)
   { if(IsConstant)
-    { if(Ops.IsTrue(Test.Evaluate())) cg.EmitExpression(IfTrue);
-      else
-      { cg.EmitExpression(IfFalse);
-        if(Tail && IfFalse==null) cg.EmitReturn();
-      }
+    { EmitConstant(cg, Evaluate(), ref etype);
+      if(Tail) cg.EmitReturn();
     }
     else
     { Label endlbl=Tail ? new Label() : cg.ILG.DefineLabel(), falselbl=cg.ILG.DefineLabel();
-      cg.EmitIsTrue(Test);
-      cg.ILG.Emit(OpCodes.Brfalse, falselbl);
-      IfTrue.Emit(cg);
+      Type truetype=IfTrue.GetNodeType(), falsetype=IfFalse==null ? null : IfFalse.GetNodeType();
+      if(truetype!=falsetype || !Compatible(truetype, etype)) truetype=falsetype=etype=typeof(object);
+      else etype=truetype;
+
+      Type ttype = typeof(bool);
+      Test.Emit(cg, ref ttype);
+      if(ttype==typeof(negbool)) cg.ILG.Emit(OpCodes.Brtrue, falselbl);
+      else
+      { if(ttype!=typeof(bool)) cg.EmitIsTrue();
+        cg.ILG.Emit(OpCodes.Brfalse, falselbl);
+      }
+      IfTrue.Emit(cg, ref truetype);
+      Debug.Assert(Compatible(truetype, etype));
       if(!Tail) cg.ILG.Emit(OpCodes.Br, endlbl);
       cg.ILG.MarkLabel(falselbl);
-      cg.EmitExpression(IfFalse);
+      cg.EmitExpression(IfFalse, ref falsetype);
+      Debug.Assert(Compatible(falsetype, etype));
       if(!Tail) cg.ILG.MarkLabel(endlbl);
       else if(IfFalse==null) cg.EmitReturn();
     }
@@ -730,7 +904,14 @@ public sealed class IfNode : Node
     else if(IfFalse!=null) return IfFalse.Evaluate();
     else return null;
   }
-  
+
+  public override Type GetNodeType()
+  { if(IsConstant)
+      return Ops.IsTrue(Test.Evaluate()) ? IfTrue.GetNodeType() : IfFalse!=null ? IfFalse.GetNodeType() : null;
+    Type truetype=IfTrue.GetNodeType(), falsetype=IfFalse==null ? null : IfFalse.GetNodeType();
+    return truetype==falsetype ? truetype : typeof(object);
+  }
+
   public override void MarkTail(bool tail)
   { Tail=tail;
     Test.MarkTail(false);
@@ -768,26 +949,31 @@ public class LambdaNode : Node
     for(int i=0; i<names.Length; i++) Parameters[i] = new Name(names[i], 0, i);
   }
 
-  public override void Emit(CodeGenerator cg)
-  { index = lindex.Next;
-    CodeGenerator impl = MakeImplMethod(cg);
+  public override void Emit(CodeGenerator cg, ref Type etype)
+  { if(etype!=typeof(void))
+    { index = lindex.Next;
+      CodeGenerator impl = MakeImplMethod(cg);
 
-    Slot tmpl;
-    if(!cg.TypeGenerator.GetNamedConstant("template"+index, typeof(Template), out tmpl))
-    { CodeGenerator icg = cg.TypeGenerator.GetInitializer();
-      icg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)impl.MethodBase);
-      icg.EmitString(Name!=null ? Name : Binding!=null ? Binding.String : null);
-      icg.EmitInt(Parameters.Length);
-      icg.EmitBool(HasList);
-      icg.EmitNew(typeof(Template), new Type[] { typeof(IntPtr), typeof(string), typeof(int), typeof(bool) });
-      tmpl.EmitSet(icg);
+      Slot tmpl;
+      if(!cg.TypeGenerator.GetNamedConstant("template"+index, typeof(Template), out tmpl))
+      { CodeGenerator icg = cg.TypeGenerator.GetInitializer();
+        icg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)impl.MethodBase);
+        icg.EmitString(Name!=null ? Name : Binding!=null ? Binding.String : null);
+        icg.EmitInt(Parameters.Length);
+        icg.EmitBool(HasList);
+        icg.EmitNew(typeof(Template), new Type[] { typeof(IntPtr), typeof(string), typeof(int), typeof(bool) });
+        tmpl.EmitSet(icg);
+      }
+
+      tmpl.EmitGet(cg);
+      cg.EmitArgGet(0);
+      cg.EmitNew(RG.ClosureType, new Type[] { typeof(Template), typeof(LocalEnvironment) });
+      etype = RG.ClosureType;
     }
-
-    tmpl.EmitGet(cg);
-    cg.EmitArgGet(0);
-    cg.EmitNew(RG.ClosureType, new Type[] { typeof(Template), typeof(LocalEnvironment) });
     if(Tail) cg.EmitReturn();
   }
+
+  public override Type GetNodeType() { return RG.ClosureType; }
 
   public override void MarkTail(bool tail)
   { Tail=tail;
@@ -975,9 +1161,11 @@ public class LambdaNode : Node
 public sealed class ListNode : Node
 { public ListNode(Node[] items, Node dot) { Items=items; Dot=dot; }
 
-  public override void Emit(CodeGenerator cg)
-  { Slot pair = cg.AllocLocalTemp(typeof(Pair));
-    cg.EmitList(Items);
+  public override void Emit(CodeGenerator cg, ref Type etype)
+  { if(!IsConstant || etype!=typeof(void)) // TODO: maybe use cg.EmitConstantObject()
+    { cg.EmitList(Items, Dot);
+      etype = Items.Length==0 && Dot==null ? null : typeof(Pair);
+    }
     if(Tail) cg.EmitReturn();
   }
 
@@ -986,6 +1174,8 @@ public sealed class ListNode : Node
     for(int i=Items.Length-1; i>=0; i--) obj = new Pair(Items[i].Evaluate(), obj);
     return obj;
   }
+
+  public override Type GetNodeType() { return Items.Length==0 ? null : typeof(Pair); }
 
   public override void Optimize()
   { bool isconst=(Dot==null || Dot.IsConstant);
@@ -1009,11 +1199,12 @@ public sealed class ListNode : Node
 #region LiteralNode
 public sealed class LiteralNode : Node
 { public LiteralNode(object value) { Value=value; }
-  public override void Emit(CodeGenerator cg)
-  { cg.EmitConstantObject(Value);
+  public override void Emit(CodeGenerator cg, ref Type etype)
+  { EmitConstant(cg, Value, ref etype);
     if(Tail) cg.EmitReturn();
   }
   public override object Evaluate() { return Value; }
+  public override Type GetNodeType() { return Value==null ? null : Value.GetType(); }
   public override void Optimize() { IsConstant = true; }
 
   public readonly object Value;
@@ -1029,7 +1220,7 @@ public sealed class LetNode : Node
     for(int i=0; i<names.Length; i++) Names[i] = new Name(names[i]);
   }
 
-  public override void Emit(CodeGenerator cg)
+  public override void Emit(CodeGenerator cg, ref Type etype)
   { for(int i=0; i<Inits.Length; i++)
       if(Inits[i]!=null)
       { Inits[i].Emit(cg);
@@ -1039,11 +1230,12 @@ public sealed class LetNode : Node
       { cg.EmitFieldGet(typeof(Binding), "Unbound");
         cg.EmitSet(Names[i]);
       }
-    Body.Emit(cg);
+    Body.Emit(cg, ref etype);
     for(int i=0; i<Names.Length; i++) cg.Namespace.RemoveSlot(Names[i]);
   }
 
-  public override object Evaluate() { return Body.Evaluate(); }
+  public override object Evaluate() { return Body.Evaluate(); } // not evaluating the inits is okay because variablenodes cannot be constant
+  public override Type GetNodeType() { return Body.GetNodeType(); }
 
   public override void MarkTail(bool tail)
   { foreach(Node n in Inits) if(n!=null) n.MarkTail(false);
@@ -1117,9 +1309,12 @@ public sealed class ModuleNode : LambdaNode
     badProvides: throw new SyntaxErrorException("Invalid 'provides' declaration");
   }
 
-  public override void Emit(CodeGenerator cg)
+  public override void Emit(CodeGenerator cg, ref Type etype)
   { TopLevel.Current.SetModule(Name, ModuleGenerator.Generate(this));
-    cg.EmitConstantObject(Symbol.Get(Name));
+    if(etype!=typeof(void))
+    { cg.EmitConstantObject(Symbol.Get(Name));
+      etype = typeof(Symbol);
+    }
     if(Tail) cg.EmitReturn();
   }
 
@@ -1161,12 +1356,17 @@ public sealed class ModuleNode : LambdaNode
 public sealed class SetNode : Node
 { public SetNode(string name, Node value) { Name=new Name(name); Value=value; }
 
-  public override void Emit(CodeGenerator cg)
+  public override void Emit(CodeGenerator cg, ref Type etype)
   { Value.Emit(cg);
-    cg.ILG.Emit(OpCodes.Dup);
+    if(etype!=typeof(void))
+    { cg.ILG.Emit(OpCodes.Dup);
+      etype = typeof(object);
+    }
     cg.EmitSet(Name);
     if(Tail) cg.EmitReturn();
   }
+
+  public override Type GetNodeType() { return Value.GetNodeType(); }
 
   public override void MarkTail(bool tail)
   { Tail=tail;
@@ -1187,14 +1387,21 @@ public sealed class SetNode : Node
 public sealed class VariableNode : Node
 { public VariableNode(string name) { Name=new Name(name); }
 
-  public override void Emit(CodeGenerator cg)
-  { cg.EmitGet(Name);
-    if(Options.Debug)
-    { cg.EmitString(Name.String);
+  public override void Emit(CodeGenerator cg, ref Type etype)
+  { if(Options.Debug)
+    { cg.EmitGet(Name);
+      cg.EmitString(Name.String);
       cg.EmitCall(typeof(Ops), "CheckVariable");
+      etype = typeof(object);
+    }
+    else if(etype!=typeof(void))
+    { cg.EmitGet(Name);
+      etype = typeof(object);
     }
     if(Tail) cg.EmitReturn();
   }
+
+  public override Type GetNodeType() { return typeof(object); }
 
   public Name Name;
 }
