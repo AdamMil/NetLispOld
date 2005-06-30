@@ -299,19 +299,7 @@ public sealed class Interop
 
     if(type.IsValueType)
     { cg.ILG.Emit(OpCodes.Unbox, type);
-      if(!useIndirect)
-        switch(Type.GetTypeCode(type))
-        { case TypeCode.Boolean: case TypeCode.Byte: case TypeCode.SByte: cg.ILG.Emit(OpCodes.Ldind_I1); break;
-          case TypeCode.Int16: case TypeCode.UInt16: cg.ILG.Emit(OpCodes.Ldind_I2); break;
-          case TypeCode.Int32: case TypeCode.UInt32: cg.ILG.Emit(OpCodes.Ldind_I4); break;
-          case TypeCode.Int64: case TypeCode.UInt64: cg.ILG.Emit(OpCodes.Ldind_I8); break;
-          case TypeCode.Single: cg.ILG.Emit(OpCodes.Ldind_R4); break;
-          case TypeCode.Double: cg.ILG.Emit(OpCodes.Ldind_R8); break;
-          default:
-            if(type.IsPointer || type==typeof(IntPtr)) cg.ILG.Emit(OpCodes.Ldind_I);
-            else cg.ILG.Emit(OpCodes.Ldobj, type);
-            break;
-        }
+      if(!useIndirect) cg.EmitIndirectLoad(type);
     }
     else if(type!=typeof(object)) cg.ILG.Emit(OpCodes.Castclass, type);
   }

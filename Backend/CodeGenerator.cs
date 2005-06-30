@@ -55,7 +55,8 @@ public sealed class CodeGenerator
 
   public void EmitConstant(object value)
   { switch(Convert.GetTypeCode(value))
-    { case TypeCode.Byte:   EmitInt((int)(byte)value); break;
+    { case TypeCode.Boolean: EmitInt((bool)value ? 1 : 0); break;
+      case TypeCode.Byte:   EmitInt((int)(byte)value); break;
       case TypeCode.Char:   EmitInt((int)(char)value); break;
       case TypeCode.Double: ILG.Emit(OpCodes.Ldc_R8, (double)value); break;
       case TypeCode.Empty:  ILG.Emit(OpCodes.Ldnull); break;
@@ -93,6 +94,17 @@ public sealed class CodeGenerator
     else e.Emit(this);
   }
 
+  public void EmitExpression(Node e, ref Type type)
+  { if(e==null)
+    { if(type!=typeof(void)) { ILG.Emit(OpCodes.Ldnull); type=null; }
+    }
+    else if(e.IsConstant)
+    { if(type!=typeof(void)) Node.EmitConstant(this, e.Evaluate(), ref type);
+      if(e.Tail) EmitReturn();
+    }
+    else e.Emit(this, ref type);
+  }
+
   public void EmitFieldGet(Type type, string name) { EmitFieldGet(type.GetField(name, SearchAll)); }
   public void EmitFieldGet(FieldInfo field)
   { if(field.IsLiteral) EmitConstant(field.GetValue(null));
@@ -117,6 +129,22 @@ public sealed class CodeGenerator
   public void EmitPropSet(Type type, string name) { EmitPropSet(type.GetProperty(name, SearchAll)); }
   public void EmitPropSet(PropertyInfo pi) { EmitCall(pi.GetSetMethod()); }
 
+  public void EmitIndirectLoad(Type type)
+  { if(!type.IsValueType) throw new ArgumentException("EmitIndirectLoad must be used with a value type");
+    switch(Type.GetTypeCode(type))
+    { case TypeCode.Boolean: case TypeCode.Byte: case TypeCode.SByte: ILG.Emit(OpCodes.Ldind_I1); break;
+      case TypeCode.Int16: case TypeCode.UInt16: ILG.Emit(OpCodes.Ldind_I2); break;
+      case TypeCode.Int32: case TypeCode.UInt32: ILG.Emit(OpCodes.Ldind_I4); break;
+      case TypeCode.Int64: case TypeCode.UInt64: ILG.Emit(OpCodes.Ldind_I8); break;
+      case TypeCode.Single: ILG.Emit(OpCodes.Ldind_R4); break;
+      case TypeCode.Double: ILG.Emit(OpCodes.Ldind_R8); break;
+      default:
+        if(type.IsPointer || type==typeof(IntPtr)) ILG.Emit(OpCodes.Ldind_I);
+        else ILG.Emit(OpCodes.Ldobj, type);
+        break;
+    }
+  }
+
   public void EmitInt(int value)
   { OpCode op;
 		switch(value)
@@ -137,29 +165,28 @@ public sealed class CodeGenerator
 		}
 		ILG.Emit(op);
   }
-  
+
   public void EmitIsFalse()
   { EmitIsTrue();
     EmitInt(0);
     ILG.Emit(OpCodes.Ceq);
   }
-
-  public void EmitIsFalse(Node e) { e.Emit(this); EmitIsFalse(); }
   public void EmitIsTrue() { EmitCall(typeof(Ops), "IsTrue"); }
-  public void EmitIsTrue(Node e) { e.Emit(this); EmitIsTrue(); }
 
   public void EmitLine(int line)
   { if(TypeGenerator.Assembly.Symbols!=null)
       ILG.MarkSequencePoint(TypeGenerator.Assembly.Symbols, line, 0, line+1, 0);
   }
 
-  public void EmitList(Node[] items) { EmitList(items, 0); }
-  public void EmitList(Node[] items, int start)
+  public void EmitList(Node[] items) { EmitList(items, null, 0); }
+  public void EmitList(Node[] items, Node dot) { EmitList(items, dot, 0); }
+  public void EmitList(Node[] items, int start) { EmitList(items, null, start); }
+  public void EmitList(Node[] items, Node dot, int start)
   { if(start==items.Length) ILG.Emit(OpCodes.Ldnull);
     else
     { ConstructorInfo cons = typeof(Pair).GetConstructor(new Type[] { typeof(object), typeof(object) });
       for(int i=start; i<items.Length; i++) items[i].Emit(this);
-      ILG.Emit(OpCodes.Ldnull);
+      EmitExpression(dot);
       for(int i=start; i<items.Length; i++) EmitNew(cons);
     }
   }
@@ -201,6 +228,8 @@ public sealed class CodeGenerator
     }
   }
 
+  public void EmitPair(Node node) { EmitTypedNode(node, typeof(Pair)); }
+
   // TODO: make this use actual spans
   public void EmitPosition(Node node)
   { throw new NotImplementedException();
@@ -217,6 +246,8 @@ public sealed class CodeGenerator
     else ILG.Emit(OpCodes.Ldstr, value);
   }
 
+  public void EmitString(Node node) { EmitTypedNode(node, typeof(string)); }
+
   public void EmitStringArray(string[] strings)
   { EmitNewArray(typeof(string), strings.Length);
     for(int i=0; i<strings.Length; i++)
@@ -231,7 +262,19 @@ public sealed class CodeGenerator
   { if(MethodBase.IsStatic) throw new InvalidOperationException("no 'this' for a static method");
     ILG.Emit(OpCodes.Ldarg_0);
   }
-  
+
+  public void EmitTypedNode(Node node, Type desired)
+  { Type type = desired;
+    node.Emit(this, ref type);
+    if(type!=desired && Ops.ConvertTo(type, desired)!=Conversion.Identity)
+    { if(!desired.IsValueType) ILG.Emit(OpCodes.Castclass, desired);
+      else
+      { ILG.Emit(OpCodes.Unbox, desired);
+        EmitIndirectLoad(desired);
+      }
+    }
+  }
+
   public void EmitTypeOf(Type type)
   { if(type.IsByRef) // TODO: see if there's a better way to do this. this might not even be safe for types in other assemblies. maybe optimize it by caching values?
     { EmitString(type.FullName+"&");
