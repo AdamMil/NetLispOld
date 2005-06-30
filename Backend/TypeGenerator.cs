@@ -202,8 +202,8 @@ public sealed class TypeGenerator
 
   public Slot GetConstant(object value)
   { Slot slot;
-    bool hash = Convert.GetTypeCode(value)!=TypeCode.Object || value is Symbol || value is Binding;
-
+    bool hash = Convert.GetTypeCode(value)!=TypeCode.Object ||
+                value is Symbol || value is Binding || value is MultipleValues;
     if(hash) slot = (Slot)constants[value];
     else
     { if(constobjs==null) { constobjs = new ArrayList(); constslots = new ArrayList(); }
@@ -273,6 +273,10 @@ public sealed class TypeGenerator
           cg.EmitCall(typeof(TopLevel), "GetBinding");
         }
         else if(value is string[]) cg.EmitStringArray((string[])value);
+        else if(value is MultipleValues)
+        { cg.EmitObjectArray(((MultipleValues)value).Values);
+          cg.EmitNew(typeof(MultipleValues), new Type[] { typeof(object[]) });
+        }
         else goto default;
         return;
       case TypeCode.SByte:  cg.EmitInt((int)(sbyte)value); goto box;

@@ -54,7 +54,7 @@ public abstract class SimpleProcedure : IProcedure
   { int num = args.Length;
     if(max==-1)
     { if(num<min) throw new ArgumentException(name+": expects at least "+min.ToString()+
-                                              " arguments, but received "+args.Length.ToString());
+                                              " arguments, but received "+num.ToString());
     }
     else if(num<min || num>max)
       throw new ArgumentException(name+": expects "+(min==max ? min.ToString() : min.ToString()+"-"+max.ToString())+
@@ -639,6 +639,7 @@ public sealed class Ops
     catch(InvalidCastException) { throw new ArgumentException("expected character but received "+TypeName(obj)); }
   }
 
+  // TODO: coerce numbers into complexes?
   public static Complex ExpectComplex(object obj)
   { try { return (Complex)obj; }
     catch(InvalidCastException) { throw new ArgumentException("expected complex but received "+TypeName(obj)); }
@@ -722,7 +723,7 @@ public sealed class Ops
   public static object GetGlobal(string name) { return TopLevel.Current.Get(name); }
   public static bool GetGlobal(string name, out object value) { return TopLevel.Current.Get(name, out value); }
 
-  public static bool IsTrue(object obj) { return obj is bool && (bool)obj; }
+  public static bool IsTrue(object obj) { return obj!=null && (!(obj is bool) || (bool)obj); }
 
   public static object LeftShift(object a, object b)
   { switch(Convert.GetTypeCode(a))
@@ -1076,8 +1077,10 @@ public sealed class Ops
   { return new TypeErrorException(Source(node)+string.Format(format, args));
   }
 
-  public static string TypeName(object o)
-  { switch(Convert.GetTypeCode(o))
+  public static string TypeName(object o) { return TypeName(o==null ? null : o.GetType()); }
+  public static string TypeName(Type type)
+  { if(type==null) return "nil";
+    switch(Type.GetTypeCode(type))
     { case TypeCode.Boolean: return "bool";
       case TypeCode.Empty: return "nil";
       case TypeCode.Byte:  case TypeCode.SByte: return "fixnum8";
@@ -1086,16 +1089,16 @@ public sealed class Ops
       case TypeCode.Int64: case TypeCode.UInt64: return "fixnum64";
       case TypeCode.Char: return "char";
       case TypeCode.Object:
-        if(o is Symbol) return "symbol";
-        if(o is IProcedure) return "procedure";
-        if(o is Integer) return "bigint";
-        if(o is Complex) return "complex";
-        if(o is MultipleValues) return "multiplevalues";
+        if(type==typeof(Symbol)) return "symbol";
+        if(type==typeof(IProcedure)) return "procedure";
+        if(type==typeof(Integer)) return "bigint";
+        if(type==typeof(Complex)) return "complex";
+        if(type==typeof(MultipleValues)) return "multiplevalues";
         goto default;
       case TypeCode.Double: return "flonum64";
       case TypeCode.Single: return "flonum32";
       case TypeCode.String: return "string";
-      default: return o.GetType().FullName;
+      default: return type.FullName;
     }
   }
 

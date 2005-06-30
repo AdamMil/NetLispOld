@@ -685,7 +685,7 @@ public sealed class Srfi1
         { args[0] = p.Car;
           p = p.Cdr as Pair;
           value = func.Call(args);
-          if(value is bool && !(bool)value) continue;
+          if(!Ops.IsTrue(value)) continue;
           Pair next = new Pair(value, null);
           if(head==null) head=tail=next;
           else { tail.Cdr=next; tail=next; }
@@ -706,7 +706,7 @@ public sealed class Srfi1
             pairs[i] = pairs[i].Cdr as Pair;
           }
           value = func.Call(args);
-          if(value is bool && !(bool)value) continue;
+          if(!Ops.IsTrue(value)) continue;
           Pair next = new Pair(value, null);
           if(head==null) head=tail=next;
           else { tail.Cdr=next; tail=next; }

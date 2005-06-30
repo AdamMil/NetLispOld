@@ -208,19 +208,40 @@ public sealed class AST
 
 #region Node
 public abstract class Node
-{ public abstract void Emit(CodeGenerator cg);
+{ [Flags] public enum Flag : byte { Tail=1, Const=2 };
+
+  public bool IsConstant
+  { get { return (Flags&Flag.Const) != 0; }
+    set { if(value) Flags|=Flag.Const; else Flags&=~Flag.Const; }
+  }
+
+  public bool Tail
+  { get { return (Flags&Flag.Tail) != 0; }
+    set { if(value) Flags|=Flag.Tail; else Flags&=~Flag.Tail; }
+  }
+
+  public abstract void Emit(CodeGenerator cg);
   public virtual object Evaluate() { throw new NotSupportedException(); }
 
   public virtual void MarkTail(bool tail) { Tail=tail; }
-  public virtual void Preprocess() { MarkTail(true); }
+  public virtual void Optimize() { }
+  public virtual void Preprocess()
+  { if(Options.Optimize) Walk(new Optimizer());
+    MarkTail(true);
+  }
 
   public virtual void Walk(IWalker w)
   { w.Walk(this);
     w.PostWalk(this);
   }
-  
+
   public LambdaNode InFunc;
-  public bool Tail;
+  public Flag Flags;
+  
+  sealed class Optimizer : IWalker
+  { public bool Walk(Node node) { return true; }
+    public void PostWalk(Node node) { node.Optimize(); }
+  }
 }
 #endregion
 
@@ -240,9 +261,15 @@ public sealed class BodyNode : Node
     foreach(Node n in Forms) ret = n.Evaluate();
     return ret;
   }
-  
+
   public override void MarkTail(bool tail)
   { for(int i=0; i<Forms.Length; i++) Forms[i].MarkTail(tail && i==Forms.Length-1);
+  }
+
+  public override void Optimize()
+  { bool isconst=true;
+    for(int i=0; i<Forms.Length; i++) if(!Forms[i].IsConstant) { isconst=false; break; }
+    IsConstant = isconst;
   }
 
   public override void Walk(IWalker w)
@@ -258,22 +285,41 @@ public sealed class BodyNode : Node
 public sealed class CallNode : Node
 { public CallNode(Node func, Node[] args) { Function=func; Args=args; }
   static CallNode()
-  { ops = new Hashtable();
+  { ArrayList cfunc = new ArrayList();
+
+    ops = new Hashtable();
     string[] arr = new string[]
     { "-", "Subtract", "bitnot", "BitwiseNegate", "+", "Add", "*", "Multiply", "/", "Divide", "//", "FloorDivide",
-      "%", "Modulus",  "bitand", "BitwiseAnd", "bitor", "BitwiseOr", "bitxor", "BitwiseXor", "=", "Equal",
+      "%", "Modulus",  "bitand", "BitwiseAnd", "bitor", "BitwiseOr", "bitxor", "BitwiseXor", "=", "AreEqual",
       "!=", "NotEqual", "<", "Less", ">", "More", "<=", "LessEqual", ">=", "MoreEqual", "expt", "Power",
       "lshift", "LeftShift", "rshift", "RightShift", "exptmod", "PowerMod"
     };
-    for(int i=0; i<arr.Length; i+=2) ops[arr[i]] = arr[i+1];
+    for(int i=0; i<arr.Length; i+=2)
+    { ops[arr[i]] = arr[i+1];
+      cfunc.Add(arr[i]);
+    }
+    cfunc.AddRange(new string[] {
+      "eq?", "eqv?", "equal?", "null?", "pair?", "char?", "symbol?", "string?", "procedure?", "values",
+      "not", "string-null?", "string-length", "string-ref", "car", "cdr", "char-upcase", "char-downcase"});
+
+    cfunc.Sort();
+    constant = (string[])cfunc.ToArray(typeof(string));
   }
 
   static Hashtable ops;
+  static string[] constant;
 
+  #region Emit
   public override void Emit(CodeGenerator cg)
-  { if(Options.Optimize && Function is VariableNode)
+  { if(IsConstant)
+    { cg.EmitConstantObject(Evaluate());
+      if(Tail) cg.EmitReturn();
+      return;
+    }
+
+    if(Options.Optimize && Function is VariableNode)
     { VariableNode vn = (VariableNode)Function;
-      if(Tail && FuncNameMatch(vn.Name, InFunc))
+      if(Tail && FuncNameMatch(vn.Name, InFunc)) // see if we can tailcall ourselves with a branch
       { int positional = InFunc.Parameters.Length-(InFunc.HasList ? 1 : 0);
         if(Args.Length<positional)
           throw new Exception(string.Format("{0} expects {1}{2} args, but is being passed {3}",
@@ -286,16 +332,16 @@ public sealed class CallNode : Node
         cg.ILG.Emit(OpCodes.Br, InFunc.StartLabel);
         return;
       }
-      else
+      else // inline common functions
       { string name=vn.Name.String, opname=(string)ops[name];
         switch(name)
         { case "eq?": case "eqv?": case "equal?":
-          { if(Args.Length!=2) goto normal;
+          { CheckArity(2);
             Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             if(name=="eq?") cg.ILG.Emit(OpCodes.Ceq);
-            else cg.EmitCall(typeof(Ops), name=="eqv?" ? "AreEqual" : "EqualP");
+            else cg.EmitCall(typeof(Ops), name=="eqv?" ? "EqvP" : "EqualP");
             cg.ILG.Emit(OpCodes.Brtrue_S, yes);
             cg.EmitFieldGet(typeof(Ops), "FALSE");
             cg.ILG.Emit(OpCodes.Br_S, end);
@@ -306,7 +352,7 @@ public sealed class CallNode : Node
           }
           case "null?": case "pair?": case "char?": case "symbol?": case "string?": case "procedure?":
           case "not": case "string-null?":
-          { if(Args.Length!=1) goto normal;
+          { CheckArity(1);
             Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
             Args[0].Emit(cg);
             Type type=null;
@@ -335,14 +381,14 @@ public sealed class CallNode : Node
             goto ret;
           }
           case "string-length":
-            if(Args.Length!=1) goto normal;
+            CheckArity(1);
             Args[0].Emit(cg);
             cg.ILG.Emit(OpCodes.Castclass, typeof(string));
             cg.EmitPropGet(typeof(string), "Length");
             cg.ILG.Emit(OpCodes.Box, typeof(int));
             goto ret;
           case "string-ref":
-            if(Args.Length!=2) goto normal;
+            CheckArity(2);
             Args[0].Emit(cg);
             cg.ILG.Emit(OpCodes.Castclass, typeof(string));
             Args[1].Emit(cg);
@@ -351,20 +397,20 @@ public sealed class CallNode : Node
             cg.ILG.Emit(OpCodes.Box, typeof(char));
             goto ret;
           case "car": case "cdr":
-            if(Args.Length!=1) goto normal;
+            CheckArity(1);
             Args[0].Emit(cg);
             cg.ILG.Emit(OpCodes.Castclass, typeof(Pair));
             cg.EmitFieldGet(typeof(Pair), name=="car" ? "Car" : "Cdr");
             goto ret;
           case "char-upcase": case "char-downcase":
-            if(Args.Length!=1) goto normal;
+            CheckArity(1);
             cg.ILG.Emit(OpCodes.Unbox, typeof(char));
             cg.ILG.Emit(OpCodes.Ldind_I2);
             cg.EmitCall(typeof(char), name=="char-upcase" ? "ToUpper" : "ToLower", new Type[] { typeof(char) });
             cg.ILG.Emit(OpCodes.Box, typeof(char));
             goto ret;
           case "set-car!": case "set-cdr!":
-            if(Args.Length!=2) goto normal;
+            CheckArity(2);
             Slot tmp = cg.AllocLocalTemp(typeof(object));
             Args[1].Emit(cg);
             tmp.EmitSet(cg);
@@ -375,7 +421,8 @@ public sealed class CallNode : Node
             tmp.EmitGet(cg);
             cg.FreeLocalTemp(tmp);
             goto ret;
-          case "-": case "bitnot":
+          case "bitnot": CheckArity(1); Args[0].Emit(cg); break;
+          case "-":
             if(Args.Length==1)
             { opname = "Negate";
               Args[0].Emit(cg);
@@ -383,7 +430,7 @@ public sealed class CallNode : Node
             }
             else goto plusetc;
           case "+": case "*": case "/": case "//": case "%": case "bitand": case "bitor": case "bitxor": plusetc:
-            if(Args.Length<2) goto normal;
+            CheckArity(2, -1);
             Args[0].Emit(cg);
             for(int i=1; i<Args.Length-1; i++)
             { Args[i].Emit(cg);
@@ -392,17 +439,18 @@ public sealed class CallNode : Node
             Args[Args.Length-1].Emit(cg);
             break;
           case "=": case "!=": case "<": case ">": case "<=": case ">=":
+            CheckArity(2, -1);
             if(Args.Length!=2) goto normal; // TODO: do the code generation for more than 2 arguments
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             break;
           case "expt": case "lshift": case "rshift":
-            if(Args.Length!=2) goto normal;
+            CheckArity(2);
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             break;
           case "exptmod":
-            if(Args.Length!=3) goto normal;
+            CheckArity(3);
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             Args[2].Emit(cg);
@@ -432,11 +480,148 @@ public sealed class CallNode : Node
     cg.EmitCall(typeof(IProcedure), "Call");
     if(Tail) cg.EmitReturn();
   }
+  #endregion
   
+
+  #region Evaluate
+  public override object Evaluate()
+  { object[] a = new object[Args.Length];
+    for(int i=0; i<Args.Length; i++) a[i] = Args[i].Evaluate();
+
+    string name = ((VariableNode)Function).Name.String;
+    try
+    { switch(name)
+      { case "+":
+        { CheckArity(2, -1);
+          object ret = a[0];
+          for(int i=1; i<a.Length; i++) ret = Ops.Add(ret, a[i]);
+          return ret;
+        }
+        case "-":
+        { CheckArity(2, -1);
+          object ret = a[0];
+          for(int i=1; i<a.Length; i++) ret = Ops.Subtract(ret, a[i]);
+          return ret;
+        }
+        case "*":
+        { CheckArity(2, -1);
+          object ret = a[0];
+          for(int i=1; i<a.Length; i++) ret = Ops.Multiply(ret, a[i]);
+          return ret;
+        }
+        case "/":
+        { CheckArity(2, -1);
+          object ret = a[0];
+          for(int i=1; i<a.Length; i++) ret = Ops.Divide(ret, a[i]);
+          return ret;
+        }
+        case "//":
+        { CheckArity(2, -1);
+          object ret = a[0];
+          for(int i=1; i<a.Length; i++) ret = Ops.FloorDivide(ret, a[i]);
+          return ret;
+        }
+        case "%":
+        { CheckArity(2, -1);
+          object ret = a[0];
+          for(int i=1; i<a.Length; i++) ret = Ops.Modulus(ret, a[i]);
+          return ret;
+        }
+        case "expt": CheckArity(2); return Ops.Power(a[0], a[1]);
+        case "exptmod": CheckArity(3); return Ops.PowerMod(a[0], a[1], a[2]);
+        case "bitnot": CheckArity(1); return Ops.BitwiseNegate(a[0]);
+        case "bitand":
+        { CheckArity(2, -1);
+          object ret = a[0];
+          for(int i=1; i<a.Length; i++) ret = Ops.BitwiseAnd(ret, a[i]);
+          return ret;
+        }
+        case "bitor":
+        { CheckArity(2, -1);
+          object ret = a[0];
+          for(int i=1; i<a.Length; i++) ret = Ops.BitwiseOr(ret, a[i]);
+          return ret;
+        }
+        case "bitxor":
+        { CheckArity(2, -1);
+          object ret = a[0];
+          for(int i=1; i<a.Length; i++) ret = Ops.BitwiseXor(ret, a[i]);
+          return ret;
+        }
+        case "lshift": CheckArity(2); return Ops.LeftShift(a[0], a[1]);
+        case "rshift": CheckArity(2); return Ops.RightShift(a[0], a[1]);
+        case "=":
+        { CheckArity(2, -1);
+          for(int i=0; i<a.Length-1; i++) if(!Ops.EqvP(a[i], a[i+1])) return Ops.FALSE;
+          return Ops.TRUE;
+        }
+        case "!=":
+        { CheckArity(2, -1);
+          for(int i=0; i<a.Length-1; i++) if(Ops.EqvP(a[i], a[i+1])) return Ops.FALSE;
+          return Ops.TRUE;
+        }
+        case "<":
+        { CheckArity(2, -1);
+          for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])>=0) return Ops.FALSE;
+          return Ops.TRUE;
+        }
+        case "<=":
+        { CheckArity(2, -1);
+          for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])>0) return Ops.FALSE;
+          return Ops.TRUE;
+        }
+        case ">":
+        { CheckArity(2, -1);
+          for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])<=0) return Ops.FALSE;
+          return Ops.TRUE;
+        }
+        case ">=":
+        { CheckArity(2, -1);
+          for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])<0) return Ops.FALSE;
+          return Ops.TRUE;
+        }
+      }
+    }
+    catch(Exception e) { throw new ArgumentException(name+": "+e.Message); }
+    
+    switch(name)
+    { case "car": CheckArity(1); CheckType(a, 0, typeof(Pair)); return ((Pair)a[0]).Car;
+      case "cdr": CheckArity(1); CheckType(a, 0, typeof(Pair)); return ((Pair)a[0]).Cdr;
+      case "char?": CheckArity(1); return a[0] is char;
+      case "char-downcase": CheckArity(1); CheckType(a, 0, typeof(char)); return char.ToLower((char)a[0]);
+      case "char-upcase": CheckArity(1); CheckType(a, 0, typeof(char)); return char.ToUpper((char)a[0]);
+      case "eq?": CheckArity(2); return a[0]==a[1];
+      case "eqv?": CheckArity(2); return Ops.EqvP(a[0], a[1]);
+      case "equal?": CheckArity(2); return Ops.EqualP(a[0], a[1]);
+      case "not": CheckArity(1); return !Ops.IsTrue(a[0]);
+      case "null?": CheckArity(1); return a[0]==null;
+      case "pair?": CheckArity(1); return a[0] is Pair;
+      case "procedure?": CheckArity(1); return a[0] is IProcedure;
+      case "string?": CheckArity(1); return a[0] is string;
+      case "string-length":
+        CheckArity(1); CheckType(a, 0, typeof(string));
+        return ((string)a[0]).Length;
+      case "string-null?": CheckArity(1); return a[0] is string && (string)a[0]=="";
+      case "string-ref":
+        CheckArity(2); CheckType(a, 0, typeof(string)); CheckType(a, 1, typeof(int));
+        return ((string)a[0])[Ops.ToInt(a[1])];
+      case "symbol?": CheckArity(1); return a[0] is Symbol;
+      case "values": CheckArity(1, -1); return a.Length==1 ? a[0] : new MultipleValues(a);
+      default: throw new NotImplementedException("unhandled inline: "+((VariableNode)Function).Name.String);
+    }
+  }
+  #endregion
+
   public override void MarkTail(bool tail)
   { Tail=tail;
     Function.MarkTail(false);
     foreach(Node n in Args) n.MarkTail(false);
+  }
+
+  public override void Optimize()
+  { bool isconst=true;
+    for(int i=0; i<Args.Length; i++) if(!Args[i].IsConstant) { isconst=false; break; }
+    IsConstant = isconst && Function is VariableNode && IsConstFunc(((VariableNode)Function).Name.String);
   }
 
   public override void Walk(IWalker w)
@@ -450,11 +635,38 @@ public sealed class CallNode : Node
   public readonly Node Function;
   public readonly Node[] Args;
   
+  void CheckArity(int min) { CheckArity(min, min); }
+  void CheckArity(int min, int max)
+  { string name = ((VariableNode)Function).Name.String;
+    int num = Args.Length;
+    if(max==-1)
+    { if(num<min) throw new ArgumentException(name+": expects at least "+min.ToString()+
+                                              " arguments, but received "+num.ToString());
+    }
+    else if(num<min || num>max)
+      throw new ArgumentException(name+": expects "+(min==max ? min.ToString() : min.ToString()+"-"+max.ToString())+
+                                  " arguments, but received "+num.ToString());
+  }
+
+  void CheckType(object[] args, int num, Type type)
+  { if(args[num].GetType()==type) return;
+    try
+    { if(type==typeof(int)) Ops.ExpectInt(args[num]);
+      return;
+    }
+    catch { }
+    throw new ArgumentException(string.Format("{0}: for argument {1}, expects type {2} but received {3}",
+                                              ((VariableNode)Function).Name.String, num, Ops.TypeName(type),
+                                              Ops.TypeName(args[num])));
+  }
+
   static bool FuncNameMatch(Name var, LambdaNode func)
   { Name binding = func.Binding;
     return binding!=null && var.Index==binding.Index && var.String==binding.String &&
            var.Depth==binding.Depth+(func.MaxNames!=0 ? 1 : 0);
   }
+  
+  static bool IsConstFunc(string name) { return Array.BinarySearch(constant, name)>=0; }
 }
 #endregion
 
@@ -493,16 +705,24 @@ public sealed class IfNode : Node
 { public IfNode(Node test, Node iftrue, Node iffalse) { Test=test; IfTrue=iftrue; IfFalse=iffalse; }
 
   public override void Emit(CodeGenerator cg)
-  { Label endlbl=cg.ILG.DefineLabel(), falselbl=cg.ILG.DefineLabel();
-
-    cg.EmitIsTrue(Test);
-    cg.ILG.Emit(OpCodes.Brfalse, falselbl);
-    IfTrue.Emit(cg);
-    cg.ILG.Emit(OpCodes.Br, endlbl);
-    cg.ILG.MarkLabel(falselbl);
-    cg.EmitExpression(IfFalse);
-    cg.ILG.MarkLabel(endlbl);
-    if(Tail) cg.EmitReturn();
+  { if(IsConstant)
+    { if(Ops.IsTrue(Test.Evaluate())) cg.EmitExpression(IfTrue);
+      else
+      { cg.EmitExpression(IfFalse);
+        if(Tail && IfFalse==null) cg.EmitReturn();
+      }
+    }
+    else
+    { Label endlbl=Tail ? new Label() : cg.ILG.DefineLabel(), falselbl=cg.ILG.DefineLabel();
+      cg.EmitIsTrue(Test);
+      cg.ILG.Emit(OpCodes.Brfalse, falselbl);
+      IfTrue.Emit(cg);
+      if(!Tail) cg.ILG.Emit(OpCodes.Br, endlbl);
+      cg.ILG.MarkLabel(falselbl);
+      cg.EmitExpression(IfFalse);
+      if(!Tail) cg.ILG.MarkLabel(endlbl);
+      else if(IfFalse==null) cg.EmitReturn();
+    }
   }
 
   public override object Evaluate()
@@ -516,6 +736,13 @@ public sealed class IfNode : Node
     Test.MarkTail(false);
     IfTrue.MarkTail(tail);
     if(IfFalse!=null) IfFalse.MarkTail(tail);
+  }
+
+  public override void Optimize()
+  { if(Test.IsConstant)
+    { bool test = Ops.IsTrue(Test.Evaluate());
+      IsConstant = test && IfTrue.IsConstant || !test && (IfFalse==null || IfFalse.IsConstant);
+    }
   }
 
   public override void Walk(IWalker w)
@@ -760,6 +987,12 @@ public sealed class ListNode : Node
     return obj;
   }
 
+  public override void Optimize()
+  { bool isconst=(Dot==null || Dot.IsConstant);
+    if(isconst) for(int i=0; i<Items.Length; i++) if(!Items[i].IsConstant) { isconst=false; break; }
+    IsConstant = isconst;
+  }
+
   public override void Walk(IWalker w)
   { if(w.Walk(this))
     { foreach(Node n in Items) n.Walk(w);
@@ -781,6 +1014,8 @@ public sealed class LiteralNode : Node
     if(Tail) cg.EmitReturn();
   }
   public override object Evaluate() { return Value; }
+  public override void Optimize() { IsConstant = true; }
+
   public readonly object Value;
 }
 #endregion
@@ -808,9 +1043,17 @@ public sealed class LetNode : Node
     for(int i=0; i<Names.Length; i++) cg.Namespace.RemoveSlot(Names[i]);
   }
 
+  public override object Evaluate() { return Body.Evaluate(); }
+
   public override void MarkTail(bool tail)
   { foreach(Node n in Inits) if(n!=null) n.MarkTail(false);
     Body.MarkTail(tail);
+  }
+
+  public override void Optimize()
+  { bool isconst = Body.IsConstant;
+    if(isconst) for(int i=0; i<Inits.Length; i++) if(Inits[i]!=null && !Inits[i].IsConstant) { isconst=false; break; }
+    IsConstant = isconst;
   }
 
   public override void Walk(IWalker w)
