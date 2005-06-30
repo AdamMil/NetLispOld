@@ -86,6 +86,10 @@ public sealed class CodeGenerator
 
   public void EmitExpression(Node e)
   { if(e==null) ILG.Emit(OpCodes.Ldnull);
+    else if(e.IsConstant)
+    { EmitConstantObject(e.Evaluate());
+      if(e.Tail) EmitReturn();
+    }
     else e.Emit(this);
   }
 

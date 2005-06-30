@@ -7,7 +7,7 @@ namespace NetLisp.Frontend
 
 public class App
 { static void Main()
-  { Options.Debug = true;
+  { Options.Debug = false;
     Options.Optimize = true;
 
     TopLevel.Current = new TopLevel();
