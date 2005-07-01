@@ -266,7 +266,7 @@ public sealed class CodeGenerator
   public void EmitTypedNode(Node node, Type desired)
   { Type type = desired;
     node.Emit(this, ref type);
-    if(type!=desired && Ops.ConvertTo(type, desired)!=Conversion.Identity)
+    if(!Node.AreEquivalent(type, desired))
     { if(!desired.IsValueType) ILG.Emit(OpCodes.Castclass, desired);
       else
       { ILG.Emit(OpCodes.Unbox, desired);
