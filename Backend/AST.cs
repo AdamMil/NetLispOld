@@ -148,7 +148,20 @@ public sealed class AST
     { LambdaNode fl = (LambdaNode)func;
       string[] names = new string[fl.Parameters.Length];
       for(int i=0; i<names.Length; i++) names[i] = fl.Parameters[i].String;
-      return new LetNode(names, (Node[])args.ToArray(typeof(Node)), fl.Body);
+      int positional = fl.Parameters.Length-(fl.HasList ? 1 : 0);
+      Ops.CheckArity("<unnamed lambda>", args.Count, positional, fl.HasList ? -1 : positional);
+
+      Node[] inits = new Node[names.Length];
+      for(int i=0; i<positional; i++) inits[i] = (Node)args[i];
+      if(fl.HasList)
+      { if(args.Count==positional) inits[positional] = new LiteralNode(null);
+        else
+        { Node[] elems = new Node[args.Count-positional];
+          for(int i=positional; i<args.Count; i++) elems[i-positional] = (Node)args[i];
+          inits[positional] = new ListNode(elems, null);
+        }
+      }
+      return new LetNode(names, inits, fl.Body);
     }
     else return new CallNode(func, (Node[])args.ToArray(typeof(Node)));
   }
@@ -244,6 +257,11 @@ public abstract class Node
   public LambdaNode InFunc;
   public Flag Flags;
   
+  public static bool AreEquivalent(Type type, Type desired)
+  { Conversion conv = Ops.ConvertTo(type, desired);
+    return conv==Conversion.Identity || conv==Conversion.Reference;
+  }
+
   public static bool Compatible(Type type, Type desired)
   { if((type!=null && type.IsValueType) != desired.IsValueType) return false;
     Conversion conv = Ops.ConvertTo(type, desired);
@@ -449,8 +467,9 @@ public sealed class CallNode : Node
           case "string-null?":
           { CheckArity(1);
             if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
-            Args[0].Emit(cg);
             Type type=null;
+            if(name=="string-null?") cg.EmitString(Args[0]);
+            else Args[0].Emit(cg);
             switch(name)
             { case "pair?": type=typeof(Pair); break;
               case "char?": type=typeof(char); break;
@@ -458,10 +477,7 @@ public sealed class CallNode : Node
               case "string?": type=typeof(string); break;
               case "procedure?": type=typeof(IProcedure); break;
               case "not": cg.EmitCall(typeof(Ops), "IsTrue"); break;
-              case "string-null?":
-                cg.ILG.Emit(OpCodes.Castclass, typeof(string));
-                cg.EmitPropGet(typeof(string), "Length");
-                break;
+              case "string-null?": cg.EmitPropGet(typeof(string), "Length"); break;
             }
             if(etype==typeof(bool))
             { if(type!=null) cg.ILG.Emit(OpCodes.Isinst, type);
@@ -599,8 +615,7 @@ public sealed class CallNode : Node
     }
     
     normal:
-    Function.Emit(cg);
-    cg.ILG.Emit(OpCodes.Castclass, typeof(IProcedure));
+    cg.EmitTypedNode(Function, typeof(IProcedure));
     cg.EmitObjectArray(Args);
     if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
     cg.EmitCall(typeof(IProcedure), "Call");
@@ -779,23 +794,12 @@ public sealed class CallNode : Node
   public readonly Node[] Args;
   
   void CheckArity(int min) { CheckArity(min, min); }
-  void CheckArity(int min, int max)
-  { string name = ((VariableNode)Function).Name.String;
-    int num = Args.Length;
-    if(max==-1)
-    { if(num<min) throw new ArgumentException(name+": expects at least "+min.ToString()+
-                                              " arguments, but received "+num.ToString());
-    }
-    else if(num<min || num>max)
-      throw new ArgumentException(name+": expects "+(min==max ? min.ToString() : min.ToString()+"-"+max.ToString())+
-                                  " arguments, but received "+num.ToString());
-  }
+  void CheckArity(int min, int max) { Ops.CheckArity(((VariableNode)Function).Name.String, Args.Length, min, max); }
 
   void CheckType(object[] args, int num, Type type)
-  { if(args[num].GetType()==type) return;
+  { if(AreEquivalent(args[num]==null ? null : args[num].GetType(), type)) return;
     try
-    { if(type==typeof(int)) Ops.ExpectInt(args[num]);
-      return;
+    { if(type==typeof(int)) { Ops.ExpectInt(args[num]); return; }
     }
     catch { }
     throw new ArgumentException(string.Format("{0}: for argument {1}, expects type {2} but received {3}",

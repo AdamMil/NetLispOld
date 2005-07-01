@@ -50,16 +50,7 @@ public abstract class SimpleProcedure : IProcedure
   public abstract object Call(object[] args);
   public override string ToString() { return name; }
 
-  protected void CheckArity(object[] args)
-  { int num = args.Length;
-    if(max==-1)
-    { if(num<min) throw new ArgumentException(name+": expects at least "+min.ToString()+
-                                              " arguments, but received "+num.ToString());
-    }
-    else if(num<min || num>max)
-      throw new ArgumentException(name+": expects "+(min==max ? min.ToString() : min.ToString()+"-"+max.ToString())+
-                                  " arguments, but received "+num.ToString());
-  }
+  protected void CheckArity(object[] args) { Ops.CheckArity(name, args.Length, min, max); }
 
   protected string name;
   protected int min, max;
@@ -303,7 +294,6 @@ public sealed class MultipleValues
 }
 #endregion
 
-// TODO: make sure we're not using type names for comparison anywhere
 #region Ops
 public sealed class Ops
 { Ops() { }
@@ -443,10 +433,21 @@ public sealed class Ops
   public static object Call(string name, params object[] args) { return Call(GetGlobal(name), args); }
   public static object Call(object func, params object[] args) { return ExpectProcedure(func).Call(args); }
 
+  public static void CheckArity(string name, int nargs, int min, int max)
+  { if(max==-1)
+    { if(nargs<min) throw new ArgumentException(name+": expects at least "+min.ToString()+
+                                                " arguments, but received "+nargs.ToString());
+    }
+    else if(nargs<min || nargs>max)
+      throw new ArgumentException(name+": expects "+(min==max ? min.ToString() : min.ToString()+"-"+max.ToString())+
+                                  " arguments, but received "+nargs.ToString());
+  }
+
   public static Binding CheckBinding(Binding bind)
   { if(bind.Value==Binding.Unbound) throw new Exception("use of unbound variable: "+bind.Name);
     return bind;
   }
+
   public static object CheckVariable(object value, string name)
   { if(value==Binding.Unbound) throw new Exception("use of unbound variable: "+name);
     return value;
