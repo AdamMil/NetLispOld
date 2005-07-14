@@ -9,9 +9,15 @@ namespace NetLisp.Backend
 
 #region FieldWrapper
 public abstract class FieldWrapper : IProcedure
-{ public int MinArgs { get { return 1; } }
+{ public FieldWrapper(string name) { Name=name; }
+
+  public int MinArgs { get { return 1; } }
   public int MaxArgs { get { return 2; } }
+
   public abstract object Call(object[] args);
+  public override string ToString() { return "#<field '"+Name+"'>"; }
+
+  public string Name;
 }
 #endregion
 
@@ -238,26 +244,18 @@ public sealed class Interop
   }
   #endregion
 
+  // TODO: handle operator overloads
+  // TODO: handle arrays
   #region Import
-  public static void Import(string typename)
-  { Type type=Type.GetType(typename);
-    if(type==null)
-    { foreach(Assembly ass in AppDomain.CurrentDomain.GetAssemblies())
-        if((type=ass.GetType(typename)) != null) break;
-      if(type==null) throw new Exception("no such type:"+typename);
-    }
-    Import(type);
-  }
-  
-  public static void Import(Type type)
-  { TopLevel.Current.Bind("::"+type.Name, type);
-    TopLevel.Current.Bind("::"+type.FullName, type);
+  public static void Import(TopLevel top, Type type)
+  { top.Bind("::"+type.Name, type);
+    top.Bind("::"+type.FullName, type);
 
-    ImportConstructors(type);
-    foreach(EventInfo ei in type.GetEvents()) ImportEvent(ei);
-    foreach(FieldInfo fi in type.GetFields()) ImportField(fi);
-    ImportMethods(type);
-    ImportProperties(type);
+    ImportConstructors(top, type);
+    foreach(EventInfo ei in type.GetEvents()) ImportEvent(top, ei);
+    foreach(FieldInfo fi in type.GetFields()) ImportField(top, fi);
+    ImportMethods(top, type);
+    ImportProperties(top, type);
   }
   #endregion
 
@@ -312,54 +310,54 @@ public sealed class Interop
   #endregion
 
   #region ImportConstructors
-  static void ImportConstructors(Type type)
+  static void ImportConstructors(TopLevel top, Type type)
   { if(type.IsPrimitive) return;
     ConstructorInfo[] ci = type.GetConstructors();
     if(ci.Length==0) return;
     object obj = ci.Length==1 ? MakeFunctionWrapper(ci[0]) : (object)new ReflectedConstructor(type);
-    TopLevel.Current.Bind(":new/"+type.Name, obj);
-    TopLevel.Current.Bind(":new/"+type.FullName, obj);
+    top.Bind(":new/"+type.Name, obj);
+    top.Bind(":new/"+type.FullName, obj);
   }
   #endregion
 
   #region ImportEvent
-  static void ImportEvent(EventInfo ei)
-  { ImportMethods(ei.DeclaringType, new MethodInfo[] { ei.GetAddMethod() }, "add/", ei.Name);
-    ImportMethods(ei.DeclaringType, new MethodInfo[] { ei.GetRemoveMethod() }, "rem/", ei.Name);
+  static void ImportEvent(TopLevel top, EventInfo ei)
+  { ImportMethods(top, ei.DeclaringType, new MethodInfo[] { ei.GetAddMethod() }, "add/", ei.Name);
+    ImportMethods(top, ei.DeclaringType, new MethodInfo[] { ei.GetRemoveMethod() }, "rem/", ei.Name);
   }
   #endregion
 
   #region ImportField
-  static void ImportField(FieldInfo fi)
+  static void ImportField(TopLevel top, FieldInfo fi)
   { string shortBase = fi.IsStatic ? ":"+fi.DeclaringType.Name+"." : ":",
             fullBase = ":"+fi.DeclaringType.FullName+".", getSuf="get/"+fi.Name, setSuf="set/"+fi.Name;
 
     object obj;
     if(fi.IsStatic)
     { obj = MakeGetWrapper(fi);
-      TopLevel.Current.Bind(shortBase+getSuf, obj);
-      TopLevel.Current.Bind(fullBase+getSuf, obj);
+      top.Bind(shortBase+getSuf, obj);
+      top.Bind(fullBase+getSuf, obj);
     }
-    else if(!TopLevel.Current.Get(shortBase+getSuf, out obj) || !(obj is ReflectedField) ||
+    else if(!top.Get(shortBase+getSuf, out obj) || !(obj is ReflectedField) ||
             ((ReflectedField)obj).FieldName!=fi.Name)
     { obj = new ReflectedField(fi.Name);
-      TopLevel.Current.Bind(shortBase+getSuf, obj);
-      TopLevel.Current.Bind(fullBase+getSuf, obj);
+      top.Bind(shortBase+getSuf, obj);
+      top.Bind(fullBase+getSuf, obj);
     }
-    else TopLevel.Current.Bind(fullBase+getSuf, obj);
+    else top.Bind(fullBase+getSuf, obj);
 
     if(fi.IsStatic && !fi.IsInitOnly && !fi.IsLiteral)
     { obj = MakeSetWrapper(fi);
-      TopLevel.Current.Bind(shortBase+setSuf, obj);
-      TopLevel.Current.Bind(fullBase+setSuf, obj);
+      top.Bind(shortBase+setSuf, obj);
+      top.Bind(fullBase+setSuf, obj);
     }
   }
   #endregion
 
   #region ImportMethods
-  static void ImportMethods(Type type) { ImportMethods(type, type.GetMethods(), "", null); }
+  static void ImportMethods(TopLevel top, Type type) { ImportMethods(top, type, type.GetMethods(), "", null); }
 
-  static void ImportMethods(Type type, MethodInfo[] methods, string prefix, string forceName)
+  static void ImportMethods(TopLevel top, Type type, MethodInfo[] methods, string prefix, string forceName)
   { ListDictionary dict = new ListDictionary();
     foreach(MethodInfo mi in methods)
     { string key = (mi.IsStatic ? "1$" : "0$") + mi.Name;
@@ -377,22 +375,21 @@ public sealed class Interop
       object obj;
       if(isStatic)
       { obj = mi.Length==1 ? MakeFunctionWrapper(mi[0]) : (object)new ReflectedFunction(type, baseName);
-        TopLevel.Current.Bind(name, obj);
-        TopLevel.Current.Bind(fullName, obj);
+        top.Bind(name, obj);
+        top.Bind(fullName, obj);
       }
-      else if(!TopLevel.Current.Get(name, out obj) || !(obj is ReflectedMethod) ||
-              ((ReflectedMethod)obj).MethodName!=realName)
+      else if(!top.Get(name, out obj) || !(obj is ReflectedMethod) || ((ReflectedMethod)obj).MethodName!=realName)
       { obj = new ReflectedMethod(realName);
-        TopLevel.Current.Bind(name, obj);
-        TopLevel.Current.Bind(fullName, obj); // TODO: optimize this by making the full version not dispatch on type
+        top.Bind(name, obj);
+        top.Bind(fullName, obj); // TODO: optimize this by making the full version not dispatch on type
       }
-      else TopLevel.Current.Bind(fullName, obj); // ^-- this will be affected by the optimization too
+      else top.Bind(fullName, obj); // ^-- this will be affected by the optimization too
     }
   }
   #endregion
 
   #region ImportProperties
-  static void ImportProperties(Type type)
+  static void ImportProperties(TopLevel top, Type type)
   { ListDictionary dict = new ListDictionary();
     foreach(PropertyInfo pi in type.GetProperties())
     { ArrayList list = (ArrayList)dict[pi.Name];
@@ -405,8 +402,10 @@ public sealed class Interop
       { if(pi.CanRead)  gets.Add(pi.GetGetMethod());
         if(pi.CanWrite) sets.Add(pi.GetSetMethod());
       }
-      if(gets.Count!=0) ImportMethods(type, (MethodInfo[])gets.ToArray(typeof(MethodInfo)), "get/", (string)de.Key);
-      if(sets.Count!=0) ImportMethods(type, (MethodInfo[])sets.ToArray(typeof(MethodInfo)), "set/", (string)de.Key);
+      if(gets.Count!=0)
+        ImportMethods(top, type, (MethodInfo[])gets.ToArray(typeof(MethodInfo)), "get/", (string)de.Key);
+      if(sets.Count!=0)
+        ImportMethods(top, type, (MethodInfo[])sets.ToArray(typeof(MethodInfo)), "set/", (string)de.Key);
     }
   }
   #endregion
@@ -488,6 +487,7 @@ public sealed class Interop
   }
   #endregion
 
+  // TODO: check arity
   #region MakeGetWrapper
   static FieldWrapper MakeGetWrapper(FieldInfo fi)
   { IntPtr ptr = fi.FieldHandle.Value;
@@ -507,12 +507,21 @@ public sealed class Interop
       if(fi.FieldType.IsValueType) cg.ILG.Emit(OpCodes.Box, fi.FieldType);
       cg.EmitReturn();
       cg.Finish();
+
+      cg = tg.DefineConstructor(Type.EmptyTypes);
+      cg.EmitThis();
+      cg.EmitString(fi.IsStatic ? fi.DeclaringType.FullName+"."+fi.Name : fi.Name);
+      cg.EmitCall(typeof(FieldWrapper).GetConstructor(new Type[] { typeof(string) }));
+      cg.EmitReturn();
+      cg.Finish();
+
       gets[ptr] = ret = (FieldWrapper)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
     }
     return ret;
   }
   #endregion
 
+  // TODO: check arity
   #region MakeSetWrapper
   static FieldWrapper MakeSetWrapper(FieldInfo fi)
   { IntPtr ptr = fi.FieldHandle.Value;
@@ -546,6 +555,14 @@ public sealed class Interop
       cg.ILG.Emit(OpCodes.Ldnull);
       cg.EmitReturn();
       cg.Finish();
+
+      cg = tg.DefineConstructor(Type.EmptyTypes);
+      cg.EmitThis();
+      cg.EmitString(fi.IsStatic ? fi.DeclaringType.FullName+"."+fi.Name : fi.Name);
+      cg.EmitCall(typeof(FieldWrapper).GetConstructor(new Type[] { typeof(string) }));
+      cg.EmitReturn();
+      cg.Finish();
+
       sets[ptr] = ret = (FieldWrapper)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
     }
     return ret;
@@ -572,7 +589,7 @@ public sealed class Interop
       int min = sig.Params.Length - (sig.Defaults==null ? 0 : sig.Defaults.Length) - (sig.ParamArray ? 1 : 0);
       int max = sig.ParamArray ? -1 : sig.Params.Length;
       int refi=0, numrefs=0;
-      for(int i=0; i<sig.Params.Length; i++) if(sig.Params[i].IsByRef || sig.Params[i].IsPointer) numrefs++;
+      for(int i=0; i<sig.Params.Length; i++) if(sig.Params[i].IsByRef) numrefs++;
       Ref[] refs = new Ref[numrefs];
 
       #region Initialize statics
@@ -698,7 +715,7 @@ public sealed class Interop
       { cg.EmitArgGet(0);
         cg.EmitInt(i);
         cg.ILG.Emit(OpCodes.Ldelem_Ref);
-        if(sig.Params[i].IsByRef || sig.Params[i].IsPointer)
+        if(sig.Params[i].IsByRef)
         { Type etype = sig.Params[i].GetElementType();
           EmitConvertTo(cg, typeof(Reference));
           cg.EmitFieldGet(typeof(Reference), "Value");
@@ -707,7 +724,8 @@ public sealed class Interop
           tmp.EmitSet(cg);
           tmp.EmitGetAddr(cg);
           refs[refi++] = new Ref(i, tmp);
-        }  
+        }
+        else if(sig.Params[i].IsPointer) EmitConvertTo(cg, typeof(IntPtr));
         else EmitConvertTo(cg, sig.Params[i], i==0 && sig.IndirectThis);
       }
 
