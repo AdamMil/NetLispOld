@@ -65,32 +65,46 @@ public sealed class Importer
     { if(modules.Contains(mp)) throw new Exception("circular module requirements");
       modules[mp] = null;
 
-      switch(mp.Collection)
-      { case "%fs": module = LoadModuleFromFile(mp.Name); break;
-        case "%builtin":
-        { if(mp.Name=="Builtins") module = Builtins.Instance;
-          else
-          { Type type = Type.GetType("NetLisp.Mods."+mp.Name);
-            if(type!=null) module = ModuleGenerator.Generate(type);
+      try
+      { switch(mp.Collection)
+        { case "%fs": module = LoadFromFile(mp.Name); break;
+          case "%builtin":
+          { if(mp.Name=="Builtins") module = Builtins.Instance;
+            else
+            { Type type = Type.GetType("NetLisp.Mods."+mp.Name);
+              if(type!=null) module = ModuleGenerator.Generate(type);
+            }
+            break;
           }
-          break;
-        }
-        default:
-        { string name = mp.Collection+"/"+mp.Name;
-          Type type = (Type)builtins[name];
-          // TODO: get the library path from elsewhere
-          module = type==null ? LoadModuleFromFile("lib/"+name) : ModuleGenerator.Generate(type);
-          break;
+          case ".net": module = LoadFromDotNet(mp.Name); break;
+          default:
+          { string name = mp.Collection+"/"+mp.Name;
+            Type type = (Type)builtins[name];
+            // TODO: get the library path from elsewhere
+            module = type==null ? LoadFromFile("lib/"+name) : ModuleGenerator.Generate(type);
+            break;
+          }
         }
       }
-
-      if(module!=null) modules[mp] = module;
-      else modules.Remove(mp);
+      finally
+      { if(module!=null) modules[mp] = module;
+        else modules.Remove(mp);
+      }
     }
     return module;
   }
 
-  static Module LoadModuleFromFile(string path)
+  static Module LoadFromDotNet(string ns)
+  { Module mod = new Module(ns);
+    foreach(Assembly a in AppDomain.CurrentDomain.GetAssemblies())
+      foreach(Type type in a.GetTypes())
+        if(type.IsPublic && type.Namespace==ns)
+          Interop.Import(mod.TopLevel, type);
+    mod.CreateExports();
+    return mod;
+  }
+
+  static Module LoadFromFile(string path)
   { string old = currentDir;
     try
     { currentDir = Path.GetDirectoryName(path);

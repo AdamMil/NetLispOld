@@ -233,23 +233,10 @@ public sealed class Builtins
     finally { TopLevel.Current=old; }
   }
 
-public static void import(params object[] args)
-{ foreach(object o in args)
-  { if(o is string) Interop.Import((string)o);
-    else if(o is Pair)
-    { string ns = (string)Ops.FastCadr((Pair)o);
-      foreach(string name in Ops.ListToArray((Pair)Ops.FastCddr((Pair)o)))
-        Interop.Import(ns+"."+name);
-    }
-  }
-}
-
 [SymbolName("load-assembly-by-name")]
 public static void loadByName(string name) { Interop.LoadAssemblyByName(name); }
 [SymbolName("load-assembly-from-file")]
 public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name); }
-public static void print(object obj) { Console.Write(Ops.Repr(obj)); }
-public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
   #region Character functions
   #region char?
