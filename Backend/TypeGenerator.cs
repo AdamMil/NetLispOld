@@ -229,7 +229,8 @@ public sealed class TypeGenerator
     }
 
     if(slot==null)
-    { Type type = Convert.GetTypeCode(value)==TypeCode.Object ? value.GetType() : typeof(object);
+    { Type type = value.GetType();
+      if(type.IsValueType) type=typeof(object);
       FieldBuilder fb = TypeBuilder.DefineField("c$"+numConstants++, type, FieldAttributes.Static);
       slot = new StaticSlot(fb);
       if(hash) constants[value] = slot;
@@ -273,9 +274,17 @@ public sealed class TypeGenerator
           cg.EmitCall(typeof(TopLevel), "GetBinding");
         }
         else if(value is string[]) cg.EmitStringArray((string[])value);
+        else if(value is object[]) cg.EmitObjectArray((object[])value);
         else if(value is MultipleValues)
         { cg.EmitObjectArray(((MultipleValues)value).Values);
           cg.EmitNew(typeof(MultipleValues), new Type[] { typeof(object[]) });
+        }
+        else if(value is Complex)
+        { Complex c = (Complex)value;
+          cg.ILG.Emit(OpCodes.Ldc_R8, c.real);
+          cg.ILG.Emit(OpCodes.Ldc_R8, c.imag);
+          cg.EmitNew(typeof(Complex), new Type[] { typeof(double), typeof(double) });
+          goto box;
         }
         else goto default;
         return;

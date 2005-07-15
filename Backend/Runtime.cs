@@ -216,6 +216,28 @@ public sealed class LocalEnvironment
 }
 #endregion
 
+#region LispComparer
+public sealed class LispComparer : IComparer
+{ public LispComparer(IProcedure proc)
+  { if(proc!=null) { this.proc=proc; args=new object[2]; }
+  }
+
+  public int Compare(object a, object b)
+  { if(proc==null) return Ops.Compare(a, b);
+    else
+    { args[0] = a;
+      args[1] = b;
+      return Ops.ToInt(proc.Call(args));
+    }
+  }
+
+  public static readonly LispComparer Default = new LispComparer(null);
+
+  IProcedure proc;
+  object[] args;
+}
+#endregion
+
 #region Module
 public class Module
 { public Module(string name) { Name=name; TopLevel=new TopLevel(); }
@@ -260,16 +282,15 @@ public class Module
   }
 
   internal void CreateExports() // FIXME: this exports objects imported from the base (parent) module
-  { Hashtable hash = new Hashtable();
+  { ArrayList exports = new ArrayList();
     foreach(string name in TopLevel.Globals.Keys)
 { if(((Binding)TopLevel.Globals[name]).Value==Binding.Unbound) continue; // FIXME: don't allow free variables in modules
-      if(!name.StartsWith("#_")) hash[name] = new Module.Export(name);
+      if(!name.StartsWith("#_")) exports.Add(new Module.Export(name));
 }
     foreach(string name in TopLevel.Macros.Keys)
-      if(!name.StartsWith("#_")) hash[name] = new Module.Export(name, TopLevel.NS.Macro);
+      if(!name.StartsWith("#_")) exports.Add(new Module.Export(name, TopLevel.NS.Macro));
 
-    Exports = new Export[hash.Count];
-    hash.Values.CopyTo(Exports, 0);
+    Exports = (Export[])exports.ToArray(typeof(Export));
   }
 }
 #endregion
@@ -682,6 +703,18 @@ public sealed class Ops
     return ret;
   }
 
+  public static Symbol ExpectSymbol(object obj)
+  { Symbol ret = obj as Symbol;
+    if(ret==null) throw new ArgumentException("expected Symbol but received "+TypeName(obj));
+    return ret;
+  }
+
+  public static object[] ExpectVector(object obj)
+  { object[] ret = obj as object[];
+    if(ret==null) throw new ArgumentException("expected vector but received "+TypeName(obj));
+    return ret;
+  }
+
   public static object FastCadr(Pair pair) { return ((Pair)pair.Cdr).Car; }
   public static object FastCddr(Pair pair) { return ((Pair)pair.Cdr).Cdr; }
 
@@ -749,13 +782,14 @@ public sealed class Ops
   public static object Less(object a, object b) { return FromBool(Compare(a,b)<0); }
   public static object LessEqual(object a, object b) { return FromBool(Compare(a,b)<=0); }
 
-  public static Pair List(params object[] items) { return ListSlice(0, items); }
-  public static Pair ListSlice(int start, params object[] items)
+  public static Pair List(params object[] items) { return List(items, 0, items.Length); }
+  public static Pair List(object[] items, int start) { return List(items, start, items.Length-start); }
+  public static Pair List(object[] items, int start, int length)
   { Pair pair=null;
-    for(int i=items.Length-1; i>=start; i--) pair = new Pair(items[i], pair);
+    for(int i=start+length-1; i>=start; i--) pair = new Pair(items[i], pair);
     return pair;
   }
-  
+
   public static Pair List2(object first, params object[] items) { return new Pair(first, List(items)); }
 
   public static object[] ListToArray(Pair pair)
@@ -902,8 +936,22 @@ public sealed class Ops
   { switch(Convert.GetTypeCode(obj))
     { case TypeCode.Boolean: return (bool)obj ? "#t" : "#f";
       case TypeCode.Char: return Builtins.charToName.core((char)obj, true);
-      case TypeCode.Empty: return "nil";
       case TypeCode.Double: return ((double)obj).ToString("R");
+      case TypeCode.Empty: return "nil";
+      case TypeCode.Object:
+        if(obj is object[])
+        { System.Text.StringBuilder sb = new System.Text.StringBuilder();
+          sb.Append("#(");
+          bool sep=false;
+          foreach(object o in (object[])obj)
+          { if(sep) sb.Append(' ');
+            else sep=true;
+            sb.Append(Repr(o));
+          }
+          sb.Append(')');
+          return sb.ToString();
+        }
+        break;
       case TypeCode.Single: return ((float)obj).ToString("R");
       case TypeCode.String:
       { string str = (string)obj;
@@ -930,8 +978,8 @@ public sealed class Ops
         sb.Append('"');
         return sb.ToString();
       }
-      default: return obj.ToString();
     }
+    return obj.ToString();
   }
 
   public static object RightShift(object a, object b)
@@ -1091,6 +1139,8 @@ public sealed class Ops
       case TypeCode.Char: return "char";
       case TypeCode.Object:
         if(type==typeof(Symbol)) return "symbol";
+        if(type==typeof(Pair)) return "pair";
+        if(type==typeof(object[])) return "vector";
         if(type==typeof(IProcedure)) return "procedure";
         if(type==typeof(Integer)) return "bigint";
         if(type==typeof(Complex)) return "complex";
@@ -1196,7 +1246,7 @@ public sealed class Symbol
     if(sym==null) table[name] = sym = new Symbol(name);
     return sym;
   }
-  
+
   static readonly Hashtable table = new Hashtable();
 }
 #endregion
@@ -1214,12 +1264,12 @@ public sealed class Template
       else if(args.Length>=positional)
       { object[] nargs = new object[NumParams];
         Array.Copy(args, nargs, positional);
-        nargs[positional] = Ops.ListSlice(positional, args);
+        nargs[positional] = Ops.List(args, positional);
         args = nargs;
       }
-      else throw new Exception("expected at least "+positional+" arguments, but received "+args.Length); // FIXME: use other exception
+      else throw new Exception(Name+": expected at least "+positional+" arguments, but received "+args.Length); // FIXME: use other exception
     }
-    else if(args.Length!=NumParams) throw new Exception("expected "+NumParams+" arguments, but received "+args.Length); // FIXME: use other exception  }
+    else if(args.Length!=NumParams) throw new Exception(Name+": expected "+NumParams+" arguments, but received "+args.Length); // FIXME: use other exception
     return args;
   }
 

@@ -23,8 +23,13 @@ class App
 
   [STAThread]
   static void Main()
-  { Application.ThreadException += new System.Threading.ThreadExceptionEventHandler(Application_ThreadException);
+  { NetLisp.Backend.Options.Debug = true;
+    NetLisp.Backend.Options.Optimize = true;
+
+    Application.ThreadException += new System.Threading.ThreadExceptionEventHandler(Application_ThreadException);
     Application.Run(MainForm);
+    
+    NetLisp.Backend.SnippetMaker.DumpAssembly();
   }
 
   static void Application_ThreadException(object sender, System.Threading.ThreadExceptionEventArgs e)

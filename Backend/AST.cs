@@ -123,6 +123,15 @@ public sealed class AST
           sym = (Symbol)pair.Car;
           return new DefineNode(sym.Name, Parse(Ops.FastCadr(pair))); // (define name value)
         }
+        case "vector":
+        { ArrayList items = new ArrayList();
+          while(true)
+          { pair = pair.Cdr as Pair;
+            if(pair==null) break;
+            items.Add(Parse(pair.Car));
+          }
+          return new VectorNode((Node[])items.ToArray(typeof(Node)));
+        }
         // (module name-symbol (provides ...) body...)
         case "#%module":
         { if(Builtins.length.core(pair)<4) goto moduleError;
@@ -285,6 +294,24 @@ public abstract class Node
     }
   }
 
+  public static object MaybeEmitBranch(CodeGenerator cg, Node test, Label label, bool onTrue)
+  { OpCode brtrue=onTrue ? OpCodes.Brtrue : OpCodes.Brfalse, brfalse=onTrue ? OpCodes.Brfalse : OpCodes.Brtrue;
+    Type type = typeof(bool);
+    test.Emit(cg, ref type);
+
+    if(type==typeof(bool)) cg.ILG.Emit(brtrue, label);
+    else if(type==typeof(negbool)) cg.ILG.Emit(brfalse, label);
+    else if(type==typeof(object))
+    { cg.EmitIsTrue();
+      cg.ILG.Emit(brtrue, label);
+    }
+    else
+    { cg.ILG.Emit(OpCodes.Pop);
+      return type!=null;
+    }
+    return null;
+  }
+
   public static object TryConvert(object value, ref Type etype)
   { if(etype==null) return null;
     if(etype==typeof(object)) return value;
@@ -374,8 +401,9 @@ public sealed class CallNode : Node
       cfunc.Add(arr[i]);
     }
     cfunc.AddRange(new string[] {
-      "eq?", "eqv?", "equal?", "null?", "pair?", "char?", "symbol?", "string?", "procedure?", "values",
-      "not", "string-null?", "string-length", "string-ref", "car", "cdr", "char-upcase", "char-downcase"});
+      "eq?", "eqv?", "equal?", "null?", "pair?", "char?", "symbol?", "string?", "procedure?", "vector?", "values",
+      "not", "string-null?", "string-length", "string-ref", "vector-length", "vector-ref", "car", "cdr",
+      "char-upcase", "char-downcase"});
 
     cfunc.Sort();
     constant = (string[])cfunc.ToArray(typeof(string));
@@ -399,11 +427,9 @@ public sealed class CallNode : Node
         if(Args.Length<positional)
           throw new Exception(string.Format("{0} expects {1}{2} args, but is being passed {3}",
                                             vn.Name, InFunc.HasList ? "at least " : "", positional, Args.Length));
-        for(int i=0; i<positional; i++)
-        { Args[i].Emit(cg);
-          cg.EmitSet(InFunc.Parameters[i]);
-        }
+        for(int i=0; i<positional; i++) Args[i].Emit(cg);
         if(InFunc.HasList) cg.EmitList(Args, positional);
+        for(int i=InFunc.Parameters.Length-1; i>=0; i--) cg.EmitSet(InFunc.Parameters[i]);
         cg.ILG.Emit(OpCodes.Br, InFunc.StartLabel);
         etype = typeof(object);
         return;
@@ -435,7 +461,7 @@ public sealed class CallNode : Node
         switch(name)
         { case "eq?": case "eqv?": case "equal?":
           { CheckArity(2);
-            if(etype==typeof(void)) { EmitVoids(cg, 2); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             if(name=="eq?") cg.ILG.Emit(OpCodes.Ceq);
@@ -448,25 +474,27 @@ public sealed class CallNode : Node
           }
           case "not":
           { CheckArity(1);
-            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             Type type = typeof(bool);
             Args[0].Emit(cg, ref type);
             if(etype==typeof(bool))
             { if(type==typeof(bool)) etype=typeof(negbool);
-              else if(type==typeof(negbool)) etype=typeof(bool);
-              else { cg.EmitIsFalse(); etype=typeof(bool); }
+              else
+              { if(type!=typeof(negbool)) cg.EmitIsFalse(type);
+                etype=typeof(bool);
+              }
             }
             else
-            { if(type!=typeof(bool) && type!=typeof(negbool)) cg.EmitIsTrue();
+            { if(type!=typeof(bool) && type!=typeof(negbool)) cg.EmitIsTrue(type);
               EmitFromBool(cg, type==typeof(negbool));
               goto objret;
             }
             goto ret;
           }
-          case "null?": case "pair?": case "char?": case "symbol?": case "string?": case "procedure?":
+          case "null?": case "pair?": case "char?": case "symbol?": case "string?": case "procedure?": case "vector?":
           case "string-null?":
           { CheckArity(1);
-            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             Type type=null;
             if(name=="string-null?") cg.EmitString(Args[0]);
             else Args[0].Emit(cg);
@@ -476,6 +504,7 @@ public sealed class CallNode : Node
               case "symbol?": type=typeof(Symbol); break;
               case "string?": type=typeof(string); break;
               case "procedure?": type=typeof(IProcedure); break;
+              case "vector?": type=typeof(object[]); break;
               case "not": cg.EmitCall(typeof(Ops), "IsTrue"); break;
               case "string-null?": cg.EmitPropGet(typeof(string), "Length"); break;
             }
@@ -490,11 +519,17 @@ public sealed class CallNode : Node
             }
             goto ret;
           }
-          case "string-length":
+          case "string-length": case "vector-length":
             CheckArity(1);
-            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
-            cg.EmitString(Args[0]);
-            cg.EmitPropGet(typeof(string), "Length");
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
+            if(name=="string-length")
+            { cg.EmitString(Args[0]);
+              cg.EmitPropGet(typeof(string), "Length");
+            }
+            else
+            { cg.EmitTypedNode(Args[0], typeof(object[]));
+              cg.EmitPropGet(typeof(object[]), "Length");
+            }
             if(etype!=typeof(int))
             { cg.ILG.Emit(OpCodes.Box, typeof(int));
               goto objret;
@@ -502,7 +537,7 @@ public sealed class CallNode : Node
             goto ret;
           case "string-ref":
             CheckArity(2);
-            if(etype==typeof(void)) { EmitVoids(cg, 2); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             cg.EmitString(Args[0]);
             { Type type=typeof(int);
               Args[1].Emit(cg, ref type);
@@ -514,15 +549,40 @@ public sealed class CallNode : Node
               goto objret;
             }
             goto ret;
+          case "vector-ref": case "vector-set!":
+            if(name=="vector-ref")
+            { CheckArity(2);
+              if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
+            }
+            else CheckArity(3);
+            cg.EmitTypedNode(Args[0], typeof(object[]));
+            { Type type=typeof(int);
+              Args[1].Emit(cg, ref type);
+              if(type!=typeof(int)) cg.EmitCall(typeof(Ops), "ToInt");
+            }
+            if(name=="vector-ref") cg.ILG.Emit(OpCodes.Ldelem_Ref);
+            else
+            { Args[2].Emit(cg);
+              if(etype==typeof(void)) { cg.ILG.Emit(OpCodes.Stelem_Ref); goto ret; }
+              else
+              { Slot tmp = cg.AllocLocalTemp(typeof(object));
+                cg.ILG.Emit(OpCodes.Dup);
+                tmp.EmitSet(cg);
+                cg.ILG.Emit(OpCodes.Stelem_Ref);
+                tmp.EmitGet(cg);
+                cg.FreeLocalTemp(tmp);
+              }
+            }
+            goto objret;
           case "car": case "cdr":
             CheckArity(1);
-            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             cg.EmitPair(Args[0]);
             cg.EmitFieldGet(typeof(Pair), name=="car" ? "Car" : "Cdr");
             goto objret;
           case "char-upcase": case "char-downcase":
             CheckArity(1);
-            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             cg.EmitTypedNode(Args[0], typeof(char));
             cg.EmitCall(typeof(char), name=="char-upcase" ? "ToUpper" : "ToLower", new Type[] { typeof(char) });
             if(etype!=typeof(char))
@@ -532,12 +592,12 @@ public sealed class CallNode : Node
             goto ret;
           case "bitnot":
             CheckArity(1);
-            if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             Args[0].Emit(cg);
             break;
           case "-":
             if(Args.Length==1)
-            { if(etype==typeof(void)) { EmitVoids(cg, 1); goto ret; }
+            { if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
               opname = "Negate";
               Args[0].Emit(cg);
               break;
@@ -545,7 +605,7 @@ public sealed class CallNode : Node
             else goto plusetc;
           case "+": case "*": case "/": case "//": case "%": case "bitand": case "bitor": case "bitxor": plusetc:
             CheckArity(2, -1);
-            if(etype==typeof(void)) { EmitVoids(cg, Args.Length); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             Args[0].Emit(cg);
             for(int i=1; i<Args.Length-1; i++)
             { Args[i].Emit(cg);
@@ -555,7 +615,7 @@ public sealed class CallNode : Node
             break;
           case "=": case "!=": case "<": case ">": case "<=": case ">=":
             CheckArity(2, -1);
-            if(etype==typeof(void)) { EmitVoids(cg, Args.Length); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             if(Args.Length!=2) goto normal; // TODO: do the code generation for more than 2 arguments
             Args[0].Emit(cg);
             Args[1].Emit(cg);
@@ -581,20 +641,20 @@ public sealed class CallNode : Node
             break;
           case "expt": case "lshift": case "rshift":
             CheckArity(2);
-            if(etype==typeof(void)) { EmitVoids(cg, 2); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             break;
           case "exptmod":
             CheckArity(3);
-            if(etype==typeof(void)) { EmitVoids(cg, 3); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             Args[2].Emit(cg);
             break;
           case "values":
             CheckArity(1, -1);
-            if(etype==typeof(void)) { EmitVoids(cg, Args.Length); goto ret; }
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             if(Args.Length==1) cg.EmitExpression(Args[0]);
             else
             { cg.EmitObjectArray(Args);
@@ -748,6 +808,13 @@ public sealed class CallNode : Node
         return ((string)a[0])[Ops.ToInt(a[1])];
       case "symbol?": CheckArity(1); return a[0] is Symbol;
       case "values": CheckArity(1, -1); return a.Length==1 ? a[0] : new MultipleValues(a);
+      case "vector?": CheckArity(1); return a[0] is object[];
+      case "vector-ref":
+        CheckArity(2); CheckType(a, 0, typeof(object[])); CheckType(a, 1, typeof(int));
+        return ((object[])a[0])[Ops.ToInt(a[1])];
+      case "vector-length":
+        CheckArity(1); CheckType(a, 0, typeof(object[]));
+        return ((object[])a[0]).Length;
       default: throw new NotImplementedException("unhandled inline: "+((VariableNode)Function).Name.String);
     }
   }
@@ -807,8 +874,8 @@ public sealed class CallNode : Node
                                               Ops.TypeName(args[num])));
   }
 
-  void EmitVoids(CodeGenerator cg, int num)
-  { for(int i=0; i<num; i++)
+  void EmitVoids(CodeGenerator cg)
+  { for(int i=0; i<Args.Length; i++)
     { Type type = typeof(void);
       Args[i].Emit(cg, ref type);
       if(type!=typeof(void)) cg.ILG.Emit(OpCodes.Pop);
@@ -885,19 +952,21 @@ public sealed class IfNode : Node
       if(truetype!=falsetype || !Compatible(truetype, etype)) truetype=falsetype=etype=typeof(object);
       else etype=truetype;
 
-      Type ttype = typeof(bool);
-      Test.Emit(cg, ref ttype);
-      if(ttype==typeof(negbool)) cg.ILG.Emit(OpCodes.Brtrue, falselbl);
-      else
-      { if(ttype!=typeof(bool)) cg.EmitIsTrue();
-        cg.ILG.Emit(OpCodes.Brfalse, falselbl);
+      object ttype = MaybeEmitBranch(cg, Test, falselbl, false);
+      if(ttype==null)
+      { IfTrue.Emit(cg, ref truetype);
+        Debug.Assert(Compatible(truetype, etype));
+        if(!Tail) cg.ILG.Emit(OpCodes.Br, endlbl);
+        cg.ILG.MarkLabel(falselbl);
+        cg.EmitExpression(IfFalse, ref falsetype);
+        Debug.Assert(Compatible(falsetype, etype));
       }
-      IfTrue.Emit(cg, ref truetype);
-      Debug.Assert(Compatible(truetype, etype));
-      if(!Tail) cg.ILG.Emit(OpCodes.Br, endlbl);
-      cg.ILG.MarkLabel(falselbl);
-      cg.EmitExpression(IfFalse, ref falsetype);
-      Debug.Assert(Compatible(falsetype, etype));
+      else
+      { if((bool)ttype) IfTrue.Emit(cg, ref truetype);
+        else cg.EmitExpression(IfFalse, ref falsetype);
+        cg.ILG.MarkLabel(falselbl);
+      }
+
       if(!Tail) cg.ILG.MarkLabel(endlbl);
       else if(IfFalse==null) cg.EmitReturn();
     }
@@ -1408,6 +1477,57 @@ public sealed class VariableNode : Node
   public override Type GetNodeType() { return typeof(object); }
 
   public Name Name;
+}
+#endregion
+
+#region VectorNode
+public sealed class VectorNode : Node
+{ public VectorNode(Node[] items) { Items=items; }
+
+  public override void Emit(CodeGenerator cg, ref Type etype)
+  { if(etype==typeof(void))
+    { foreach(Node node in Items)
+        if(!node.IsConstant)
+        { node.Emit(cg, ref etype);
+          if(etype!=typeof(void))
+          { cg.ILG.Emit(OpCodes.Pop);
+            etype = typeof(void);
+          }
+        }
+    }
+    else
+    { if(IsConstant) cg.EmitConstantObject(Evaluate());
+      else cg.EmitObjectArray(Items);
+      etype = typeof(object[]);
+    }
+    if(Tail) cg.EmitReturn();
+  }
+
+  public override object Evaluate()
+  { object[] ret = new object[Items.Length];
+    for(int i=0; i<ret.Length; i++) ret[i] = Items[i].Evaluate();
+    return ret;
+  }
+
+  public override Type GetNodeType() { return typeof(object[]); }
+
+  public override void MarkTail(bool tail)
+  { Tail=tail;
+    foreach(Node node in Items) node.MarkTail(false);
+  }
+
+  public override void Optimize()
+  { bool isconst=true;
+    foreach(Node node in Items) if(!node.IsConstant) { isconst=false; break; }
+    IsConstant = isconst;
+  }
+
+  public override void Walk(IWalker w)
+  { if(w.Walk(this)) foreach(Node n in Items) n.Walk(w);
+    w.PostWalk(this);
+  }
+
+  public readonly Node[] Items;
 }
 #endregion
 
