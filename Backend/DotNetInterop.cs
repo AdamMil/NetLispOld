@@ -81,6 +81,16 @@ public abstract class FunctionWrapperI : FunctionWrapper
 }
 #endregion
 
+#region StructCreator
+public abstract class StructCreator : FunctionWrapper
+{ public override int MaxArgs { get { return 0; } }
+  public override int MinArgs { get { return 0; } }
+  public override Conversion TryMatch(object[] args, Type[] types)
+  { return TryMatch(args, types, Type.EmptyTypes, 0, 0, false);
+  }
+}
+#endregion
+
 #region ReflectedConstructor
 public sealed class ReflectedConstructor : SimpleProcedure
 { public ReflectedConstructor(Type type) : base("#<constructor '"+type.FullName+"'>", 0, -1)
@@ -90,9 +100,11 @@ public sealed class ReflectedConstructor : SimpleProcedure
   public override object Call(object[] args)
   { if(funcs==null)
     { ConstructorInfo[] ci = type.GetConstructors();
-      type  = null;
-      funcs = new FunctionWrapper[ci.Length];
+      bool needDefault = type.IsValueType && !type.IsPrimitive;
+      funcs = new FunctionWrapper[ci.Length + (needDefault ? 1 : 0)];
       for(int i=0; i<ci.Length; i++) funcs[i] = Interop.MakeFunctionWrapper(ci[i]);
+      if(needDefault) funcs[ci.Length] = Interop.MakeStructCreator(type);
+      type = null;
     }
     return Interop.Call(funcs, args);
   }
@@ -114,12 +126,19 @@ public sealed class ReflectedField : SimpleProcedure
     object inst = args[0];
     if(inst==null) throw new ArgumentNullException("field '"+FieldName+"': instance cannot be null");
 
-    FieldInfo fi = inst.GetType().GetField(FieldName);
-    if(fi==null) throw new Exception("Object "+Ops.TypeName(inst)+" has no field "+FieldName);
+    if(hash==null) hash=new HybridDictionary();
+    FieldInfo fi = (FieldInfo)hash[inst.GetType()];
+    if(fi==null)
+    { fi = inst.GetType().GetField(FieldName);
+      if(fi==null) throw new Exception("Object "+Ops.TypeName(inst)+" has no field "+FieldName);
+      hash[inst.GetType()] = fi;
+    }
 
     if(args.Length==1) return fi.GetValue(inst);
     else { fi.SetValue(inst, args[1]); return args[1]; }
   }
+
+  HybridDictionary hash;
 }
 #endregion
 
@@ -211,7 +230,29 @@ public sealed class ReflectedProperty : SimpleProcedure
 
 #region Interop
 public sealed class Interop
-{ 
+{ static Interop()
+  { opnames["op_Addition"]        = "op+";
+    opnames["op_BitwiseAnd"]      = "op_bitand";
+    opnames["op_BitwiseOr"]       = "op_bitor";
+    opnames["op_Decrement"]       = "op--";
+    opnames["op_Division"]        = "op/";
+    opnames["op_Equality"]        = "return ";
+    opnames["op_ExclusiveOr"]     = "op_bitxor";
+    opnames["op_GreaterThan"]     = "op>";
+    opnames["op_GreaterThanOrEqual"] = "op>=";
+    opnames["op_Inequality"]      = "op!=";
+    opnames["op_Increment"]       = "op++";
+    opnames["op_LeftShift"]       = "op_lshift";
+    opnames["op_LessThan"]        = "op<";
+    opnames["op_LessThanOrEqual"] = "op<=";
+    opnames["op_Modulus"]         = "op%";
+    opnames["op_Multiply"]        = "op*";
+    opnames["op_OnesComplement"]  = "op_bitnot";
+    opnames["op_RightShift"]      = "op_rshift";
+    opnames["op_Subtraction"]     = "op-";
+    opnames["op_UnaryNegation"]   = "op_neg";
+  }
+
   #region Call
   public static object Call(FunctionWrapper[] funcs, object[] args)
   { if(funcs.Length==1) return funcs[0].Call(args);
@@ -244,7 +285,6 @@ public sealed class Interop
   }
   #endregion
 
-  // TODO: handle operator overloads
   // TODO: handle arrays
   #region Import
   public static void Import(TopLevel top, Type type)
@@ -295,6 +335,26 @@ public sealed class Interop
       cg.EmitCall(typeof(Ops), "ConvertTo", new Type[] { typeof(object), typeof(Type) });
     }
 
+    if(Options.Debug)
+    { Slot tmp = cg.AllocLocalTemp(typeof(object));
+      Label good = cg.ILG.DefineLabel();
+
+      cg.ILG.Emit(OpCodes.Dup);
+      tmp.EmitSet(cg);
+      cg.ILG.Emit(OpCodes.Isinst, type);
+      cg.ILG.Emit(OpCodes.Brtrue_S, good);
+      cg.EmitString("expected argument of type "+Ops.TypeName(type)+", but received ");
+      tmp.EmitGet(cg);
+      cg.EmitCall(typeof(Ops), "TypeName", new Type[] { typeof(object) });
+      cg.EmitCall(typeof(string), "Concat", new Type[] { typeof(string), typeof(string) });
+      cg.EmitCall(typeof(Ops), "TypeError", new Type[] { typeof(string) });
+      cg.ILG.Emit(OpCodes.Throw);
+      cg.ILG.MarkLabel(good);
+      tmp.EmitGet(cg);
+
+      cg.FreeLocalTemp(tmp);
+    }
+
     if(type.IsValueType)
     { cg.ILG.Emit(OpCodes.Unbox, type);
       if(!useIndirect) cg.EmitIndirectLoad(type);
@@ -308,6 +368,12 @@ public sealed class Interop
     return code==TypeCode.Object || code==TypeCode.DateTime || code==TypeCode.DBNull || code==TypeCode.Decimal;
   }
   #endregion
+
+  static string GetOpName(string realname)
+  { string ret = (string)opnames[realname];
+    if(ret==null) throw new NotImplementedException("unhandled operator: "+realname);
+    return ret;
+  }
 
   #region ImportConstructors
   static void ImportConstructors(TopLevel top, Type type)
@@ -330,45 +396,60 @@ public sealed class Interop
   #region ImportField
   static void ImportField(TopLevel top, FieldInfo fi)
   { string shortBase = fi.IsStatic ? ":"+fi.DeclaringType.Name+"." : ":",
-            fullBase = ":"+fi.DeclaringType.FullName+".", getSuf="get/"+fi.Name, setSuf="set/"+fi.Name;
+            fullBase = ":"+fi.DeclaringType.FullName+".", getSuf="getf/"+fi.Name, setSuf="setf/"+fi.Name;
 
     object obj;
     if(fi.IsStatic)
     { obj = MakeGetWrapper(fi);
       top.Bind(shortBase+getSuf, obj);
       top.Bind(fullBase+getSuf, obj);
+
+      if(!fi.IsInitOnly && !fi.IsLiteral)
+      { obj = MakeSetWrapper(fi);
+        top.Bind(shortBase+setSuf, obj);
+        top.Bind(fullBase+setSuf, obj);
+      }
     }
     else if(!top.Get(shortBase+getSuf, out obj) || !(obj is ReflectedField) ||
             ((ReflectedField)obj).FieldName!=fi.Name)
     { obj = new ReflectedField(fi.Name);
       top.Bind(shortBase+getSuf, obj);
       top.Bind(fullBase+getSuf, obj);
-    }
-    else top.Bind(fullBase+getSuf, obj);
-
-    if(fi.IsStatic && !fi.IsInitOnly && !fi.IsLiteral)
-    { obj = MakeSetWrapper(fi);
       top.Bind(shortBase+setSuf, obj);
+      top.Bind(fullBase+setSuf, obj);
+    }
+    else
+    { top.Bind(fullBase+getSuf, obj);
       top.Bind(fullBase+setSuf, obj);
     }
   }
   #endregion
 
   #region ImportMethods
-  static void ImportMethods(TopLevel top, Type type) { ImportMethods(top, type, type.GetMethods(), "", null); }
+  static void ImportMethods(TopLevel top, Type type)
+  { ArrayList methods = new ArrayList();
+    foreach(MethodInfo mi in type.GetMethods())
+      if(!mi.IsSpecialName || !mi.Name.StartsWith("get_") && !mi.Name.StartsWith("set_") &&
+         mi.Name!="op_Implicit" && mi.Name!="op_Explicit" && mi.Name!="op_UnaryPlus") // TODO: handle implicit & explicit somehow?
+        methods.Add(mi);
+    ImportMethods(top, type, (MethodInfo[])methods.ToArray(typeof(MethodInfo)), "", null);
+  }
 
   static void ImportMethods(TopLevel top, Type type, MethodInfo[] methods, string prefix, string forceName)
   { ListDictionary dict = new ListDictionary();
     foreach(MethodInfo mi in methods)
-    { string key = (mi.IsStatic ? "1$" : "0$") + mi.Name;
+    { int n = mi.IsStatic ? mi.IsSpecialName && mi.Name.StartsWith("op_") ? 2 : 1 : 0;
+      string key = n.ToString()+"$"+mi.Name;
       ArrayList list = (ArrayList)dict[key];
       if(list==null) dict[key]=list=new ArrayList();
       list.Add(mi);
     }
     foreach(DictionaryEntry de in dict)
-    { bool isStatic = ((string)de.Key)[0]=='1';
+    { char n = ((string)de.Key)[0];
+      bool isStatic = n!='0';
       MethodBase[] mi = (MethodBase[])((ArrayList)de.Value).ToArray(typeof(MethodBase));
-      string realName=((string)de.Key).Substring(2), baseName=(forceName==null ? realName : forceName),
+      string realName=((string)de.Key).Substring(2),
+             baseName=forceName!=null ? forceName : n=='2' ? GetOpName(realName) : realName,
                  name=":"+(isStatic ? type.Name+"." : "")+prefix+baseName,
              fullName=":"+type.FullName+"."+prefix+baseName;
 
@@ -584,7 +665,7 @@ public sealed class Interop
     { bool isCons = mi is ConstructorInfo;
       TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
                                                           "sw$"+swi.Next, isCons ? typeof(FunctionWrapper)
-                                                                                      : typeof(FunctionWrapperI));
+                                                                                 : typeof(FunctionWrapperI));
       int numnp = sig.ParamArray ? sig.Params.Length-1 : sig.Params.Length;
       int min = sig.Params.Length - (sig.Defaults==null ? 0 : sig.Defaults.Length) - (sig.ParamArray ? 1 : 0);
       int max = sig.ParamArray ? -1 : sig.Params.Length;
@@ -808,10 +889,10 @@ public sealed class Interop
             
             // if(conv==Identity || conv==Reference) goto pack;
             cg.EmitInt((int)Conversion.Identity);
-            cg.ILG.Emit(OpCodes.Beq_S, pack);
+            cg.ILG.Emit(Options.Debug ? OpCodes.Beq : OpCodes.Beq_S, pack);
             iv.EmitGet(cg);
             cg.EmitInt((int)Conversion.Reference);
-            cg.ILG.Emit(OpCodes.Beq_S, pack);
+            cg.ILG.Emit(Options.Debug ? OpCodes.Beq : OpCodes.Beq_S, pack);
             
             sa.EmitGet(cg); // etype[] pa = new etype[sa.Length];
             cg.EmitPropGet(typeof(Array), "Length");
@@ -824,7 +905,7 @@ public sealed class Interop
             cg.ILG.Emit(OpCodes.Dup);
             cg.ILG.Emit(OpCodes.Ldlen);
             iv.EmitGet(cg);
-            cg.ILG.Emit(OpCodes.Beq_S, call);
+            cg.ILG.Emit(Options.Debug ? OpCodes.Beq : OpCodes.Beq_S, call);
             cg.ILG.Emit(OpCodes.Dup);
             iv.EmitGet(cg);
             if(ind) cg.ILG.Emit(OpCodes.Ldelema);
@@ -940,9 +1021,26 @@ public sealed class Interop
   }
   #endregion
 
-  static readonly Hashtable sigs=new Hashtable(), funcs=new Hashtable(), gets=new Hashtable(), sets=new Hashtable();
-  static Hashtable handlers=new Hashtable(), dsigs=new Hashtable();
-  static Index dwi=new Index(), fwi=new Index(), swi=new Index();
+  #region MakeStructCreator
+  internal static StructCreator MakeStructCreator(Type type)
+  { TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
+                                                        "sc$"+sci.Next, typeof(StructCreator));
+    CodeGenerator cg = tg.DefineMethodOverride("Call", true);
+    Slot slot = cg.AllocLocalTemp(type);
+    slot.EmitGetAddr(cg);
+    cg.ILG.Emit(OpCodes.Initobj, type);
+    slot.EmitGet(cg);
+    cg.ILG.Emit(OpCodes.Box, type);
+    cg.EmitReturn();
+    cg.Finish();
+
+    return (StructCreator)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
+  }
+  #endregion
+
+  static readonly Hashtable sigs=new Hashtable(), funcs=new Hashtable(), gets=new Hashtable(), sets=new Hashtable(),
+                  handlers=new Hashtable(), dsigs=new Hashtable(), opnames=new Hashtable();
+  static Index dwi=new Index(), fwi=new Index(), swi=new Index(), sci=new Index();
 }
 #endregion
 

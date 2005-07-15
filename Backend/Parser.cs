@@ -160,6 +160,44 @@ public sealed class Parser
     return token;
   }
 
+  object ParseInt(string str, int radix)
+  { if(str=="") return 0;
+    try { return Convert.ToInt32(str, radix); }
+    catch(OverflowException)
+    { try { return Convert.ToInt64(str, radix); }
+      catch(OverflowException) { return new Integer(str, radix); }
+    }
+  }
+
+  double ParseNum(string str, int radix)
+  { if(radix==10) return double.Parse(str);
+    else
+    { int pos = str.IndexOf('.');
+      if(pos==-1) return Convert.ToDouble(ParseInt(str, radix));
+      double whole=Convert.ToDouble(ParseInt(str.Substring(0, pos), radix));
+      double  part=Convert.ToDouble(ParseInt(str.Substring(pos+1), radix));
+      return whole + part/radix;
+    }
+  }
+
+  object ParseNum(string str, string exp, int radix, char exact)
+  { double num = ParseNum(str, radix);
+    if(exp!="") num *= Math.Pow(10, ParseNum(exp, radix));
+
+    if(Math.IEEERemainder(num, 1)==0) // integer
+    { if(exact=='i') return num;
+      try { return checked((int)num); }
+      catch(OverflowException)
+      { try { return checked((long)num); }
+        catch(OverflowException) { return new Integer(num); }
+      }
+    }
+    else 
+    { if(exact=='e') throw new NotImplementedException("rationals");
+      return num;
+    }
+  }
+
   char ReadChar()
   { char c;
     if(lastChar!=0) { c=lastChar; lastChar='\0'; return c; }
@@ -176,53 +214,58 @@ public sealed class Parser
 
   object ReadNumber(char c)
   { StringBuilder sb = new StringBuilder();
-    int radix=0;
-    char exact='\0';
-    bool ident=false, pastFlags=!char.IsLetter(c);
-
-    do
-    { if(pastFlags)
-      { sb.Append(c);
-        if(radix==0 && !char.IsDigit(c) && c!='.' && (c!='-' || sb.Length>1)) ident=true;
-      }
-      else
-        switch(c)
-        { case 'b': radix=2; break;
-          case 'o': radix=8; break;
-          case 'd': radix=10; break;
-          case 'x': radix=16; break;
-          case 'e': case 'i': exact=c; break;
-          default: pastFlags=true; continue;
-        }
-      c = ReadChar();
-    } while(c!=0 && !IsDelimiter(c));
+    sb.Append(c);
+    while(!IsDelimiter(c=ReadChar())) sb.Append(c);
     lastChar = c;
 
     if(sb.Length==1)
     { if(sb[0]=='.') return Token.Period;
       if(sb[0]=='-') return "-";
+      if(sb[0]=='+') return "+";
     }
 
     string str = sb.ToString();
-    Match m = numRegex.Match(str);
-    if(ident)
-    { if(!m.Success) return str;
-      if(m.Groups[1].Success) throw new NotImplementedException("complex numbers"); // TODO: add this
-    }
-    else if(!m.Success) throw SyntaxError("invalid number");
+    int radix  = 10;
+    char exact = '\0';
+    bool hasFlags=false;
 
-    if(str.IndexOf('.')!=-1) return exact=='e' ? Builtins.inexactToExact.core(double.Parse(str)) : double.Parse(str);
-    else
-    { m = fracRegex.Match(str);
-      if(m.Success) throw new NotImplementedException("fractions");
-
-      if(radix==0) radix=10;
-      try { return Convert.ToInt32(str, radix); }
-      catch(OverflowException)
-      { try { return Convert.ToInt64(str, radix); }
-        catch(OverflowException) { return new Integer(str, radix); }
-      }
+    if(str[0]=='#')
+    { int start;
+      for(start=1; start<str.Length; start++)
+        switch(str[start])
+        { case 'b': radix=2; break;
+          case 'o': radix=8; break;
+          case 'd': radix=10; break;
+          case 'x': radix=16; break;
+          case 'e': case 'i': exact=str[start]; break;
+          default: goto done;
+        }
+      done:
+      str = str.Substring(start);
+      hasFlags = true;
     }
+
+    Match m = (radix==10 ? decNum : radix==16 ? hexNum : radix==8 ? octNum : binNum).Match(str);
+    if(!m.Success)
+    { if(hasFlags) throw SyntaxError("invalid number: "+sb.ToString());
+      else return str;
+    }
+
+    if(m.Groups["den"].Success)
+    { if(exact!='i') throw new NotImplementedException("rationals");
+      return Convert.ToDouble(ParseInt(m.Groups["num"].Value, radix)) /
+             Convert.ToDouble(ParseInt(m.Groups["den"].Value, radix));
+    }
+
+    object num = ParseNum(m.Groups["num"].Value, m.Groups["exp"].Value, radix, exact);
+
+    if(m.Groups["imag"].Success)
+    { if(exact=='e') throw new NotImplementedException("exact complexes");
+      return new Complex(Convert.ToDouble(num),
+                         Convert.ToDouble(ParseNum(m.Groups["imag"].Value, m.Groups["imagexp"].Value, radix, exact)));
+    }
+    
+    return num;
   }
 
   Token ReadToken()
@@ -230,8 +273,8 @@ public sealed class Parser
 
     while(true)
     { do c=ReadChar(); while(c!=0 && char.IsWhiteSpace(c));
-      
-      if(char.IsDigit(c) || c=='.' || c=='-')
+
+      if(char.IsDigit(c) || c=='.' || c=='-' || c=='+')
       { value = ReadNumber(c);
         return value is Token ? (Token)value : value is string ? Token.Symbol : Token.Literal;
       }
@@ -278,7 +321,7 @@ public sealed class Parser
             }
             break;
           case 'b': case 'o': case 'd': case 'x': case 'i': case 'e':
-            value=ReadNumber(c); return Token.Literal;
+            lastChar=c; value=ReadNumber('#'); return Token.Literal;
           case '<': throw SyntaxError("unable to read: #<...");
           default: throw SyntaxError("unknown notation: #"+c);
         }
@@ -345,10 +388,39 @@ public sealed class Parser
   int    line=1, column=1, pos;
   char   lastChar;
 
-  static bool IsDelimiter(char c) { return char.IsWhiteSpace(c) || c=='(' || c==')' || c=='#' || c=='`' || c==',' || c=='\''; }
-  
-  static readonly Regex numRegex = new Regex(@"^(-?\d*(?:\.\d+)?)(?:\+(-?\d*(?:\.\d+)?)j)?$", RegexOptions.Compiled|RegexOptions.IgnoreCase|RegexOptions.Singleline);
-  static readonly Regex fracRegex = new Regex(@"^(-?\d+)/(-?\d+)$", RegexOptions.Compiled|RegexOptions.Singleline);
+  static bool IsDelimiter(char c) { return char.IsWhiteSpace(c) || c=='(' || c==')' || c=='#' || c=='`' || c==',' || c=='\'' || c=='\0'; }
+
+  static readonly Regex binNum =
+    new Regex(@"^(:?(?<num>[+-]?(?:[01]+(?:\.[01]*)?|\.[01]+))(?:e(?<exp>[+-]?(?:[01]+(?:\.[01]*)?|\.[01]+)))?
+                   (?:(?<imag>[+-]?(?:[01]+(?:\.[01]*)?|\.[01]+))(?:e(?<imagexp>[+-]?(?:[01]+(?:\.[01]*)?|\.[01]+)))?i)?
+                   |
+                   (?<num>[+-]?[01]+)/(?<den>[+-]?[01]+)
+                 )$",
+              RegexOptions.Compiled|RegexOptions.IgnoreCase|RegexOptions.IgnorePatternWhitespace|RegexOptions.Singleline);
+
+  static readonly Regex octNum =
+    new Regex(@"^(?:(?<num>[+-]?(?:[0-7]+(?:\.[0-7]*)?|\.[0-7]+))(?:e(?<exp>[+-]?(?:[0-7]+(?:\.[0-7]*)?|\.[0-7]+)))?
+                    (?:(?<imag>[+-]?(?:[0-7]+(?:\.[0-7]*)?|\.[0-7]+))(?:e(?<imagexp>[+-]?(?:[0-7]+(?:\.[0-7]*)?|\.[0-7]+)))?i)?
+                    |
+                    (?<num>[+-]?[0-7]+)/(?<den>[+-]?[0-7]+)
+                 )$",
+              RegexOptions.Compiled|RegexOptions.IgnoreCase|RegexOptions.IgnorePatternWhitespace|RegexOptions.Singleline);
+
+  static readonly Regex decNum =
+    new Regex(@"^(?:(?<num>[+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:e(?<exp>[+-]?(?:\d+(?:\.\d*)?|\.\d+)))?
+                    (?:(?<imag>[+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:e(?<imagexp>[+-]?(?:\d+(?:\.\d*)?|\.\d+)))?i)?
+                    |
+                    (?<num>[+-]?\d+)/(?<den>[+-]?\d+)
+                 )$",
+              RegexOptions.Compiled|RegexOptions.IgnoreCase|RegexOptions.IgnorePatternWhitespace|RegexOptions.Singleline);
+
+  static readonly Regex hexNum =
+    new Regex(@"^(?:(?<num>[+-]?(?:[\da-f]+(?:\.[\da-f]*)?|\.[\da-f]+))(?:e(?<exp>[+-]?(?:[\da-f]+(?:\.[\da-f]*)?|\.[\da-f]+)))?
+                    (?:(?<imag>[+-]?(?:[\da-f]+(?:\.[\da-f]*)?|\.[\da-f]+))(?:e(?<imagexp>[+-]?(?:[\da-f]+(?:\.[\da-f]*)?|\.[\da-f]+)))?i)?
+                    |
+                    (?<num>[+-]?[\da-f]+)/(?<den>[+-]?[\da-f]+)
+                 )$",
+              RegexOptions.Compiled|RegexOptions.IgnoreCase|RegexOptions.IgnorePatternWhitespace|RegexOptions.Singleline);
 }
 
 } // namespace NetLisp.Backend

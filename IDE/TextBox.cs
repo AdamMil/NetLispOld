@@ -209,7 +209,7 @@ public class LispBox : TextEditorControl
   string PreviousIdentifier()
   { int pos=ActiveTextAreaControl.Caret.Offset, end=pos;
     char c;
-    while(--pos>=0 && (char.IsLetterOrDigit(c=Document.GetCharAt(pos)) || c=='.' || c=='_'));
+    while(--pos>=0 && !char.IsWhiteSpace(c=Document.GetCharAt(pos)) && c!='(' && c!=')');
     return end<=0 ? "" : Document.GetText(pos+1, end-pos-1);
   }
 

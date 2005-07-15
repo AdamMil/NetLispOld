@@ -171,7 +171,28 @@ public sealed class CodeGenerator
     EmitInt(0);
     ILG.Emit(OpCodes.Ceq);
   }
+
+  public void EmitIsFalse(Type type)
+  { if(type==typeof(object)) EmitIsFalse();
+    else if(type==typeof(bool))
+    { EmitInt(0);
+      ILG.Emit(OpCodes.Ceq);
+    }
+    else
+    { ILG.Emit(OpCodes.Pop);
+      EmitInt(type==null ? 1 : 0);
+    }
+  }
+
   public void EmitIsTrue() { EmitCall(typeof(Ops), "IsTrue"); }
+
+  public void EmitIsTrue(Type type)
+  { if(type==typeof(object)) EmitIsTrue();
+    else if(type!=null)
+    { ILG.Emit(OpCodes.Pop);
+      EmitInt(1);
+    }
+  }
 
   public void EmitLine(int line)
   { if(TypeGenerator.Assembly.Symbols!=null)
@@ -191,9 +212,9 @@ public sealed class CodeGenerator
     }
   }
 
-  public void EmitNew(Type type) { ILG.Emit(OpCodes.Newobj, type.GetConstructor(Type.EmptyTypes)); }
+  public void EmitNew(Type type) { EmitNew(type.GetConstructor(Type.EmptyTypes)); }
   public void EmitNew(Type type, Type[] paramTypes)
-  { ILG.Emit(OpCodes.Newobj, type.GetConstructor(SearchAll, null, paramTypes, null));
+  { EmitNew(type.GetConstructor(SearchAll, null, paramTypes, null));
   }
   public void EmitNew(ConstructorInfo ci) { ILG.Emit(OpCodes.Newobj, ci); }
 

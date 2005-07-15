@@ -186,6 +186,50 @@ namespace NetLisp.Backend
                                   (if (cddr init) (caddr init) (car init)))
                                 inits)))))))
 
+(defmacro defstruct (name . fields)
+  (let* ((name-s (symbol->string name))
+         (n+1    (+ (length fields) 1))
+         (names  (make-vector n+1))
+         (inits  (make-vector n+1)))
+    (let loop ((i 1) (ff fields))
+        (if (!= i n+1)
+            (let ((f (car ff)))
+              (vector-set! names i (if (pair? f) (car f) f))
+              (vector-set! inits i (if (pair? f) (cadr f) nil))
+              (loop (+ i 1) (cdr ff)))))
+    (let ((fn (gensym ""args""))
+          (vn (gensym ""vec""))
+          (pn (gensym ""pos"")))
+      `(begin
+         (define ,(string->symbol (string-append ""make-"" name-s))
+           (lambda ,fn
+             (let ((,vn (make-vector ,n+1)) ,pn)
+               (vector-set! ,vn 0 ',name)
+               ,@(let loop ((i 1) (ret nil))
+                   (if (= i n+1) ret
+                       (loop (+ i 1)
+                             (cons
+                               `(set! ,pn (memq ',(vector-ref names i) ,fn))
+                               (cons
+                                 (if (null? (vector-ref inits i))
+                                     `(if ,pn (vector-set! ,vn ,i (cadr ,pn)))
+                                     `(vector-set! ,vn ,i (if ,pn (cadr ,pn) ,(vector-ref inits i))))
+                                 ret)))))
+               ,vn)))
+         ,@(let loop ((i 1) (ret nil))
+             (if (= i n+1) ret
+                 (loop (+ i 1)
+                       (cons
+                         `(define ,(string->symbol (string-append name-s ""."" (symbol->string (vector-ref names i))))
+                            (lambda (s) (vector-ref s ,i)))
+                         (cons
+                           `(define ,(string->symbol (string-append name-s "".set-""
+                                                                    (symbol->string (vector-ref names i)) ""!""))
+                              (lambda (s v) (vector-set! s ,i v)))
+                           ret)))))
+         (define ,(string->symbol (string-append name-s ""?""))
+           (lambda (s) (and (vector? s) (eq? (vector-ref s 0) ',name))))))))
+
 ; fluid-let (needs dynamic-wind)
 
 ; (1+ obj)
@@ -209,7 +253,7 @@ namespace NetLisp.Backend
 (install-expander 'install-expander
   (lambda (x e)
     (let ((name (cadr x)) (body (e (caddr x) e)))
-      (install-expander name (eval body))
+      (install-expander (eval name) (eval body))
       `(install-expander ,name ,body))))
 ")]
 #endregion
@@ -237,6 +281,7 @@ public sealed class Builtins
 public static void loadByName(string name) { Interop.LoadAssemblyByName(name); }
 [SymbolName("load-assembly-from-file")]
 public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name); }
+public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
   #region Character functions
   #region char?
@@ -624,7 +669,6 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
   #endregion
   #endregion
 
-  // TODO: vector->list (and related)
   #region List functions
   #region append
   public sealed class append : Primitive
@@ -1040,6 +1084,26 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
     { Pair pair = obj as Pair;
       if(pair==null) return obj;
       return new Pair(copy(pair.Car), copy(pair.Cdr));
+    }
+  }
+  #endregion
+  
+  #region vector->list
+  public sealed class vectorToList : Primitive
+  { public vectorToList() : base("vector->list", 1, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object[] vec = Ops.ExpectVector(args[0]);
+      if(vec.Length==0) return null;
+      int start, length;
+      if(args.Length==2) { start=0; length=vec.Length; }
+      else
+      { if(args.Length==3) { start=Ops.ExpectInt(args[1]); length=vec.Length-start; }
+        else { start=Ops.ExpectInt(args[1]); length=Ops.ExpectInt(args[2]); }
+        if(start<0 || length<0 || start+length>=vec.Length)
+          throw Ops.ValueError(Name+": start or length out of bounds");
+      }
+      return Ops.List(vec, start, length);
     }
   }
   #endregion
@@ -2202,6 +2266,70 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
   #endregion
   #endregion
 
+  #region Symbol functions
+  #region gensym
+  public sealed class gensym : Primitive
+  { public gensym() : base("gensym", 0, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return new Symbol((args.Length==0 ? "#<g" : "#<"+Ops.ExpectString(args[0])) + gensyms.Next + ">");
+    }
+  }
+  #endregion
+
+  #region string->symbol
+  public sealed class stringToSymbol : Primitive
+  { public stringToSymbol() : base("string->symbol", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Symbol.Get(Ops.ExpectString(args[0]));
+    }
+  }
+  #endregion
+
+  #region string->uninterned-symbol
+  public sealed class stringToUninternedSymbol : Primitive
+  { public stringToUninternedSymbol() : base("string->uninterned-symbol", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return new Symbol(Ops.ExpectString(args[0]));
+    }
+  }
+  #endregion
+
+  #region symbol?
+  public sealed class symbolP : Primitive
+  { public symbolP() : base("symbol?", 1, 1) { }
+  
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return args[0] is Symbol ? Ops.TRUE : Ops.FALSE;
+    }
+  }
+  #endregion
+
+  #region symbol-hash
+  public sealed class symbolHash : Primitive
+  { public symbolHash() : base("symbol-hash", 1, 1) { }
+  
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectSymbol(args[0]).GetHashCode();
+    }
+  }
+  #endregion
+  #region symbol-hash-mod
+  public sealed class symbolHashMod : Primitive
+  { public symbolHashMod() : base("symbol-hash-mod", 2, 2) { }
+  
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectSymbol(args[0]).GetHashCode() % Ops.ExpectInt(args[1]);
+    }
+  }
+  #endregion
+  #endregion
+
   // TODO: string-search-chars (and related)
   #region String functions
   #region list->string
@@ -2923,6 +3051,173 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
     }
   }
   #endregion
+
+  #region symbol->string
+  public sealed class symbolToString : Primitive
+  { public symbolToString() : base("symbol->string", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectSymbol(args[0]).Name;
+    }
+  }
+  #endregion
+  #endregion
+  
+  #region Vector functions
+  #region list->vector
+  public sealed class listToVector : Primitive
+  { public listToVector() : base("list->vector", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ListToArray(Ops.ExpectList(args[0]));
+    }
+  }
+  #endregion
+
+  #region make-vector
+  public sealed class makeVector : Primitive
+  { public makeVector() : base("make-vector", 1, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object[] ret = new object[Ops.ExpectInt(args[0])];
+      if(args.Length==2)
+      { object fill = args[1];
+        for(int i=0; i<ret.Length; i++) ret[i]=fill;
+      }
+      return ret;
+    }
+  }
+  #endregion
+  
+  #region subvector
+  public sealed class subvector : Primitive
+  { public subvector() : base("subvector", 3, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object[] ret, vec = Ops.ExpectVector(args[0]);
+      int start=Ops.ExpectInt(args[1]), length=Ops.ExpectInt(args[2]);
+      if(start<0 || length<0 || start+length>=vec.Length) throw Ops.ValueError(Name+": start or length out of bounds");
+      ret = new object[length];
+      Array.Copy(vec, start, ret, 0, length);
+      return ret;
+    }
+  }
+  #endregion
+  
+  #region vector
+  public sealed class vector : Primitive
+  { public vector() : base("vector", 0, -1) { }
+    public override object Call(object[] args) { return args; }
+  }
+  #endregion
+  
+  #region vector?
+  public sealed class vectorP : Primitive
+  { public vectorP() : base("vector?", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return args[0] is object[] ? Ops.TRUE : Ops.FALSE;
+    }
+  }
+  #endregion
+
+  #region vector-copy
+  public sealed class vectorCopy : Primitive
+  { public vectorCopy() : base("vector-copy", 1, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object[] ret, src=Ops.ExpectVector(args[0]);
+      if(args.Length==2)
+      { ret = new object[Ops.ToInt(args[1])];
+        Array.Copy(src, ret, Math.Min(ret.Length, src.Length));
+      }
+      else ret=(object[])src.Clone();
+      return ret;
+    }
+  }
+  #endregion
+  
+  #region vector-fill!
+  public sealed class vectorFillN : Primitive
+  { public vectorFillN() : base("vector-fill!", 2, 4) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object[] vec=Ops.ExpectVector(args[0]);
+      object  fill=args[1];
+
+      int start, length;
+      if(args.Length==2) { start=0; length=vec.Length; }
+      else
+      { if(args.Length==3) { start=Ops.ExpectInt(args[2]); length=vec.Length-start; }
+        else { start=Ops.ExpectInt(args[2]); length=Ops.ExpectInt(args[3]); }
+        if(start<0 || length<0 || start+length>=vec.Length)
+          throw Ops.ValueError(Name+": start or length out of bounds");
+      }
+
+      for(int end=start+length; start<end; start++); vec[start]=fill;
+      return vec;
+    }
+  }
+  #endregion
+
+  #region vector-length
+  public sealed class vectorLength : Primitive
+  { public vectorLength() : base("vector-length", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectVector(args[0]).Length;
+    }
+  }
+  #endregion
+
+  #region vector-map
+  public sealed class vectorMap : Primitive
+  { public vectorMap() : base("vector-map", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure func = Ops.ExpectProcedure(args[0]);
+      object[] vector=Ops.ExpectVector(args[1]), ret=new object[vector.Length];
+      args = new object[1];
+      for(int i=0; i<vector.Length; i++)
+      { args[0] = vector[i];
+        ret[i] = func.Call(args);
+      }
+      return ret;
+    }
+  }
+  #endregion
+
+  #region vector-ref
+  public sealed class vectorRef : Primitive
+  { public vectorRef() : base("vector-ref", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectVector(args[0])[Ops.ExpectInt(args[1])];
+    }
+  }
+  #endregion
+
+  #region vector-set!
+  public sealed class vectorSetN : Primitive
+  { public vectorSetN() : base("vector-set!", 3, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectVector(args[0])[Ops.ExpectInt(args[1])]=args[2];
+    }
+  }
+  #endregion
+  
+  #region vector-sort!
+  public sealed class vectorSortN : Primitive
+  { public vectorSortN() : base("vector-sort!", 1, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object[] vec = Ops.ExpectVector(args[0]);
+      Array.Sort(vec, args.Length==2 ? new LispComparer(Ops.ExpectProcedure(args[1])) : LispComparer.Default);
+      return vec;
+    }
+  }
+  #endregion
   #endregion
 
   #region call-with-values
@@ -2980,16 +3275,6 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
     return snip.Run(null);
   }
 
-  #region gensym
-  public sealed class gensym : Primitive
-  { public gensym() : base("gensym", 0, 1) { }
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return new Symbol((args.Length==0 ? "#<g" : "#<"+Ops.ExpectString(args[0])) + gensyms.Next + ">");
-    }
-  }
-  #endregion
-
   [SymbolName("#%import-module")]
   public static void _importModule(object module)
   { Importer.GetModule(module).ImportAll(TopLevel.Current);
@@ -3046,17 +3331,6 @@ public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectRef(args[0]).Value=args[1];
-    }
-  }
-  #endregion
-
-  #region symbol?
-  public sealed class symbolP : Primitive
-  { public symbolP() : base("symbol?", 1, 1) { }
-  
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return args[0] is Symbol ? Ops.TRUE : Ops.FALSE;
     }
   }
   #endregion
