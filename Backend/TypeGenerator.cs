@@ -200,6 +200,7 @@ public sealed class TypeGenerator
     return true;
   }
 
+  // TODO: merge identical lists
   public Slot GetConstant(object value)
   { Slot slot;
     bool hash = Convert.GetTypeCode(value)!=TypeCode.Object ||
@@ -285,6 +286,18 @@ public sealed class TypeGenerator
           cg.ILG.Emit(OpCodes.Ldc_R8, c.imag);
           cg.EmitNew(typeof(Complex), new Type[] { typeof(double), typeof(double) });
           goto box;
+        }
+        else if(value is Pair)
+        { Pair pair = (Pair)value;
+          int count = 1;
+          while(true)
+          { cg.EmitConstantObject(pair.Car);
+            Pair next = pair.Cdr as Pair;
+            if(next==null) { cg.EmitConstantObject(pair.Cdr); break; }
+            else { pair=next; count++; }
+          }
+          ConstructorInfo ci = typeof(Pair).GetConstructor(new Type[] { typeof(object), typeof(object) });
+          for(int i=0; i<count; i++) cg.EmitNew(ci);
         }
         else goto default;
         return;

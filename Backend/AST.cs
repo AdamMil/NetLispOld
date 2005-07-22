@@ -52,12 +52,16 @@ public interface IWalker
 
 #region AST
 public sealed class AST
-{ public static LambdaNode Create(object obj)
-  { // wrapping it in a lambda node is done so we can keep the preprocessing code simple, and so that we can support
-    // top-level closures. it's unwrapped later on by SnippetMaker.Generate()
-    LambdaNode node = new LambdaNode(new string[0], false, Parse(obj));
-    node.Preprocess();
-    return node;
+{ public static LambdaNode Create(object obj) { return (LambdaNode)Create(obj, false); }
+  public static Node Create(object obj, bool interpreted)
+  { Node body = Parse(obj);
+    if(!interpreted)
+    { // wrapping it in a lambda node is done so we can keep the preprocessing code simple, and so that we can support
+      // top-level closures. it's unwrapped later on by SnippetMaker.Generate()
+      body = new LambdaNode(new string[0], false, body);
+      body.Preprocess();
+    }
+    return body;
   }
 
   static Node Parse(object obj)
@@ -96,7 +100,7 @@ public sealed class AST
             }
             else names[i] = ((Symbol)bindings.Car).Name;
           }
-          
+
           return new LetNode(names, inits, ParseBody((Pair)pair.Cdr));
         }
         case "lambda":
@@ -385,7 +389,8 @@ public sealed class BodyNode : Node
 
 #region CallNode
 public sealed class CallNode : Node
-{ public CallNode(Node func, Node[] args) { Function=func; Args=args; }
+{ public CallNode(Node func, params Node[] args) { Function=func; Args=args; }
+  public CallNode(string name, params Node[] args) { Function=new VariableNode(name); Args=args; }
   static CallNode()
   { ArrayList cfunc = new ArrayList();
 
@@ -689,134 +694,139 @@ public sealed class CallNode : Node
   { object[] a = new object[Args.Length];
     for(int i=0; i<Args.Length; i++) a[i] = Args[i].Evaluate();
 
-    string name = ((VariableNode)Function).Name.String;
-    try
-    { switch(name)
-      { case "+":
-        { CheckArity(2, -1);
-          object ret = a[0];
-          for(int i=1; i<a.Length; i++) ret = Ops.Add(ret, a[i]);
-          return ret;
-        }
-        case "-":
-        { CheckArity(2, -1);
-          object ret = a[0];
-          for(int i=1; i<a.Length; i++) ret = Ops.Subtract(ret, a[i]);
-          return ret;
-        }
-        case "*":
-        { CheckArity(2, -1);
-          object ret = a[0];
-          for(int i=1; i<a.Length; i++) ret = Ops.Multiply(ret, a[i]);
-          return ret;
-        }
-        case "/":
-        { CheckArity(2, -1);
-          object ret = a[0];
-          for(int i=1; i<a.Length; i++) ret = Ops.Divide(ret, a[i]);
-          return ret;
-        }
-        case "//":
-        { CheckArity(2, -1);
-          object ret = a[0];
-          for(int i=1; i<a.Length; i++) ret = Ops.FloorDivide(ret, a[i]);
-          return ret;
-        }
-        case "%":
-        { CheckArity(2, -1);
-          object ret = a[0];
-          for(int i=1; i<a.Length; i++) ret = Ops.Modulus(ret, a[i]);
-          return ret;
-        }
-        case "expt": CheckArity(2); return Ops.Power(a[0], a[1]);
-        case "exptmod": CheckArity(3); return Ops.PowerMod(a[0], a[1], a[2]);
-        case "bitnot": CheckArity(1); return Ops.BitwiseNegate(a[0]);
-        case "bitand":
-        { CheckArity(2, -1);
-          object ret = a[0];
-          for(int i=1; i<a.Length; i++) ret = Ops.BitwiseAnd(ret, a[i]);
-          return ret;
-        }
-        case "bitor":
-        { CheckArity(2, -1);
-          object ret = a[0];
-          for(int i=1; i<a.Length; i++) ret = Ops.BitwiseOr(ret, a[i]);
-          return ret;
-        }
-        case "bitxor":
-        { CheckArity(2, -1);
-          object ret = a[0];
-          for(int i=1; i<a.Length; i++) ret = Ops.BitwiseXor(ret, a[i]);
-          return ret;
-        }
-        case "lshift": CheckArity(2); return Ops.LeftShift(a[0], a[1]);
-        case "rshift": CheckArity(2); return Ops.RightShift(a[0], a[1]);
-        case "=":
-        { CheckArity(2, -1);
-          for(int i=0; i<a.Length-1; i++) if(!Ops.EqvP(a[i], a[i+1])) return Ops.FALSE;
-          return Ops.TRUE;
-        }
-        case "!=":
-        { CheckArity(2, -1);
-          for(int i=0; i<a.Length-1; i++) if(Ops.EqvP(a[i], a[i+1])) return Ops.FALSE;
-          return Ops.TRUE;
-        }
-        case "<":
-        { CheckArity(2, -1);
-          for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])>=0) return Ops.FALSE;
-          return Ops.TRUE;
-        }
-        case "<=":
-        { CheckArity(2, -1);
-          for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])>0) return Ops.FALSE;
-          return Ops.TRUE;
-        }
-        case ">":
-        { CheckArity(2, -1);
-          for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])<=0) return Ops.FALSE;
-          return Ops.TRUE;
-        }
-        case ">=":
-        { CheckArity(2, -1);
-          for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])<0) return Ops.FALSE;
-          return Ops.TRUE;
+    if(IsConstant)
+    { string name = ((VariableNode)Function).Name.String;
+      try
+      { switch(name)
+        { case "+":
+          { CheckArity(2, -1);
+            object ret = a[0];
+            for(int i=1; i<a.Length; i++) ret = Ops.Add(ret, a[i]);
+            return ret;
+          }
+          case "-":
+          { CheckArity(2, -1);
+            object ret = a[0];
+            for(int i=1; i<a.Length; i++) ret = Ops.Subtract(ret, a[i]);
+            return ret;
+          }
+          case "*":
+          { CheckArity(2, -1);
+            object ret = a[0];
+            for(int i=1; i<a.Length; i++) ret = Ops.Multiply(ret, a[i]);
+            return ret;
+          }
+          case "/":
+          { CheckArity(2, -1);
+            object ret = a[0];
+            for(int i=1; i<a.Length; i++) ret = Ops.Divide(ret, a[i]);
+            return ret;
+          }
+          case "//":
+          { CheckArity(2, -1);
+            object ret = a[0];
+            for(int i=1; i<a.Length; i++) ret = Ops.FloorDivide(ret, a[i]);
+            return ret;
+          }
+          case "%":
+          { CheckArity(2, -1);
+            object ret = a[0];
+            for(int i=1; i<a.Length; i++) ret = Ops.Modulus(ret, a[i]);
+            return ret;
+          }
+          case "expt": CheckArity(2); return Ops.Power(a[0], a[1]);
+          case "exptmod": CheckArity(3); return Ops.PowerMod(a[0], a[1], a[2]);
+          case "bitnot": CheckArity(1); return Ops.BitwiseNegate(a[0]);
+          case "bitand":
+          { CheckArity(2, -1);
+            object ret = a[0];
+            for(int i=1; i<a.Length; i++) ret = Ops.BitwiseAnd(ret, a[i]);
+            return ret;
+          }
+          case "bitor":
+          { CheckArity(2, -1);
+            object ret = a[0];
+            for(int i=1; i<a.Length; i++) ret = Ops.BitwiseOr(ret, a[i]);
+            return ret;
+          }
+          case "bitxor":
+          { CheckArity(2, -1);
+            object ret = a[0];
+            for(int i=1; i<a.Length; i++) ret = Ops.BitwiseXor(ret, a[i]);
+            return ret;
+          }
+          case "lshift": CheckArity(2); return Ops.LeftShift(a[0], a[1]);
+          case "rshift": CheckArity(2); return Ops.RightShift(a[0], a[1]);
+          case "=":
+          { CheckArity(2, -1);
+            for(int i=0; i<a.Length-1; i++) if(!Ops.EqvP(a[i], a[i+1])) return Ops.FALSE;
+            return Ops.TRUE;
+          }
+          case "!=":
+          { CheckArity(2, -1);
+            for(int i=0; i<a.Length-1; i++) if(Ops.EqvP(a[i], a[i+1])) return Ops.FALSE;
+            return Ops.TRUE;
+          }
+          case "<":
+          { CheckArity(2, -1);
+            for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])>=0) return Ops.FALSE;
+            return Ops.TRUE;
+          }
+          case "<=":
+          { CheckArity(2, -1);
+            for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])>0) return Ops.FALSE;
+            return Ops.TRUE;
+          }
+          case ">":
+          { CheckArity(2, -1);
+            for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])<=0) return Ops.FALSE;
+            return Ops.TRUE;
+          }
+          case ">=":
+          { CheckArity(2, -1);
+            for(int i=0; i<a.Length-1; i++) if(Ops.Compare(a[i], a[i+1])<0) return Ops.FALSE;
+            return Ops.TRUE;
+          }
         }
       }
+      catch(Exception e) { throw new ArgumentException(name+": "+e.Message); }
+      
+      switch(name)
+      { case "car": CheckArity(1); CheckType(a, 0, typeof(Pair)); return ((Pair)a[0]).Car;
+        case "cdr": CheckArity(1); CheckType(a, 0, typeof(Pair)); return ((Pair)a[0]).Cdr;
+        case "char?": CheckArity(1); return a[0] is char;
+        case "char-downcase": CheckArity(1); CheckType(a, 0, typeof(char)); return char.ToLower((char)a[0]);
+        case "char-upcase": CheckArity(1); CheckType(a, 0, typeof(char)); return char.ToUpper((char)a[0]);
+        case "eq?": CheckArity(2); return a[0]==a[1];
+        case "eqv?": CheckArity(2); return Ops.EqvP(a[0], a[1]);
+        case "equal?": CheckArity(2); return Ops.EqualP(a[0], a[1]);
+        case "not": CheckArity(1); return !Ops.IsTrue(a[0]);
+        case "null?": CheckArity(1); return a[0]==null;
+        case "pair?": CheckArity(1); return a[0] is Pair;
+        case "procedure?": CheckArity(1); return a[0] is IProcedure;
+        case "string?": CheckArity(1); return a[0] is string;
+        case "string-length":
+          CheckArity(1); CheckType(a, 0, typeof(string));
+          return ((string)a[0]).Length;
+        case "string-null?": CheckArity(1); return a[0] is string && (string)a[0]=="";
+        case "string-ref":
+          CheckArity(2); CheckType(a, 0, typeof(string)); CheckType(a, 1, typeof(int));
+          return ((string)a[0])[Ops.ToInt(a[1])];
+        case "symbol?": CheckArity(1); return a[0] is Symbol;
+        case "values": CheckArity(1, -1); return a.Length==1 ? a[0] : new MultipleValues(a);
+        case "vector?": CheckArity(1); return a[0] is object[];
+        case "vector-ref":
+          CheckArity(2); CheckType(a, 0, typeof(object[])); CheckType(a, 1, typeof(int));
+          return ((object[])a[0])[Ops.ToInt(a[1])];
+        case "vector-length":
+          CheckArity(1); CheckType(a, 0, typeof(object[]));
+          return ((object[])a[0]).Length;
+        default: throw new NotImplementedException("unhandled inline: "+name);
+      }
     }
-    catch(Exception e) { throw new ArgumentException(name+": "+e.Message); }
     
-    switch(name)
-    { case "car": CheckArity(1); CheckType(a, 0, typeof(Pair)); return ((Pair)a[0]).Car;
-      case "cdr": CheckArity(1); CheckType(a, 0, typeof(Pair)); return ((Pair)a[0]).Cdr;
-      case "char?": CheckArity(1); return a[0] is char;
-      case "char-downcase": CheckArity(1); CheckType(a, 0, typeof(char)); return char.ToLower((char)a[0]);
-      case "char-upcase": CheckArity(1); CheckType(a, 0, typeof(char)); return char.ToUpper((char)a[0]);
-      case "eq?": CheckArity(2); return a[0]==a[1];
-      case "eqv?": CheckArity(2); return Ops.EqvP(a[0], a[1]);
-      case "equal?": CheckArity(2); return Ops.EqualP(a[0], a[1]);
-      case "not": CheckArity(1); return !Ops.IsTrue(a[0]);
-      case "null?": CheckArity(1); return a[0]==null;
-      case "pair?": CheckArity(1); return a[0] is Pair;
-      case "procedure?": CheckArity(1); return a[0] is IProcedure;
-      case "string?": CheckArity(1); return a[0] is string;
-      case "string-length":
-        CheckArity(1); CheckType(a, 0, typeof(string));
-        return ((string)a[0]).Length;
-      case "string-null?": CheckArity(1); return a[0] is string && (string)a[0]=="";
-      case "string-ref":
-        CheckArity(2); CheckType(a, 0, typeof(string)); CheckType(a, 1, typeof(int));
-        return ((string)a[0])[Ops.ToInt(a[1])];
-      case "symbol?": CheckArity(1); return a[0] is Symbol;
-      case "values": CheckArity(1, -1); return a.Length==1 ? a[0] : new MultipleValues(a);
-      case "vector?": CheckArity(1); return a[0] is object[];
-      case "vector-ref":
-        CheckArity(2); CheckType(a, 0, typeof(object[])); CheckType(a, 1, typeof(int));
-        return ((object[])a[0])[Ops.ToInt(a[1])];
-      case "vector-length":
-        CheckArity(1); CheckType(a, 0, typeof(object[]));
-        return ((object[])a[0]).Length;
-      default: throw new NotImplementedException("unhandled inline: "+((VariableNode)Function).Name.String);
-    }
+    IProcedure proc = Ops.ExpectProcedure(Function.Evaluate());
+    return proc.Call(a);
   }
   #endregion
 
@@ -921,6 +931,12 @@ public sealed class DefineNode : Node
       etype = typeof(Symbol);
     }
     if(Tail) cg.EmitReturn();
+  }
+
+  public override object Evaluate()
+  { if(InFunc!=null) throw new SyntaxErrorException("define: only allowed at toplevel scope");
+    TopLevel.Current.Bind(Name.String, Value.Evaluate());
+    return Symbol.Get(Name.String);
   }
 
   public override Type GetNodeType() { return typeof(Symbol); }
@@ -1044,6 +1060,12 @@ public class LambdaNode : Node
       etype = RG.ClosureType;
     }
     if(Tail) cg.EmitReturn();
+  }
+
+  public override object Evaluate()
+  { string[] names = new string[Parameters.Length];
+    for(int i=0; i<names.Length; i++) names[i] = Parameters[i].String;
+    return new InterpretedProcedure(Name!=null ? Name : Binding!=null ? Binding.String : null, names, HasList, Body);
   }
 
   public override Type GetNodeType() { return RG.ClosureType; }
@@ -1236,7 +1258,8 @@ public sealed class ListNode : Node
 
   public override void Emit(CodeGenerator cg, ref Type etype)
   { if(!IsConstant || etype!=typeof(void)) // TODO: maybe use cg.EmitConstantObject()
-    { cg.EmitList(Items, Dot);
+    { if(IsConstant) cg.EmitConstantObject(Evaluate());
+      else cg.EmitList(Items, Dot);
       etype = Items.Length==0 && Dot==null ? null : typeof(Pair);
     }
     if(Tail) cg.EmitReturn();
@@ -1307,7 +1330,19 @@ public sealed class LetNode : Node
     for(int i=0; i<Names.Length; i++) cg.Namespace.RemoveSlot(Names[i]);
   }
 
-  public override object Evaluate() { return Body.Evaluate(); } // not evaluating the inits is okay because variablenodes cannot be constant
+  public override object Evaluate()
+  { if(IsConstant || Inits.Length==0) return Body.Evaluate();
+
+    InterpreterEnvironment ne, old=InterpreterEnvironment.Current;
+    try
+    { InterpreterEnvironment.Current = ne = new InterpreterEnvironment(old);
+      for(int i=0; i<Inits.Length; i++)
+        ne.Bind(Names[i].String, Inits[i]==null ? null : Inits[i].Evaluate());
+      return Body.Evaluate();
+    }
+    finally { InterpreterEnvironment.Current=old; }
+  }
+
   public override Type GetNodeType() { return Body.GetNodeType(); }
 
   public override void MarkTail(bool tail)
@@ -1439,6 +1474,14 @@ public sealed class SetNode : Node
     if(Tail) cg.EmitReturn();
   }
 
+  public override object Evaluate()
+  { object value = Value.Evaluate();
+    InterpreterEnvironment cur = InterpreterEnvironment.Current;
+    if(cur==null) TopLevel.Current.Set(Name.String, value);
+    else cur.Set(Name.String, value);
+    return value;
+  }
+
   public override Type GetNodeType() { return Value.GetNodeType(); }
 
   public override void MarkTail(bool tail)
@@ -1472,6 +1515,11 @@ public sealed class VariableNode : Node
       etype = typeof(object);
     }
     if(Tail) cg.EmitReturn();
+  }
+
+  public override object Evaluate()
+  { InterpreterEnvironment cur = InterpreterEnvironment.Current;
+    return cur==null ? TopLevel.Current.Get(Name.String) : cur.Get(Name.String);
   }
 
   public override Type GetNodeType() { return typeof(object); }

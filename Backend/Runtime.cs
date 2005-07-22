@@ -32,12 +32,63 @@ public class SymbolNameAttribute : Attribute
 }
 #endregion
 
+// FIXME: if a lambda accesses top-level environment (by calling EVAL), it will get the TL of the caller,
+//        not of where it was defined
 #region Procedures
 public interface IProcedure
 { int MinArgs { get; }
   int MaxArgs { get; }
 
   object Call(params object[] args);
+}
+
+public abstract class Lambda : IProcedure
+{ public int MinArgs { get { return Template.NumParams; } }
+  public int MaxArgs { get { return Template.HasList ? -1 : Template.NumParams; } }
+
+  public abstract object Call(params object[] args);
+  public override string ToString() { return Template.Name==null ? "#<lambda>" : "#<lambda '"+Template.Name+"'>"; }
+
+  public Template Template;
+}
+
+public abstract class Closure : Lambda
+{ public LocalEnvironment Environment;
+}
+
+public sealed class InterpretedProcedure : Lambda
+{ public InterpretedProcedure(string name, string[] paramNames, bool hasList, Node body)
+  { Template   = new Template(IntPtr.Zero, name, paramNames.Length, hasList);
+    ParamNames = paramNames;
+    Body       = body;
+  }
+
+  public override object Call(object[] args)
+  { args = Template.FixArgs(args);
+    TopLevel oldt = TopLevel.Current;
+    if(ParamNames.Length==0)
+      try
+      { TopLevel.Current = Template.TopLevel;
+        return Body.Evaluate();
+      }
+      finally { TopLevel.Current = oldt; }
+    else
+    { InterpreterEnvironment ne, oldi=InterpreterEnvironment.Current;
+      try
+      { InterpreterEnvironment.Current = ne = new InterpreterEnvironment(oldi);
+        TopLevel.Current = Template.TopLevel;
+        for(int i=0; i<ParamNames.Length; i++) ne.Bind(ParamNames[i], args[i]);
+        return Body.Evaluate();
+      }
+      finally
+      { InterpreterEnvironment.Current = oldi;
+        TopLevel.Current = oldt;
+      }
+    }
+  }
+
+  public readonly Node Body;
+  public readonly string[] ParamNames;
 }
 
 public abstract class SimpleProcedure : IProcedure
@@ -86,21 +137,6 @@ public sealed class Binding
 }
 #endregion
 
-// FIXME: if closure accesses top-level environment (by calling EVAL), it will get the TL of the caller,
-//        not of where it was defined
-#region Closure
-public abstract class Closure : IProcedure
-{ public int MinArgs { get { return Template.NumParams; } }
-  public int MaxArgs { get { return Template.HasList ? -1 : Template.NumParams; } }
-
-  public abstract object Call(params object[] args);
-  public override string ToString() { return Template.Name==null ? "#<lambda>" : "#<lambda '"+Template.Name+"'>"; }
-
-  public Template Template;
-  public LocalEnvironment Environment;
-}
-#endregion
-
 #region RG (stuff that can't be written in C#)
 public sealed class RG
 { static RG()
@@ -112,29 +148,45 @@ public sealed class RG
       cg = tg.DefineConstructor(new Type[] { typeof(Template), typeof(LocalEnvironment) });
       cg.EmitThis();
       cg.EmitArgGet(0);
-      cg.EmitFieldSet(typeof(Closure), "Template");
+      cg.EmitFieldSet(typeof(Lambda), "Template");
       cg.EmitThis();
       cg.EmitArgGet(1);
       cg.EmitFieldSet(typeof(Closure), "Environment");
       cg.EmitReturn();
       cg.Finish();
 
-      cg = tg.DefineMethodOverride(typeof(Closure), "Call", true);
+      cg = tg.DefineMethodOverride(typeof(Lambda), "Call", true);
+      Slot old = cg.AllocLocalTemp(typeof(TopLevel));
+      cg.EmitFieldGet(typeof(TopLevel), "Current");
+      old.EmitSet(cg);
+
+      cg.ILG.BeginExceptionBlock();
+      cg.EmitThis();
+      cg.EmitFieldGet(typeof(Lambda), "Template");
+      cg.EmitFieldGet(typeof(Template), "TopLevel");
+      cg.EmitFieldSet(typeof(TopLevel), "Current");
+
       cg.EmitThis();
       cg.EmitFieldGet(typeof(Closure), "Environment");
 
       cg.EmitThis();
-      cg.EmitFieldGet(typeof(Closure), "Template");
+      cg.EmitFieldGet(typeof(Lambda), "Template");
       cg.EmitArgGet(0);
       cg.EmitCall(typeof(Template), "FixArgs");
 
       cg.EmitThis();
-      cg.EmitFieldGet(typeof(Closure), "Template");
+      cg.EmitFieldGet(typeof(Lambda), "Template");
       cg.EmitFieldGet(typeof(Template), "FuncPtr");
       cg.ILG.Emit(OpCodes.Tailcall);
       cg.ILG.EmitCalli(OpCodes.Calli, CallingConventions.Standard, typeof(object),
                        new Type[] { typeof(LocalEnvironment), typeof(object[]) }, null);
       cg.EmitReturn();
+      cg.ILG.BeginFinallyBlock();
+      old.EmitGet(cg);
+      cg.EmitFieldSet(typeof(TopLevel), "Current");
+      cg.ILG.EndExceptionBlock();
+      cg.EmitReturn();
+      cg.FreeLocalTemp(old);
       cg.Finish();
 
       ClosureType = tg.FinishType();
@@ -147,6 +199,41 @@ public sealed class RG
 #endregion
 
 #region Environments
+public sealed class InterpreterEnvironment
+{ public InterpreterEnvironment(InterpreterEnvironment parent) { this.parent=parent; dict=new ListDictionary(); }
+
+  public void Bind(string name, object value) { dict[name]=value; }
+
+  public object Get(string name)
+  { object ret = dict[name];
+    if(ret==null && !dict.Contains(name)) return parent==null ? TopLevel.Current.Get(name) : parent.Get(name);
+    return ret;
+  }
+
+  public void Set(string name, object value)
+  { if(dict.Contains(name)) dict[name] = value;
+    else if(parent==null) parent.Set(name, value);
+    else TopLevel.Current.Set(name, value);
+  }
+
+  InterpreterEnvironment parent;
+  ListDictionary dict;
+
+  [ThreadStatic] public static InterpreterEnvironment Current;
+}
+
+public sealed class LocalEnvironment
+{ public LocalEnvironment(LocalEnvironment parent, object[] values) { Parent=parent; Values=values; }
+  public LocalEnvironment(LocalEnvironment parent, int length) { Parent=parent; Values=new object[length]; }
+  public LocalEnvironment(LocalEnvironment parent, object[] values, int length)
+  { Parent=parent; Values=new object[length];
+    Array.Copy(values, Values, values.Length);
+  }
+
+  public readonly LocalEnvironment Parent;
+  public readonly object[] Values;
+}
+
 public sealed class TopLevel
 { public enum NS { Main, Macro }
 
@@ -160,7 +247,7 @@ public sealed class TopLevel
 
   public object Get(string name)
   { Binding obj = (Binding)Globals[name];
-    if(obj==null || obj.Value==Binding.Unbound) throw new Exception("no such name"); // FIXME: use a different exception
+    if(obj==null || obj.Value==Binding.Unbound) throw new Exception("no such name: "+name); // FIXME: use a different exception
     return obj.Value;
   }
 
@@ -183,7 +270,7 @@ public sealed class TopLevel
 
   public void Set(string name, object value)
   { Binding obj = (Binding)Globals[name];
-    if(obj==null) throw new Exception("no such name"); // FIXME: ex
+    if(obj==null) throw new Exception("no such name: "+name); // FIXME: ex
     obj.Value = value;
   }
 
@@ -196,23 +283,6 @@ public sealed class TopLevel
   public ListDictionary Modules;
   
   [ThreadStatic] public static TopLevel Current;
-}
-
-public sealed class LocalEnvironment
-{ public LocalEnvironment(LocalEnvironment parent, object[] values) { Parent=parent; Values=values; }
-  public LocalEnvironment(LocalEnvironment parent, int length) { Parent=parent; Values=new object[length]; }
-  public LocalEnvironment(LocalEnvironment parent, object[] values, int length)
-  { Parent=parent; Values=new object[length];
-    Array.Copy(values, Values, values.Length);
-  }
-
-  public readonly LocalEnvironment Parent;
-  public readonly object[] Values;
-
-  public override string ToString()
-  {
-    return base.ToString ();
-  }
 }
 #endregion
 
@@ -257,17 +327,7 @@ public class Module
     public readonly TopLevel.NS NS;
   }
 
-  public void ImportAll(TopLevel top)
-  { foreach(Export e in Exports)
-      if(e.NS==TopLevel.NS.Main) top.Bind(e.AsName, TopLevel.Get(e.Name));
-      else top.Macros[e.AsName] = TopLevel.Macros[e.Name];
-  }
-
-  public readonly TopLevel TopLevel;
-  public readonly string Name;
-  public Export[] Exports;
-
-  internal void AddBuiltins(Type type)
+  public void AddBuiltins(Type type)
   { foreach(MethodInfo mi in type.GetMethods(BindingFlags.Public|BindingFlags.Static|BindingFlags.DeclaredOnly))
     { object[] attrs = mi.GetCustomAttributes(typeof(SymbolNameAttribute), false);
       string name = attrs.Length==0 ? mi.Name : ((SymbolNameAttribute)attrs[0]).Name;
@@ -280,6 +340,16 @@ public class Module
         TopLevel.Bind(prim.Name, prim);
       }
   }
+
+  public void ImportAll(TopLevel top)
+  { foreach(Export e in Exports)
+      if(e.NS==TopLevel.NS.Main) top.Bind(e.AsName, TopLevel.Get(e.Name));
+      else top.Macros[e.AsName] = TopLevel.Macros[e.Name];
+  }
+
+  public readonly TopLevel TopLevel;
+  public readonly string Name;
+  public Export[] Exports;
 
   internal void CreateExports() // FIXME: this exports objects imported from the base (parent) module
   { ArrayList exports = new ArrayList();
@@ -318,6 +388,14 @@ public sealed class MultipleValues
 #region Ops
 public sealed class Ops
 { Ops() { }
+
+  public static Pair Append(Pair list1, Pair list2)
+  { if(list1==null) return list2;
+    else
+    { if(list2!=null) Mods.Srfi1.lastPair.core(list1).Cdr=list2;
+      return list1;
+    }
+  }
 
   public static object AreEqual(object a, object b) { return FromBool(EqvP(a, b)); }
 
@@ -705,7 +783,7 @@ public sealed class Ops
 
   public static Symbol ExpectSymbol(object obj)
   { Symbol ret = obj as Symbol;
-    if(ret==null) throw new ArgumentException("expected Symbol but received "+TypeName(obj));
+    if(ret==null) throw new ArgumentException("expected symbol but received "+TypeName(obj));
     return ret;
   }
 
@@ -1254,7 +1332,7 @@ public sealed class Symbol
 #region Template
 public sealed class Template
 { public Template(IntPtr func, string name, int numParams, bool hasList)
-  { FuncPtr=func; Name=name; NumParams=numParams; HasList=hasList;
+  { TopLevel=TopLevel.Current; FuncPtr=func; Name=name; NumParams=numParams; HasList=hasList;
   }
 
   public object[] FixArgs(object[] args)
@@ -1273,6 +1351,7 @@ public sealed class Template
     return args;
   }
 
+  public readonly TopLevel TopLevel;
   public readonly string Name;
   public readonly IntPtr FuncPtr;
   public readonly int  NumParams;

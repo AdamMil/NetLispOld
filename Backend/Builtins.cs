@@ -108,7 +108,11 @@ namespace NetLisp.Backend
                                 (caddr x)))
             (e `(letrec ((,name (lambda ,(map car bindings) ,@(cdddr x))))
                   (,name ,@(map cadr bindings))) e))
-          `(let ,bindings ,@(#_body-expander (cddr x) e))))))
+          `(let ,(map (lambda (init) (if (pair? init)
+                                         (list (car init) (e (cadr init) e))
+                                         init))
+                      bindings)
+                ,@(#_body-expander (cddr x) e))))))
 
 (install-expander 'if
   (lambda (x e) `(if ,@(map (lambda (x) (e x e)) (cdr x)))))
@@ -627,7 +631,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       else
         switch(name.ToLower())
         { case "space": c=(char)32; break;
-          case "lf": case "linefeed": c=(char)10; break;
+          case "lf": case "linefeed": case "newline": c=(char)10; break;
           case "cr": case "return": c=(char)13; break;
           case "tab": case "ht": c=(char)9; break;
           case "bs": case "backspace": c=(char)8; break;
@@ -735,7 +739,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       Pair  list=Ops.ExpectList(args[1]);
       while(list!=null)
       { Pair pair = list.Car as Pair;
-        if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+        if(pair==null) throw Ops.ValueError(name+": alists must contain only pairs");
         if(pair.Car==obj) return list;
         list = list.Cdr as Pair;
       }
@@ -752,7 +756,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       Pair  list=Ops.ExpectList(args[1]);
       while(list!=null)
       { Pair pair = list.Car as Pair;
-        if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+        if(pair==null) throw Ops.ValueError(name+": alists must contain only pairs");
         if(Ops.EqvP(obj, pair.Car)) return list;
         list = list.Cdr as Pair;
       }
@@ -770,7 +774,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       if(args.Length==2)
         while(list!=null)
         { Pair pair = list.Car as Pair;
-          if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+          if(pair==null) throw Ops.ValueError(name+": alists must contain only pairs");
           if(Ops.EqualP(obj, pair.Car)) return list;
           list = list.Cdr as Pair;
         }
@@ -780,7 +784,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         args[1] = obj;
         while(list!=null)
         { Pair pair = list.Car as Pair;
-          if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
+          if(pair==null) throw Ops.ValueError(name+": alists must contain only pairs");
           args[0] = pair.Car;
           if(Ops.IsTrue(pred.Call(args))) return list;
           list = list.Cdr as Pair;
@@ -891,7 +895,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     public override object Call(object[] args)
     { CheckArity(args);
       Pair p = Mods.Srfi1.drop.core(Name, Ops.ExpectPair(args[0]), Ops.ExpectInt(args[1]));
-      if(p==null) throw new ArgumentException(Name+": list is not long enough");
+      if(p==null) throw new ArgumentException(name+": list is not long enough");
       return p.Car;
     }
   }
@@ -1101,7 +1105,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       { if(args.Length==3) { start=Ops.ExpectInt(args[1]); length=vec.Length-start; }
         else { start=Ops.ExpectInt(args[1]); length=Ops.ExpectInt(args[2]); }
         if(start<0 || length<0 || start+length>=vec.Length)
-          throw Ops.ValueError(Name+": start or length out of bounds");
+          throw Ops.ValueError(name+": start or length out of bounds");
       }
       return Ops.List(vec, start, length);
     }
@@ -1167,7 +1171,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
             if(c.imag==0) return Math.Abs(c.real);
           }
           goto default;
-        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
     }
   }
@@ -1245,7 +1249,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
             if(c.imag==0) return Math.Ceiling(c.real);
           }
           goto default;
-        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
     }
   }
@@ -1316,7 +1320,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
           if(obj is Integer) return ((Integer)obj).Abs;
           if(obj is Complex) return ((Complex)obj).Magnitude;
           goto default;
-        default: throw Ops.TypeError(Name+": expected a number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a number, but received "+Ops.TypeName(obj));
       }
     }
   }
@@ -1375,7 +1379,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
             if(c.imag==0) return Math.Floor(c.real);
           }
           goto default;
-        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
     }
   }
@@ -1404,7 +1408,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
             if(c.imag==0) return Math.Round(c.real, places);
           }
           goto default;
-        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
     }
 
@@ -1473,7 +1477,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
             if(c.imag==0) return doubleCore(c.real);
           }
           goto default;
-        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
     }
     
@@ -1541,7 +1545,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
             if(c.imag==0) { iv=(int)c.real; goto isint; }
           }
           goto default;
-        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
       
       isint: return (iv&1)==0 && iv!=0 ? Ops.TRUE : Ops.FALSE;
@@ -1566,7 +1570,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
           if(obj is Integer) return Ops.TRUE;
           if(obj is Complex) return Ops.FALSE;
           goto default;
-        default: throw Ops.TypeError(Name+": expected a number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a number, but received "+Ops.TypeName(obj));
       }
     }
   }
@@ -1589,7 +1593,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
           if(obj is Integer) return Ops.TRUE;
           if(obj is Complex) return Ops.FALSE;
           goto default;
-        default: throw Ops.TypeError(Name+": expected a number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a number, but received "+Ops.TypeName(obj));
       }
     }
   }
@@ -1617,7 +1621,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         case TypeCode.Object:
           if(obj is Integer) return ((Integer)obj).ToDouble();
           goto default;
-        default: throw Ops.TypeError(Name+": expected a number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a number, but received "+Ops.TypeName(obj));
       }
     }
   }
@@ -1650,7 +1654,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
           if(obj is Integer) return Ops.FALSE;
           if(obj is Complex) return Ops.TRUE;
           goto default;
-        default: throw Ops.TypeError(Name+": expected a number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a number, but received "+Ops.TypeName(obj));
       }
     }
   }
@@ -1753,7 +1757,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         case TypeCode.Object:
           if(obj is Integer) return ((Integer)obj).Sign==-1;
           goto default;
-        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
     }
   }
@@ -1811,7 +1815,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
             if(c.imag==0) { iv=(int)c.real; goto isint; }
           }
           goto default;
-        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
       
       isint: return (iv&1)!=0 ? Ops.TRUE : Ops.FALSE;
@@ -1842,7 +1846,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
           if(obj is Integer) return (Integer)obj==Integer.Zero;
           if(obj is Complex) return (Complex)obj==Complex.Zero;
           goto default;
-        default: throw Ops.TypeError(Name+": expected a number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a number, but received "+Ops.TypeName(obj));
       }
     }
   }
@@ -1870,7 +1874,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         case TypeCode.Object:
           if(obj is Integer) return ((Integer)obj).Sign==1;
           goto default;
-        default: throw Ops.TypeError(Name+": expected a real number, but received "+Ops.TypeName(obj));
+        default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
     }
   }
@@ -3096,7 +3100,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     { CheckArity(args);
       object[] ret, vec = Ops.ExpectVector(args[0]);
       int start=Ops.ExpectInt(args[1]), length=Ops.ExpectInt(args[2]);
-      if(start<0 || length<0 || start+length>=vec.Length) throw Ops.ValueError(Name+": start or length out of bounds");
+      if(start<0 || length<0 || start+length>=vec.Length) throw Ops.ValueError(name+": start or length out of bounds");
       ret = new object[length];
       Array.Copy(vec, start, ret, 0, length);
       return ret;
@@ -3151,7 +3155,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       { if(args.Length==3) { start=Ops.ExpectInt(args[2]); length=vec.Length-start; }
         else { start=Ops.ExpectInt(args[2]); length=Ops.ExpectInt(args[3]); }
         if(start<0 || length<0 || start+length>=vec.Length)
-          throw Ops.ValueError(Name+": start or length out of bounds");
+          throw Ops.ValueError(name+": start or length out of bounds");
       }
 
       for(int end=start+length; start<end; start++); vec[start]=fill;
@@ -3309,6 +3313,20 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     public override object Call(object[] args)
     { CheckArity(args);
       return args[0]==null ? Ops.TRUE : Ops.FALSE;
+    }
+  }
+  #endregion
+
+  #region ref
+  public sealed class @ref : Primitive
+  { public @ref() : base("ref", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IList list = args[0] as IList;
+      if(list!=null) return list[Ops.ExpectInt(args[1])];
+      IDictionary dict = args[0] as IDictionary;
+      if(dict!=null) return dict[args[1]];
+      throw Ops.TypeError(name+": unhandled container type "+Ops.TypeName(args[0]));
     }
   }
   #endregion

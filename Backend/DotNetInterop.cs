@@ -343,6 +343,10 @@ public sealed class Interop
       tmp.EmitSet(cg);
       cg.ILG.Emit(OpCodes.Isinst, type);
       cg.ILG.Emit(OpCodes.Brtrue_S, good);
+      if(!type.IsValueType)
+      { tmp.EmitGet(cg);
+        cg.ILG.Emit(OpCodes.Brfalse_S, good); // null reference types are okay
+      }
       cg.EmitString("expected argument of type "+Ops.TypeName(type)+", but received ");
       tmp.EmitGet(cg);
       cg.EmitCall(typeof(Ops), "TypeName", new Type[] { typeof(object) });
