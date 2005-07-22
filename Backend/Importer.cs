@@ -40,6 +40,13 @@ public sealed class Importer
     bad: throw new SyntaxErrorException("malformed module name");
   }
   
+  public static Module GetModule(Type type)
+  { ModulePath mp = new ModulePath(type.FullName, "%_builtin");
+    Module module = (Module)modules[mp];
+    if(module==null) modules[mp] = module = ModuleGenerator.Generate(type);
+    return module;
+  }
+
   public static Module GetModule(string path)
   { path = Path.GetFullPath(currentDir==null ? path : Path.Combine(currentDir, path));
     return GetModule(new ModulePath("%fs", path));
@@ -209,7 +216,6 @@ public sealed class ModuleGenerator
       { TopLevel.Current = ret.TopLevel;
         Builtins.eval(Parser.FromString(((LispCodeAttribute)attrs[0]).Code).Parse());
       }
-catch(Exception e) { Console.WriteLine(e); }
       finally { TopLevel.Current = old; }
     }
 
