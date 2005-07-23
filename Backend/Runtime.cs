@@ -156,7 +156,10 @@ public sealed class RG
       cg.Finish();
 
       cg = tg.DefineMethodOverride(typeof(Lambda), "Call", true);
-      Slot old = cg.AllocLocalTemp(typeof(TopLevel));
+      // FIXME: this was put here to switch TopLevel.Current when a lambda is called, but that breaks compilation
+      // because the call to "expand" installs macros into the wrong place. but removing it causes problems too.
+      // find a solution that works for both.
+      /*Slot old = cg.AllocLocalTemp(typeof(TopLevel));
       cg.EmitFieldGet(typeof(TopLevel), "Current");
       old.EmitSet(cg);
 
@@ -164,7 +167,7 @@ public sealed class RG
       cg.EmitThis();
       cg.EmitFieldGet(typeof(Lambda), "Template");
       cg.EmitFieldGet(typeof(Template), "TopLevel");
-      cg.EmitFieldSet(typeof(TopLevel), "Current");
+      cg.EmitFieldSet(typeof(TopLevel), "Current");*/
 
       cg.EmitThis();
       cg.EmitFieldGet(typeof(Closure), "Environment");
@@ -181,12 +184,12 @@ public sealed class RG
       cg.ILG.EmitCalli(OpCodes.Calli, CallingConventions.Standard, typeof(object),
                        new Type[] { typeof(LocalEnvironment), typeof(object[]) }, null);
       cg.EmitReturn();
-      cg.ILG.BeginFinallyBlock();
+      /*cg.ILG.BeginFinallyBlock();
       old.EmitGet(cg);
       cg.EmitFieldSet(typeof(TopLevel), "Current");
       cg.ILG.EndExceptionBlock();
       cg.EmitReturn();
-      cg.FreeLocalTemp(old);
+      cg.FreeLocalTemp(old);*/
       cg.Finish();
 
       ClosureType = tg.FinishType();
@@ -354,9 +357,7 @@ public class Module
   internal void CreateExports() // FIXME: this exports objects imported from the base (parent) module
   { ArrayList exports = new ArrayList();
     foreach(string name in TopLevel.Globals.Keys)
-{ if(((Binding)TopLevel.Globals[name]).Value==Binding.Unbound) continue; // FIXME: don't allow free variables in modules
       if(!name.StartsWith("#_")) exports.Add(new Module.Export(name));
-}
     foreach(string name in TopLevel.Macros.Keys)
       if(!name.StartsWith("#_")) exports.Add(new Module.Export(name, TopLevel.NS.Macro));
 
@@ -743,6 +744,13 @@ public sealed class Ops
   public static Complex ExpectComplex(object obj)
   { try { return (Complex)obj; }
     catch(InvalidCastException) { throw new ArgumentException("expected complex but received "+TypeName(obj)); }
+  }
+
+  public static IEnumerator ExpectEnumerator(object obj)
+  { IEnumerable ea = obj as IEnumerable;
+    IEnumerator  e = ea==null ? obj as IEnumerator : ea.GetEnumerator();
+    if(e==null) throw Ops.TypeError("expected enumerable object but received "+Ops.TypeName(obj));
+    return e;
   }
 
   public static int ExpectInt(object obj)
@@ -1231,6 +1239,9 @@ public sealed class Ops
     }
   }
 
+  public static ValueErrorException ValueError(string message)
+  { return new ValueErrorException(message);
+  }
   public static ValueErrorException ValueError(string format, params object[] args)
   { return new ValueErrorException(string.Format(format, args));
   }
