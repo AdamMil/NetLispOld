@@ -22,9 +22,7 @@ public abstract class Namespace
     if(ret==null)
     { if(Parent!=null) ret = Parent.GetSlot(name, false);
       if(ret==null && makeIt)
-      { ret = name.Depth==Name.Local ? codeGen.AllocLocalTemp(typeof(object)) : MakeSlot(name);
-        slots[name] = ret = ret;
-      }
+        slots[name] = ret = name.Depth==Name.Local ? codeGen.AllocLocalTemp(typeof(object)) : MakeSlot(name);
     }
     return ret;
   }

@@ -309,6 +309,20 @@ public sealed class Parser
             value = sb.ToString();
             return Token.Symbol;
           }
+          case '"': case '\'':
+          { char delim = c;
+            StringBuilder sb = new StringBuilder();
+            while(true)
+            { c = ReadChar();
+              if(c==delim)
+              { c = ReadChar();
+                if(c!=delim) { lastChar=c; break; }
+              }
+              sb.Append(c);
+            }
+            value = sb.ToString();
+            return Token.Literal;
+          }
           case '(': return Token.Vector;
           case '|':
             while(true)

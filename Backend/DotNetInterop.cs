@@ -99,11 +99,7 @@ public sealed class ReflectedConstructor : SimpleProcedure
 
   public override object Call(object[] args)
   { if(funcs==null)
-    { ConstructorInfo[] ci = type.GetConstructors();
-      bool needDefault = type.IsValueType && !type.IsPrimitive;
-      funcs = new FunctionWrapper[ci.Length + (needDefault ? 1 : 0)];
-      for(int i=0; i<ci.Length; i++) funcs[i] = Interop.MakeFunctionWrapper(ci[i]);
-      if(needDefault) funcs[ci.Length] = Interop.MakeStructCreator(type);
+    { funcs = Interop.GetConstructors(type);
       type = null;
     }
     return Interop.Call(funcs, args);
@@ -174,21 +170,11 @@ public sealed class ReflectedMethod : SimpleProcedure
 
   public override object Call(object[] args)
   { CheckArity(args);
-
     object inst = args[0];
     if(inst==null) throw new ArgumentNullException("property '"+MethodName+"': instance cannot be null");
-
     if(hash==null) hash = new HybridDictionary();
     FunctionWrapper[] funcs = (FunctionWrapper[])hash[inst.GetType()]; // TODO: thread safety?
-
-    if(funcs==null)
-    { ArrayList list = new ArrayList();
-      foreach(MethodInfo mi in inst.GetType().GetMethods())
-        if(mi.Name==MethodName) list.Add(Interop.MakeFunctionWrapper(mi));
-      if(list.Count==0) throw new ArgumentException("type "+inst.GetType().FullName+" does not have a '"+MethodName+"' method");
-      hash[inst.GetType()] = funcs = (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
-    }
-
+    if(funcs==null) hash[inst.GetType()] = funcs = Interop.GetFunctions(inst.GetType(), MethodName);
     return Interop.Call(funcs, args);
   }
 
@@ -210,17 +196,7 @@ public sealed class ReflectedProperty : SimpleProcedure
 
     if(hash==null) hash = new HybridDictionary();
     FunctionWrapper[] funcs = (FunctionWrapper[])hash[inst.GetType()]; // TODO: thread safety?
-
-    if(funcs==null)
-    { PropertyInfo pi = inst.GetType().GetProperty(PropertyName);
-      if(pi==null) throw new Exception("Object "+Ops.TypeName(inst)+" has no property "+PropertyName);
-
-      hash[inst.GetType()] = funcs = new FunctionWrapper[pi.CanRead && pi.CanWrite ? 2 : 1];
-      int idx=0;
-      if(pi.CanRead)  funcs[idx++] = Interop.MakeFunctionWrapper(pi.GetGetMethod());
-      if(pi.CanWrite) funcs[idx]   = Interop.MakeFunctionWrapper(pi.GetSetMethod());
-    }
-
+    if(funcs==null) hash[inst.GetType()] = funcs = Interop.GetPropertyFunctions(inst.GetType(), PropertyName);
     return Interop.Call(funcs, args);
   }
 
@@ -287,7 +263,8 @@ public sealed class Interop
 
   // TODO: handle arrays
   #region Import
-  public static void Import(TopLevel top, Type type)
+  public static void Import(TopLevel top, Type type) { Import(top, type, true); }
+  public static void Import(TopLevel top, Type type, bool importNestedTypes)
   { top.Bind("::"+type.Name, type);
     top.Bind("::"+type.FullName, type);
 
@@ -296,6 +273,8 @@ public sealed class Interop
     foreach(FieldInfo fi in type.GetFields()) ImportField(top, fi);
     ImportMethods(top, type);
     ImportProperties(top, type);
+    if(importNestedTypes)
+      foreach(Type nested in type.GetNestedTypes(BindingFlags.Public)) Import(top, nested, true);
   }
   #endregion
 
@@ -304,13 +283,68 @@ public sealed class Interop
   }
   public static void LoadAssemblyFromFile(string name) { Assembly.LoadFrom(name); }
 
+  public static FunctionWrapper[] GetConstructors(Type type)
+  { ConstructorInfo[] ci = type.GetConstructors();
+    bool needDefault = type.IsValueType && !type.IsPrimitive;
+    FunctionWrapper[] ret = new FunctionWrapper[ci.Length + (needDefault ? 1 : 0)];
+    for(int i=0; i<ci.Length; i++) ret[i] = Interop.MakeFunctionWrapper(ci[i]);
+    if(needDefault) ret[ci.Length] = Interop.MakeStructCreator(type);
+    return ret;
+  }
+
+  public static FunctionWrapper[] GetFunctions(Type type, string name)
+  { ArrayList list = new ArrayList();
+    foreach(MethodInfo mi in type.GetMethods())
+      if(mi.Name==name) list.Add(Interop.MakeFunctionWrapper(mi));
+    if(list.Count==0) throw new ArgumentException("type "+type.FullName+" does not have a '"+name+"' method");
+    return (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
+  }
+
+  public static FunctionWrapper[] GetFunctions(Type type, string name, bool statics)
+  { ArrayList list = new ArrayList();
+    foreach(MethodInfo mi in type.GetMethods(statics ? BindingFlags.Public|BindingFlags.Static
+                                                     : BindingFlags.Public|BindingFlags.Instance))
+      if(mi.Name==name) list.Add(Interop.MakeFunctionWrapper(mi));
+    if(list.Count==0) throw new ArgumentException("type "+type.FullName+" does not have a '"+name+"' method");
+    return (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
+  }
+
+  public static FunctionWrapper[] GetPropertyFunctions(Type type, string name)
+  { ArrayList list = new ArrayList();
+    foreach(PropertyInfo pi in type.GetProperties())
+      if(pi.Name==name)
+      { if(pi.CanRead) list.Add(Interop.MakeFunctionWrapper(pi.GetGetMethod()));
+        if(pi.CanWrite) list.Add(Interop.MakeFunctionWrapper(pi.GetSetMethod()));
+      }
+    if(list.Count==0) throw new ArgumentException("type "+type.FullName+" does not have a '"+name+"' property");
+    return (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
+  }
+
+  public static FunctionWrapper[] GetPropertyGetters(Type type, string name, bool statics)
+  { ArrayList list = new ArrayList();
+    foreach(PropertyInfo pi in type.GetProperties(statics ? BindingFlags.Public|BindingFlags.Static
+                                                          : BindingFlags.Public|BindingFlags.Instance))
+      if(pi.CanRead && pi.Name==name) list.Add(Interop.MakeFunctionWrapper(pi.GetGetMethod()));
+    if(list.Count==0) throw new ArgumentException("type "+type.FullName+" does not have a '"+name+"' getter");
+    return (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
+  }
+
+  public static FunctionWrapper[] GetPropertySetters(Type type, string name, bool statics)
+  { ArrayList list = new ArrayList();
+    foreach(PropertyInfo pi in type.GetProperties(statics ? BindingFlags.Public|BindingFlags.Static
+                                                          : BindingFlags.Public|BindingFlags.Instance))
+      if(pi.CanWrite && pi.Name==name) list.Add(Interop.MakeFunctionWrapper(pi.GetSetMethod()));
+    if(list.Count==0) throw new ArgumentException("type "+type.FullName+" does not have a '"+name+"' setter");
+    return (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
+  }
+
   delegate object Create(IProcedure proc);
 
   #region Emit helpers
   static void EmitArrayStore(CodeGenerator cg, Type type)
   { switch(Type.GetTypeCode(type))
     { case TypeCode.Boolean: case TypeCode.Byte: case TypeCode.SByte: cg.ILG.Emit(OpCodes.Stelem_I1); break;
-      case TypeCode.Int16: case TypeCode.UInt16: cg.ILG.Emit(OpCodes.Stelem_I2); break;
+      case TypeCode.Char: case TypeCode.Int16: case TypeCode.UInt16: cg.ILG.Emit(OpCodes.Stelem_I2); break;
       case TypeCode.Int32: case TypeCode.UInt32: cg.ILG.Emit(OpCodes.Stelem_I4); break;
       case TypeCode.Int64: case TypeCode.UInt64: cg.ILG.Emit(OpCodes.Stelem_I8); break;
       case TypeCode.Single: cg.ILG.Emit(OpCodes.Stelem_R4); break;
@@ -504,7 +538,7 @@ public sealed class Interop
     { MethodInfo mi = delegateType.GetMethod("Invoke", BindingFlags.Public|BindingFlags.Instance);
       Signature sig = new Signature(mi, true);
 
-      lock(dsigs) cr = (Create)dsigs[sig]; // FIXME: improve thread safety elsewhere
+      lock(dsigs) cr = (Create)dsigs[sig]; // FIXME: improve thread safety here and elsewhere
       if(cr==null)
       { for(int i=0; i<sig.Params.Length; i++)
           if(sig.Params[i].IsByRef) throw new NotImplementedException(); // TODO: implement this
@@ -538,13 +572,13 @@ public sealed class Interop
           cg.EmitReturn();
           cg.Finish();
         }
-        
+
         cg = tg.DefineStaticMethod("Create", typeof(object), new Type[] { typeof(IProcedure) });
         cg.EmitArgGet(0);
         cg.EmitNew(cons);
         cg.EmitReturn();
         cg.Finish();
-        
+
         Type type = tg.FinishType();
         cr = (Create)Delegate.CreateDelegate(typeof(Create), type.GetMethod("Create"));
         lock(dsigs) dsigs[sig] = cr;
@@ -1025,6 +1059,7 @@ public sealed class Interop
   }
   #endregion
 
+  // TODO: cache these
   #region MakeStructCreator
   internal static StructCreator MakeStructCreator(Type type)
   { TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
