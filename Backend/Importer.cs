@@ -27,7 +27,6 @@ using System.Reflection;
 namespace NetLisp.Backend
 {
 
-#region Importer
 public sealed class Importer
 { Importer() { }
   static Importer()
@@ -62,9 +61,11 @@ public sealed class Importer
   
   public static Module GetModule(Type type)
   { ModulePath mp = new ModulePath(type.FullName, "%_builtin");
-    Module module = (Module)modules[mp];
-    if(module==null) modules[mp] = module = ModuleGenerator.Generate(type);
-    return module;
+    lock(modules)
+    { Module module = (Module)modules[mp];
+      if(module==null) modules[mp] = module = ModuleGenerator.Generate(type);
+      return module;
+    }
   }
 
   public static Module GetModule(string path)
@@ -86,39 +87,41 @@ public sealed class Importer
   }
 
   static Module GetModule(ModulePath mp)
-  { Module module = (Module)modules[mp];
+  { lock(modules)
+    { Module module = (Module)modules[mp];
 
-    if(module==null)
-    { if(modules.Contains(mp)) throw new ModuleLoadException("circular module requirements"); // TODO: improve this message
-      modules[mp] = null;
+      if(module==null)
+      { if(modules.Contains(mp)) throw new ModuleLoadException("circular module requirements"); // TODO: improve this message
+        modules[mp] = null;
 
-      try
-      { switch(mp.Collection)
-        { case "%fs": module = LoadFromFile(mp.Name); break;
-          case "%builtin":
-          { if(mp.Name=="Builtins") module = Builtins.Instance;
-            else
-            { Type type = Type.GetType("NetLisp.Mods."+mp.Name);
-              if(type!=null) module = ModuleGenerator.Generate(type);
+        try
+        { switch(mp.Collection)
+          { case "%fs": module = LoadFromFile(mp.Name); break;
+            case "%builtin":
+            { if(mp.Name=="Builtins") module = Builtins.Instance;
+              else
+              { Type type = Type.GetType("NetLisp.Mods."+mp.Name);
+                if(type!=null) module = ModuleGenerator.Generate(type);
+              }
+              break;
             }
-            break;
-          }
-          case ".net": module = LoadFromDotNet(mp.Name); break;
-          default:
-          { string name = mp.Collection+"/"+mp.Name;
-            Type type = (Type)builtins[name];
-            // TODO: get the library path from elsewhere
-            module = type==null ? LoadFromFile("lib/"+name) : ModuleGenerator.Generate(type);
-            break;
+            case ".net": module = LoadFromDotNet(mp.Name); break;
+            default:
+            { string name = mp.Collection+"/"+mp.Name;
+              Type type = (Type)builtins[name];
+              // TODO: get the library path from elsewhere
+              module = type==null ? LoadFromFile("lib/"+name) : ModuleGenerator.Generate(type);
+              break;
+            }
           }
         }
+        finally
+        { if(module!=null) modules[mp] = module;
+          else modules.Remove(mp);
+        }
       }
-      finally
-      { if(module!=null) modules[mp] = module;
-        else modules.Remove(mp);
-      }
+      return module;
     }
-    return module;
   }
 
   static Module LoadFromDotNet(string ns)
@@ -151,6 +154,5 @@ public sealed class Importer
   static Hashtable modules = new Hashtable();
   static System.Collections.Specialized.ListDictionary builtins = new System.Collections.Specialized.ListDictionary();
 }
-#endregion
 
 } // namespace NetLisp.Backend

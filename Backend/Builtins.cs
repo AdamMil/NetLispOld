@@ -276,8 +276,6 @@ namespace NetLisp.Backend
          (define ,(string->symbol (string-append name-s ""?""))
            (lambda (s) (and (vector? s) (eq? (vector-ref s 0) ',name))))))))
 
-; fluid-let (needs dynamic-wind)
-
 (defmacro while (cond . body)
   (let ((loop (gensym ""loop"")))
     `(let ,loop ()
@@ -386,8 +384,8 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     internal static object core(string name, Hashtable hash, object[] args)
     { object instance = args[1];
       MemberKey key = new MemberKey(instance==null ? null : instance.GetType(), Ops.ExpectString(args[0]));
-      FunctionWrapper[] funcs = (FunctionWrapper[])hash[key]; // TODO: thread safety?
-
+      FunctionWrapper[] funcs;
+      lock(hash) funcs = (FunctionWrapper[])hash[key];
       if(funcs==null)
       { Type type;
         string funcName = key.Name;
@@ -405,7 +403,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         else if(hash==dotPsets) funcs = Interop.GetPropertySetters(type, funcName, instance==null);
         else throw new NotImplementedException("unhandled hash");
 
-        hash[key] = funcs;
+        lock(hash) hash[key] = funcs;
       }
 
       object[] nargs;
@@ -463,8 +461,8 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     
     internal static FieldInfo core(string name, object instance, string fieldName)
     { MemberKey key = new MemberKey(instance==null ? null : instance.GetType(), fieldName);
-      FieldInfo fi = (FieldInfo)dotFields[key]; // TODO: thread safety?
-
+      FieldInfo fi;
+      lock(dotFields) fi = (FieldInfo)dotFields[key];
       if(fi==null)
       { Type type;
         if(instance==null)
@@ -476,7 +474,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         else type = key.Type;
         fi = type.GetField(fieldName);
         if(fi==null) throw new ArgumentException("type "+type.FullName+" does not have a '"+fieldName+"' field");
-        dotFields[key] = fi;
+        lock(dotFields) dotFields[key] = fi;
       }
       return fi;
     }
@@ -491,12 +489,13 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     { CheckArity(args);
 
       string name = Ops.ExpectString(args[0]);
-      FunctionWrapper[] funcs = (FunctionWrapper[])dotNews[name]; // TODO: thread safety?
-
+      FunctionWrapper[] funcs;
+      lock(dotNews) funcs = (FunctionWrapper[])dotNews[name];
       if(funcs==null)
       { Type type = Type.GetType(name);
         if(type==null) throw Ops.ValueError(this.name+": unable to find type: "+name);
-        dotNews[name] = funcs = Interop.GetConstructors(type);
+        funcs = Interop.GetConstructors(type);
+        lock(funcs) dotNews[name] = funcs;
       }
 
       object[] nargs;
@@ -1046,12 +1045,16 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         }
       else
       { IProcedure pred = Ops.ExpectProcedure(args[2]);
-        args = new object[2];
-        args[1] = obj;
+        bool realloc = pred.NeedsFreshArgs;
+        if(!realloc)
+        { args = new object[2];
+          args[1] = obj;
+        }
         while(list!=null)
         { Pair pair = list.Car as Pair;
           if(pair==null) throw Ops.ValueError(name+": alists must contain only pairs");
-          args[0] = pair.Car;
+          if(realloc) args = new object[2] { pair.Car, obj };
+          else args[0] = pair.Car;
           if(Ops.IsTrue(pred.Call(args))) return list;
           list = list.Cdr as Pair;
         }
@@ -1102,12 +1105,14 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       if(args.Length==1) return null;
 
       IProcedure func = Ops.ExpectProcedure(args[0]);
+      bool realloc = func.NeedsFreshArgs;
 
       if(args.Length==2)
       { Pair p = Ops.ExpectList(args[1]);
-        args = new object[1];
+        if(!realloc) args = new object[1];
         while(p!=null)
-        { args[0] = p.Car;
+        { if(realloc) args = new object[1];
+          args[0] = p.Car;
           p = p.Cdr as Pair;
           func.Call(args);
         }
@@ -1117,10 +1122,11 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       { Pair[] pairs = new Pair[args.Length-1];
         for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
 
-        args = new object[pairs.Length];
+        if(!realloc) args = new object[pairs.Length];
 
         while(true)
-        { for(int i=0; i<pairs.Length; i++)
+        { if(realloc) args = new object[pairs.Length];
+          for(int i=0; i<pairs.Length; i++)
           { if(pairs[i]==null) return null;
             args[i] = pairs[i].Car;
             pairs[i] = pairs[i].Cdr as Pair;
@@ -1201,12 +1207,14 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       if(args.Length==1) return null;
 
       IProcedure func = Ops.ExpectProcedure(args[0]);
+      bool realloc = func.NeedsFreshArgs;
 
       if(args.Length==2)
       { Pair p=Ops.ExpectList(args[1]), head=null, tail=null;
-        args = new object[1];
+        if(!realloc) args = new object[1];
         while(p!=null)
-        { args[0] = p.Car;
+        { if(realloc) args = new object[1];
+          args[0] = p.Car;
           p = p.Cdr as Pair;
           Pair next = new Pair(func.Call(args), null);
           if(head==null) head=tail=next;
@@ -1218,11 +1226,12 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       { Pair[] pairs = new Pair[args.Length-1];
         for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
 
-        args = new object[pairs.Length];
+        if(!realloc) args = new object[pairs.Length];
 
         Pair head=null, tail=null;
         while(true)
-        { for(int i=0; i<pairs.Length; i++)
+        { if(realloc) args = new object[pairs.Length];
+          for(int i=0; i<pairs.Length; i++)
           { if(pairs[i]==null) return head;
             args[i] = pairs[i].Car;
             pairs[i] = pairs[i].Cdr as Pair;
@@ -1280,10 +1289,14 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         }
       else
       { IProcedure pred = Ops.ExpectProcedure(args[2]);
-        args = new object[2];
-        args[1] = obj;
+        bool realloc = pred.NeedsFreshArgs;
+        if(!realloc)
+        { args = new object[2];
+          args[1] = obj;
+        }
         while(list!=null)
-        { args[0] = list.Car;
+        { if(realloc) args = new object[2] { list.Car, obj };
+          else args[0] = list.Car;
           if(Ops.IsTrue(pred.Call(args))) return list;
           list = list.Cdr as Pair;
         }
@@ -1388,17 +1401,15 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   [SymbolName("expander?")]
   public static bool expanderP(object obj)
   { Symbol sym = obj as Symbol;
-    return sym!=null && TopLevel.Current.Macros.Contains(sym.Name);
+    return sym!=null && TopLevel.Current.ContainsMacro(sym.Name);
   }
 
   [SymbolName("expander-function")]
-  public static IProcedure expanderFunction(Symbol sym)
-  { return (IProcedure)TopLevel.Current.Macros[sym.Name];
-  }
+  public static IProcedure expanderFunction(Symbol sym) { return TopLevel.Current.GetMacro(sym.Name); }
 
   [SymbolName("install-expander")]
   public static object installExpander(Symbol sym, Closure func)
-  { TopLevel.Current.Macros[sym.Name] = func;
+  { TopLevel.Current.AddMacro(sym.Name, func);
     return sym;
   }
   
@@ -1762,7 +1773,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   #endregion
 
   // TODO: number->string
-  // TODO: string->number
   #region Numeric functions
   #region complex?
   public sealed class complexP : Primitive
@@ -2179,6 +2189,22 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectComplex(args[0]).real;
+    }
+  }
+  #endregion
+
+  #region string->number
+  public sealed class stringToNumber : Primitive
+  { public stringToNumber() : base("string->number", 1, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      int radix;
+      if(args.Length==1) radix = 10;
+      else
+      { radix = Ops.ExpectInt(args[1]);
+        if(radix!=10 && radix!=16 && radix!=8 && radix!=2) throw Ops.ValueError(name+": radix must be 2, 8, 10, or 16");
+      }
+      return Parser.ParseNumber(Ops.ExpectString(args[0]), radix);
     }
   }
   #endregion
@@ -3451,9 +3477,11 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     { CheckArity(args);
       IProcedure func = Ops.ExpectProcedure(args[0]);
       object[] vector=Ops.ExpectVector(args[1]), ret=new object[vector.Length];
-      args = new object[1];
+      bool realloc = func.NeedsFreshArgs;
+      if(!realloc) args = new object[1];
       for(int i=0; i<vector.Length; i++)
-      { args[0] = vector[i];
+      { if(realloc) args = new object[1];
+        args[0] = vector[i];
         ret[i] = func.Call(args);
       }
       return ret;
@@ -3503,7 +3531,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       IProcedure thunk=Ops.ExpectProcedure(args[0]), func=Ops.ExpectProcedure(args[1]);
       object ret = thunk.Call(Ops.EmptyArray);
       MultipleValues mv = ret as MultipleValues;
-      return mv==null ? func.Call(ret) : func.Call(mv.Values);
+      return mv==null ? func.Call(ret) : func.Call(func.NeedsFreshArgs ? (object[])mv.Values.Clone() : mv.Values);
     }
   }
   #endregion
@@ -3635,7 +3663,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
   #region values
   public sealed class values : Primitive
-  { public values() : base("values", 1, -1) { }
+  { public values() : base("values", 1, -1) { needsFreshArgs=true; }
   
     public override object Call(object[] args)
     { CheckArity(args);

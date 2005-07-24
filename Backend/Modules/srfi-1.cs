@@ -25,7 +25,6 @@ using NetLisp.Backend;
 namespace NetLisp.Mods
 {
 
-// FIXME: finish unzippers!
 // TODO: optimize filter, member, etc. to share the longest common tails
 // TODO: optimize methods that cons new lists so they don't do the if(head==null) ... thing inside the loop
 // TODO: list sets
@@ -144,7 +143,7 @@ namespace NetLisp.Mods
   (let recur ((lis lis))
     (if (null-list? lis) (values lis lis)
         (let ((elt (car lis)))
-          (let-values ((a b) (recur (cdr lis)))
+          (let-values (((a b) (recur (cdr lis))))
             (values (cons (car  elt) a)
                     (cons (cadr elt) b)))))))
 
@@ -152,7 +151,7 @@ namespace NetLisp.Mods
   (let recur ((lis lis))
     (if (null-list? lis) (values lis lis lis)
         (let ((elt (car lis)))
-          (let-values ((a b c) (recur (cdr lis)))
+          (let-values (((a b c) (recur (cdr lis))))
             (values (cons (car   elt) a)
                     (cons (cadr  elt) b)
                     (cons (caddr elt) c)))))))
@@ -161,7 +160,7 @@ namespace NetLisp.Mods
   (let recur ((lis lis))
     (if (null-list? lis) (values lis lis lis lis)
         (let ((elt (car lis)))
-          (let-values ((a b c d) (recur (cdr lis)))
+          (let-values (((a b c d) (recur (cdr lis))))
             (values (cons (car    elt) a)
                     (cons (cadr   elt) b)
                     (cons (caddr  elt) c)
@@ -171,7 +170,7 @@ namespace NetLisp.Mods
   (let recur ((lis lis))
     (if (null-list? lis) (values lis lis lis lis lis)
         (let ((elt (car lis)))
-          (let-values ((a b c d e) (recur (cdr lis)))
+          (let-values (((a b c d e) (recur (cdr lis))))
             (values (cons (car     elt) a)
                     (cons (cadr    elt) b)
                     (cons (caddr   elt) c)
@@ -226,12 +225,16 @@ public sealed class Srfi1
         }
       else
       { IProcedure pred = Ops.ExpectProcedure(args[2]);
-        args = new object[2];
-        args[1] = obj;
+        bool realloc = pred.NeedsFreshArgs;
+        if(!realloc)
+        { args = new object[2];
+          args[1] = obj;
+        }
         while(list!=null)
         { Pair pair = list.Car as Pair;
           if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
-          args[0] = pair.Car;
+          if(realloc) args = new object[2] { pair.Car, obj };
+          else args[0] = pair.Car;
           if(!Ops.IsTrue(pred.Call(args)))
           { Pair next=new Pair(list.Car, null);
             if(head==null) head=tail=next;
@@ -265,12 +268,16 @@ public sealed class Srfi1
         }
       else
       { IProcedure pred = Ops.ExpectProcedure(args[2]);
-        args = new object[2];
-        args[1] = obj;
+        bool realloc = pred.NeedsFreshArgs;
+        if(!realloc)
+        { args = new object[2];
+          args[1] = obj;
+        }
         while(list!=null)
         { Pair pair = list.Car as Pair;
           if(pair==null) throw Ops.ValueError(Name+": alists must contain only pairs");
-          args[0] = pair.Car;
+          if(realloc) args = new object[2] { pair.Car, obj };
+          else args[0] = pair.Car;
           Pair next = list.Cdr as Pair;
           if(Ops.IsTrue(pred.Call(args)))
           { if(prev==null) head=next;
@@ -294,13 +301,15 @@ public sealed class Srfi1
       if(args.Length==1) return Ops.TRUE;
 
       IProcedure func = Ops.ExpectProcedure(args[0]);
+      bool realloc =  func.NeedsFreshArgs;
 
       object ret;
       if(args.Length==2)
       { Pair p = Ops.ExpectList(args[1]);
-        args = new object[1];
+        if(!realloc) args = new object[1];
         while(p!=null)
-        { args[0] = p.Car;
+        { if(realloc) args = new object[1];
+          args[0] = p.Car;
           p = p.Cdr as Pair;
           if(Ops.IsTrue(ret=func.Call(args))) return ret;
         }
@@ -309,10 +318,11 @@ public sealed class Srfi1
       { Pair[] pairs = new Pair[args.Length-1];
         for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
 
-        args = new object[pairs.Length];
+        if(!realloc) args = new object[pairs.Length];
 
         while(true)
-        { for(int i=0; i<pairs.Length; i++)
+        { if(realloc) args = new object[pairs.Length];
+          for(int i=0; i<pairs.Length; i++)
           { if(pairs[i]==null) return null;
             args[i] = pairs[i].Car;
             pairs[i] = pairs[i].Cdr as Pair;
@@ -333,10 +343,12 @@ public sealed class Srfi1
     { CheckArity(args);
       IProcedure pred=Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), head=null, tail=null;
+      bool realloc = pred.NeedsFreshArgs;
 
-      args = new object[1];
+      if(!realloc) args = new object[1];
       while(list!=null)
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         if(Ops.IsTrue(pred.Call(args))) return new MultipleValues(head, list);
         Pair next = new Pair(list.Car, null);
         if(head==null) head=tail=next;
@@ -355,10 +367,12 @@ public sealed class Srfi1
     { CheckArity(args);
       IProcedure pred=Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), head=list, prev=null;
+      bool realloc = pred.NeedsFreshArgs;
 
-      args = new object[1];
+      if(!realloc) args = new object[1];
       while(list!=null)
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         if(Ops.IsTrue(pred.Call(args)))
         { prev.Cdr = null;
           return new MultipleValues(head, list);
@@ -432,11 +446,14 @@ public sealed class Srfi1
 
       IProcedure func = Ops.ExpectProcedure(args[0]);
       int count=0;
+      bool realloc = func.NeedsFreshArgs;
+
       if(args.Length==2)
       { Pair p = Ops.ExpectList(args[1]);
-        args = new object[1];
+        if(!realloc) args = new object[1];
         while(p!=null)
-        { args[0] = p.Car;
+        { if(realloc) args = new object[1];
+          args[0] = p.Car;
           p = p.Cdr as Pair;
           if(Ops.IsTrue(func.Call(args))) count++;
         }
@@ -446,10 +463,11 @@ public sealed class Srfi1
       { Pair[] pairs = new Pair[args.Length-1];
         for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
 
-        args = new object[pairs.Length];
+        if(!realloc) args = new object[pairs.Length];
 
         while(true)
-        { for(int i=0; i<pairs.Length; i++)
+        { if(realloc) args = new object[pairs.Length];
+          for(int i=0; i<pairs.Length; i++)
           { if(pairs[i]==null) return count;
             args[i] = pairs[i].Car;
             pairs[i] = pairs[i].Cdr as Pair;
@@ -479,10 +497,14 @@ public sealed class Srfi1
         }
       else
       { IProcedure pred = Ops.ExpectProcedure(args[2]);
-        args = new object[2];
-        args[1] = obj;
+        bool realloc = pred.NeedsFreshArgs;
+        if(!realloc)
+        { args = new object[2];
+          args[1] = obj;
+        }
         while(list!=null)
-        { args[0] = list.Car;
+        { if(realloc) args = new object[2] { list.Car, obj };
+          else args[0] = list.Car;
           if(!Ops.IsTrue(pred.Call(args)))
           { Pair next=new Pair(list.Car, null);
             if(head==null) head=tail=next;
@@ -517,10 +539,14 @@ public sealed class Srfi1
         } while(list!=null);
       else
       { IProcedure pred = Ops.ExpectProcedure(args[2]);
-        args = new object[2];
-        args[1] = obj;
+        bool realloc = pred.NeedsFreshArgs;
+        if(!realloc)
+        { args = new object[2];
+          args[1] = obj;
+        }
         do
-        { args[0] = list.Car;
+        { if(realloc) args = new object[2] { list.Car, obj };
+          else args[0] = list.Car;
           Pair next = list.Cdr as Pair;
           if(Ops.IsTrue(pred.Call(args)))
           { if(prev==null) head=next;
@@ -585,12 +611,14 @@ public sealed class Srfi1
   { public dropWhile() : base("drop-while", 2, 2) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      IProcedure pred=Ops.ExpectProcedure(args[0]);
-      Pair list=Ops.ExpectList(args[1]);
+      IProcedure pred = Ops.ExpectProcedure(args[0]);
+      Pair list = Ops.ExpectList(args[1]);
+      bool realloc = pred.NeedsFreshArgs;
 
-      args = new object[1];
+      if(!realloc) args = new object[1];
       while(list!=null)
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         if(!Ops.IsTrue(pred.Call(args))) return list;
         list = list.Cdr as Pair;
       }
@@ -608,13 +636,15 @@ public sealed class Srfi1
       if(args.Length==1) return Ops.TRUE;
 
       IProcedure func = Ops.ExpectProcedure(args[0]);
+      bool realloc = func.NeedsFreshArgs;
 
       object ret=Ops.TRUE;
       if(args.Length==2)
       { Pair p = Ops.ExpectList(args[1]);
-        args = new object[1];
+        if(!realloc) args = new object[1];
         while(p!=null)
-        { args[0] = p.Car;
+        { if(realloc) args = new object[1];
+          args[0] = p.Car;
           p = p.Cdr as Pair;
           ret=func.Call(args);
           if(ret is bool && !(bool)ret) return Ops.FALSE;
@@ -624,10 +654,11 @@ public sealed class Srfi1
       { Pair[] pairs = new Pair[args.Length-1];
         for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
 
-        args = new object[pairs.Length];
+        if(!realloc) args = new object[pairs.Length];
 
         while(true)
-        { for(int i=0; i<pairs.Length; i++)
+        { if(realloc) args = new object[pairs.Length];
+          for(int i=0; i<pairs.Length; i++)
           { if(pairs[i]==null) return null;
             args[i] = pairs[i].Car;
             pairs[i] = pairs[i].Cdr as Pair;
@@ -650,10 +681,12 @@ public sealed class Srfi1
       IProcedure proc = Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), head=null, tail=null;
       if(list==null) return null;
+      bool realloc = proc.NeedsFreshArgs;
 
-      args = new object[1];
+      if(!realloc) args = new object[1];
       do
-      { args[0] = list.Car;
+      { if(!realloc) args = new object[1];
+        args[0] = list.Car;
         if(Ops.IsTrue(proc.Call(args)))
         { Pair next = new Pair(list.Car, null);
           if(head==null) head=tail=next;
@@ -674,9 +707,12 @@ public sealed class Srfi1
       IProcedure proc = Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), head=list, prev=null;
       if(list==null) return null;
-      args = new object[1];
+      bool realloc = proc.NeedsFreshArgs;
+
+      if(!realloc) args = new object[1];
       do
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         list = list.Cdr as Pair;
         if(!Ops.IsTrue(proc.Call(args)))
         { if(prev==null) head=list;
@@ -699,12 +735,14 @@ public sealed class Srfi1
 
       IProcedure func = Ops.ExpectProcedure(args[0]);
       object value;
+      bool realloc = func.NeedsFreshArgs;
 
       if(args.Length==2)
       { Pair p=Ops.ExpectList(args[1]), head=null, tail=null;
-        args = new object[1];
+        if(!realloc) args = new object[1];
         while(p!=null)
-        { args[0] = p.Car;
+        { if(realloc) args = new object[1];
+          args[0] = p.Car;
           p = p.Cdr as Pair;
           value = func.Call(args);
           if(!Ops.IsTrue(value)) continue;
@@ -718,11 +756,12 @@ public sealed class Srfi1
       { Pair[] pairs = new Pair[args.Length-1];
         for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
 
-        args = new object[pairs.Length];
+        if(!realloc) args = new object[pairs.Length];
 
         Pair head=null, tail=null;
         while(true)
-        { for(int i=0; i<pairs.Length; i++)
+        { if(realloc) args = new object[pairs.Length];
+          for(int i=0; i<pairs.Length; i++)
           { if(pairs[i]==null) return head;
             args[i] = pairs[i].Car;
             pairs[i] = pairs[i].Cdr as Pair;
@@ -743,12 +782,14 @@ public sealed class Srfi1
   { public find() : base("find", 2, 2) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      IProcedure pred=Ops.ExpectProcedure(args[0]);
-      Pair list=Ops.ExpectList(args[1]);
+      IProcedure pred = Ops.ExpectProcedure(args[0]);
+      Pair list = Ops.ExpectList(args[1]);
+      bool realloc = pred.NeedsFreshArgs;
 
-      args = new object[1];
+      if(!realloc) args = new object[1];
       while(list!=null)
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         if(Ops.IsTrue(pred.Call(args))) return list.Car;
         list = list.Cdr as Pair;
       }
@@ -762,12 +803,14 @@ public sealed class Srfi1
   { public findTail() : base("find-tail", 2, 2) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      IProcedure pred=Ops.ExpectProcedure(args[0]);
-      Pair list=Ops.ExpectList(args[1]);
+      IProcedure pred = Ops.ExpectProcedure(args[0]);
+      Pair list = Ops.ExpectList(args[1]);
+      bool realloc = pred.NeedsFreshArgs;
 
-      args = new object[1];
+      if(!realloc) args = new object[1];
       while(list!=null)
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         if(Ops.IsTrue(pred.Call(args))) return list;
         list = list.Cdr as Pair;
       }
@@ -783,12 +826,14 @@ public sealed class Srfi1
     { CheckArity(args);
       IProcedure kons=Ops.ExpectProcedure(args[0]);
       object ans=args[1];
+      bool realloc=kons.NeedsFreshArgs;
 
       if(args.Length==3)
       { Pair pair = Ops.ExpectList(args[2]);
-        args = new object[2];
+        if(realloc) args = new object[2];
         while(true)
         { if(pair==null) return ans;
+          if(!realloc) args = new object[2];
           args[0] = pair.Car;
           args[1] = ans;
           ans = kons.Call(args);
@@ -800,9 +845,10 @@ public sealed class Srfi1
         for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+2]);
 
         args = new object[pairs.Length+1];
-        args[pairs.Length] = ans;
+        if(!realloc) args[pairs.Length] = ans;
         while(true)
-        { for(int i=0; i<pairs.Length; i++)
+        { if(realloc) args[pairs.Length] = ans;
+          for(int i=0; i<pairs.Length; i++)
           { if(pairs[i]==null) return args[pairs.Length];
             args[i]  = pairs[i].Car;
             pairs[i] = pairs[i].Cdr as Pair;
@@ -819,8 +865,8 @@ public sealed class Srfi1
   { public foldRight() : base("fold-right", 3, -1) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      IProcedure kons=Ops.ExpectProcedure(args[0]);
-      object ans=args[1];
+      IProcedure kons = Ops.ExpectProcedure(args[0]);
+      object ans = args[1];
 
       if(args.Length==3) return new folder1(kons, ans).Run(Ops.ExpectList(args[2]));
       else
@@ -831,10 +877,14 @@ public sealed class Srfi1
     }
 
     struct folder1
-    { public folder1(IProcedure kons, object ans) { this.kons=kons; this.ans=ans; args=new object[2]; }
+    { public folder1(IProcedure kons, object ans)
+      { this.kons=kons; this.ans=ans; args=kons.NeedsFreshArgs ? null : new object[2];
+      }
 
       public object Run(Pair pair)
       { if(pair==null) return ans;
+        object[] args = this.args;
+        if(args==null) args = new object[2];
         args[1] = Run(pair.Cdr as Pair);
         args[0] = pair.Car;
         return kons.Call(args);
@@ -847,11 +897,15 @@ public sealed class Srfi1
 
     struct folderN
     { public folderN(IProcedure kons, object ans, int nlists)
-      { this.kons=kons; this.ans=ans; args=new object[nlists+1];
+      { this.kons=kons; this.ans=ans;
+        if(kons.NeedsFreshArgs) { args=null; nargs=nlists+1; }
+        else { args=new object[nlists+1]; this.nargs=-1; }
       }
 
       public object Run(Pair[] pairs)
       { Pair[] next = new Pair[pairs.Length];
+        object[] args = this.args;
+        if(args==null) args = new object[nargs];
         for(int i=0; i<pairs.Length; i++)
           if((next[i]=pairs[i].Cdr as Pair)==null) { args[pairs.Length]=ans; goto skip; }
         args[pairs.Length] = Run(next);
@@ -863,6 +917,7 @@ public sealed class Srfi1
       object[] args;
       object ans;
       IProcedure kons;
+      int nargs;
     }
   }
   #endregion
@@ -877,9 +932,12 @@ public sealed class Srfi1
       if(length<=0) return null;
 
       Pair head=null, tail=null;
-      args = new object[1];
+      bool realloc = proc.NeedsFreshArgs;
+      
+      if(!realloc) args = new object[1];
       for(int i=0; i<length; i++)
-      { args[0] = i;
+      { if(realloc) args = new object[1];
+        args[0] = i;
         Pair next = new Pair(proc.Call(args), null);
         if(head==null) head=tail=next;
         else { tail.Cdr=next; tail=next; }
@@ -992,13 +1050,15 @@ public sealed class Srfi1
     public override object Call(object[] args)
     { CheckArity(args);
       IProcedure func = Ops.ExpectProcedure(args[0]);
+      bool realloc = func.NeedsFreshArgs;
 
       int index=0;
       if(args.Length==2)
       { Pair p = Ops.ExpectList(args[1]);
-        args = new object[1];
+        if(!realloc) args = new object[1];
         while(p!=null)
-        { args[0] = p.Car;
+        { if(realloc) args = new object[1];
+          args[0] = p.Car;
           p = p.Cdr as Pair;
           if(Ops.IsTrue(func.Call(args))) return index;
           index++;
@@ -1009,10 +1069,11 @@ public sealed class Srfi1
       { Pair[] pairs = new Pair[args.Length-1];
         for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
 
-        args = new object[pairs.Length];
+        if(!realloc) args = new object[pairs.Length];
 
         while(true)
-        { for(int i=0; i<pairs.Length; i++)
+        { if(realloc) args = new object[pairs.Length];
+          for(int i=0; i<pairs.Length; i++)
           { if(pairs[i]==null) return Ops.FALSE;
             args[i] = pairs[i].Car;
             pairs[i] = pairs[i].Cdr as Pair;
@@ -1033,9 +1094,11 @@ public sealed class Srfi1
       if(args.Length<3) return Ops.TRUE;
 
       IProcedure test = Ops.ExpectProcedure(args[0]);
-      object[] nargs = new object[2];
-
       Pair last=Ops.ExpectList(args[1]);
+      bool realloc = test.NeedsFreshArgs;
+
+      object[] nargs = realloc ? null : new object[2];
+
       for(int i=2; i<args.Length; i++)
       { Pair cur=Ops.ExpectList(args[i]), cpair=cur;
         while(true)
@@ -1045,6 +1108,7 @@ public sealed class Srfi1
           }
           else if(last==null) return Ops.FALSE;
           
+          if(realloc) nargs = new object[2];
           nargs[0]=last.Car; nargs[1]=cpair.Car;
           if(!Ops.IsTrue(test.Call(nargs))) return Ops.FALSE;
 
@@ -1086,11 +1150,14 @@ public sealed class Srfi1
       if(args.Length==1) return null;
 
       IProcedure func = Ops.ExpectProcedure(args[0]);
+      bool realloc = func.NeedsFreshArgs;
+
       if(args.Length==2)
       { Pair head=Ops.ExpectList(args[1]), tail=head;
-        args = new object[1];
+        if(!realloc) args = new object[1];
         while(tail!=null)
-        { args[0]  = tail.Car;
+        { if(realloc) args = new object[1];
+          args[0]  = tail.Car;
           tail.Car = func.Call(args);
           tail = tail.Cdr as Pair;
         }
@@ -1100,11 +1167,12 @@ public sealed class Srfi1
       { Pair[] pairs = new Pair[args.Length-1];
         for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
 
-        args = new object[pairs.Length];
+        if(!realloc) args = new object[pairs.Length];
 
         Pair head=pairs[0], tail=head;
         while(tail!=null)
-        { args[0] = tail.Car;
+        { if(realloc) args = new object[pairs.Length];
+          args[0] = tail.Car;
           for(int i=1; i<pairs.Length; i++)
           { if(pairs[i]==null) goto done;
             args[i] = pairs[i].Car;
@@ -1126,12 +1194,14 @@ public sealed class Srfi1
     { CheckArity(args);
       IProcedure kons=Ops.ExpectProcedure(args[0]);
       object ans=args[1];
+      bool realloc = kons.NeedsFreshArgs;
 
       if(args.Length==3)
       { Pair pair = Ops.ExpectList(args[2]);
-        args = new object[2];
+        if(!realloc) args = new object[2];
         while(true)
         { if(pair==null) return ans;
+          if(realloc) args = new object[2];
           args[0] = pair;
           args[1] = ans;
           Pair next = pair.Cdr as Pair;
@@ -1143,10 +1213,16 @@ public sealed class Srfi1
       { Pair[] pairs = new Pair[args.Length-2];
         for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+2]);
 
-        args = new object[pairs.Length+1];
-        args[pairs.Length] = ans;
+        if(!realloc)
+        { args = new object[pairs.Length+1];
+          args[pairs.Length] = ans;
+        }
         while(true)
-        { for(int i=0; i<pairs.Length; i++)
+        { if(realloc)
+          { args = new object[pairs.Length+1];
+            args[pairs.Length] = ans;
+          }
+          for(int i=0; i<pairs.Length; i++)
           { if(pairs[i]==null) return args[pairs.Length];
             args[i]  = pairs[i];
             pairs[i] = pairs[i].Cdr as Pair;
@@ -1175,10 +1251,14 @@ public sealed class Srfi1
     }
 
     struct folder1
-    { public folder1(IProcedure kons, object ans) { this.kons=kons; this.ans=ans; args=new object[2]; }
+    { public folder1(IProcedure kons, object ans)
+      { this.kons=kons; this.ans=ans; args=kons.NeedsFreshArgs ? null : new object[2];
+      }
 
       public object Run(Pair pair)
       { if(pair==null) return ans;
+        object[] args = this.args;
+        if(args==null) args = new object[2];
         args[1] = Run(pair.Cdr as Pair);
         args[0] = pair;
         return kons.Call(args);
@@ -1191,11 +1271,15 @@ public sealed class Srfi1
 
     struct folderN
     { public folderN(IProcedure kons, object ans, int nlists)
-      { this.kons=kons; this.ans=ans; args=new object[nlists+1];
+      { this.kons=kons; this.ans=ans;
+        if(kons.NeedsFreshArgs) { args=null; nargs=nlists+1; }
+        else { args=new object[nlists+1]; nargs=-1; }
       }
 
       public object Run(Pair[] pairs)
       { Pair[] next = new Pair[pairs.Length];
+        object[] args = this.args;
+        if(args==null) args = new object[nargs];
         for(int i=0; i<pairs.Length; i++)
           if((next[i]=pairs[i].Cdr as Pair)==null) { args[pairs.Length]=ans; goto skip; }
         args[pairs.Length] = Run(next);
@@ -1206,6 +1290,7 @@ public sealed class Srfi1
       object[] args;
       object ans;
       IProcedure kons;
+      int nargs;
     }
   }
   #endregion
@@ -1219,11 +1304,13 @@ public sealed class Srfi1
       if(args.Length==1) return null;
 
       IProcedure func = Ops.ExpectProcedure(args[0]);
+      bool realloc = func.NeedsFreshArgs;
       if(args.Length==2)
       { Pair p = Ops.ExpectList(args[1]);
-        args = new object[1];
+        if(!realloc) args = new object[1];
         while(p!=null)
-        { args[0] = p;
+        { if(realloc) args = new object[1];
+          args[0] = p;
           p = p.Cdr as Pair;
           func.Call(args);
         }
@@ -1233,9 +1320,10 @@ public sealed class Srfi1
       { Pair[] pairs = new Pair[args.Length-1];
         for(int i=0; i<pairs.Length; i++) pairs[i] = Ops.ExpectList(args[i+1]);
 
-        args = new object[pairs.Length];
+        if(!realloc) args = new object[pairs.Length];
         while(true)
-        { for(int i=0; i<pairs.Length; i++)
+        { if(realloc) args = new object[pairs.Length];
+          for(int i=0; i<pairs.Length; i++)
           { if(pairs[i]==null) return null;
             args[i] = pairs[i];
             pairs[i] = pairs[i].Cdr as Pair;
@@ -1254,9 +1342,12 @@ public sealed class Srfi1
     { CheckArity(args);
       IProcedure proc = Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), inlist=null, outlist=null, intail=null, outtail=null;
-      args = new object[1];
+      bool realloc = proc.NeedsFreshArgs;
+
+      if(!realloc) args = new object[1];
       while(list!=null)
       { Pair next = new Pair(list.Car, null);
+        if(realloc) args = new object[1];
         args[0] = list.Car;
         if(Ops.IsTrue(proc.Call(args)))
         { if(inlist==null) inlist=intail=next;
@@ -1278,10 +1369,12 @@ public sealed class Srfi1
     { CheckArity(args);
       IProcedure proc = Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), inlist=null, outlist=null, inprev=null, outprev=null;
-      args = new object[1]; // FIXME: in this and other places, we're not reallocating the array for each
-      while(list!=null)     // call. this is not a problem when calling other primitives, but if we call
-      { args[0] = list.Car; // a lambda function, it may create a closure around one of the arguments, and
-        if(Ops.IsTrue(proc.Call(args))) // then the closed variable would be modified by the next iteration
+      bool realloc = proc.NeedsFreshArgs;
+      if(!realloc) args = new object[1];
+      while(list!=null)
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
+        if(Ops.IsTrue(proc.Call(args)))
         { if(inprev==null) inlist=inprev=list;
           else { inprev.Cdr=list; inprev=list; }
         }
@@ -1304,9 +1397,12 @@ public sealed class Srfi1
       IProcedure proc = Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), head=null, tail=null;
       if(list==null) return null;
-      args = new object[1];
+      bool realloc = proc.NeedsFreshArgs;
+
+      if(!realloc) args = new object[1];
       do
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         if(!Ops.IsTrue(proc.Call(args)))
         { Pair next = new Pair(list.Car, null);
           if(head==null) head=tail=next;
@@ -1327,9 +1423,11 @@ public sealed class Srfi1
       IProcedure proc = Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), head=list, prev=null;
       if(list==null) return null;
-      args = new object[1];
+      bool realloc = proc.NeedsFreshArgs;
+      if(!realloc) args = new object[1];
       do
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         Pair next = list.Cdr as Pair;
         if(Ops.IsTrue(proc.Call(args)))
         { if(prev==null) head=next;
@@ -1350,10 +1448,12 @@ public sealed class Srfi1
     { CheckArity(args);
       IProcedure pred=Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), head=null, tail=null;
+      bool realloc = pred.NeedsFreshArgs;
 
-      args = new object[1];
+      if(!realloc) args = new object[1];
       while(list!=null)
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         if(!Ops.IsTrue(pred.Call(args))) return new MultipleValues(head, list);
         Pair next = new Pair(list.Car, null);
         if(head==null) head=tail=next;
@@ -1372,10 +1472,12 @@ public sealed class Srfi1
     { CheckArity(args);
       IProcedure pred=Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), head=list, prev=null;
+      bool realloc = pred.NeedsFreshArgs;
 
-      args = new object[1];
+      if(!realloc) args = new object[1];
       while(list!=null)
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         if(!Ops.IsTrue(pred.Call(args)))
         { prev.Cdr = null;
           return new MultipleValues(head, list);
@@ -1438,10 +1540,12 @@ public sealed class Srfi1
     { CheckArity(args);
       IProcedure pred=Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), head=null, tail=null;
+      bool realloc = pred.NeedsFreshArgs;
 
-      args = new object[1];
+      if(!realloc) args = new object[1];
       while(list!=null)
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         if(!Ops.IsTrue(pred.Call(args))) break;
         Pair next = new Pair(list.Car, null);
         if(head==null) head=tail=next;
@@ -1461,10 +1565,12 @@ public sealed class Srfi1
     { CheckArity(args);
       IProcedure pred=Ops.ExpectProcedure(args[0]);
       Pair list=Ops.ExpectList(args[1]), head=list, prev=null;
+      bool realloc = pred.NeedsFreshArgs;
 
-      args = new object[1];
+      if(!realloc) args = new object[1];
       while(list!=null)
-      { args[0] = list.Car;
+      { if(realloc) args = new object[1];
+        args[0] = list.Car;
         if(!Ops.IsTrue(pred.Call(args)))
         { if(prev==null) return null;
           else { prev.Cdr=null; return head; }
@@ -1490,16 +1596,34 @@ public sealed class Srfi1
       { stop=Ops.ExpectProcedure(args[0]);  val=Ops.ExpectProcedure(args[1]);
         next=Ops.ExpectProcedure(args[2]); tail=args.Length==4 ? null : Ops.ExpectProcedure(args[4]);
         seed=new object[1];
+        realloc = stop.NeedsFreshArgs || val.NeedsFreshArgs || next.NeedsFreshArgs ||
+                  tail!=null && tail.NeedsFreshArgs;
       }
 
       public object Run(object seedval)
       { seed[0] = seedval;
-        if(Ops.IsTrue(stop.Call(seed))) return tail==null ? null : tail.Call(seed);
-        return new Pair(val.Call(seed), Run(next.Call(seed)));
+        if(!realloc)
+        { if(Ops.IsTrue(stop.Call(seed))) return tail==null ? null : tail.Call(seed);
+          return new Pair(val.Call(seed), Run(next.Call(seed)));
+        }
+        else
+        { object[] nseed = this.seed;
+          if(stop.NeedsFreshArgs) nseed = new object[1] { seedval };
+          if(Ops.IsTrue(stop.Call(nseed)))
+          { if(tail==null) return null;
+            if(tail.NeedsFreshArgs) nseed = new object[1] { seedval };
+            return tail.Call(nseed);
+          }
+          if(val.NeedsFreshArgs) nseed = new object[1] { seedval };
+          object value = val.Call(nseed);
+          if(next.NeedsFreshArgs) nseed = new object[1] { seedval };
+          return new Pair(value, Run(next.Call(nseed)));
+        }
       }
 
       IProcedure stop, val, next, tail;
       object[] seed;
+      bool realloc;
     }
   }
   #endregion
@@ -1513,11 +1637,25 @@ public sealed class Srfi1
                  next=Ops.ExpectProcedure(args[2]);
       object list=args.Length==4 ? null : args[4];
       object[] seed = new object[1] { args[3] };
+      bool realloc = stop.NeedsFreshArgs || val.NeedsFreshArgs || next.NeedsFreshArgs;
 
-      while(!Ops.IsTrue(stop.Call(seed)))
-      { list = new Pair(val.Call(seed), list);
-        seed[0] = next.Call(seed);
+      if(!realloc)
+        while(!Ops.IsTrue(stop.Call(seed)))
+        { list = new Pair(val.Call(seed), list);
+          seed[0] = next.Call(seed);
+        }
+      else
+      { object seedval = args[3];
+        while(true)
+        { if(stop.NeedsFreshArgs) seed = new object[1] { seedval };
+          if(Ops.IsTrue(stop.Call(seed))) break;
+          if(val.NeedsFreshArgs) seed = new object[1] { seedval };
+          list = new Pair(val.Call(seed), list);
+          if(next.NeedsFreshArgs) seed = new object[1] { seedval };
+          seed[0] = seedval = next.Call(seed);
+        }
       }
+
       return list;
     }
   }

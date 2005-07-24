@@ -187,7 +187,6 @@ public sealed class NamedFrameSlot : Slot
     cg.EmitFieldGetAddr(typeof(Binding), "Value");
   }
 
-  // FIXME: check for unbound variables
   public override void EmitSet(CodeGenerator cg)
   { Slot temp = cg.AllocLocalTemp(typeof(object));
     temp.EmitSet(cg);
@@ -198,6 +197,7 @@ public sealed class NamedFrameSlot : Slot
   public override void EmitSet(CodeGenerator cg, Slot val)
   { SetupBinding(cg);
     Binding.EmitGet(cg);
+    if(Options.Debug) cg.EmitCall(typeof(Ops), "CheckBinding");
     val.EmitGet(cg);
     cg.EmitFieldSet(typeof(Binding), "Value");
   }

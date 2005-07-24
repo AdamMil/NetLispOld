@@ -325,7 +325,7 @@ public sealed class CodeGenerator
   }
 
   public void EmitTypeOf(Type type)
-  { if(type.IsByRef) // TODO: see if there's a better way to do this. this might not even be safe for types in other assemblies. maybe optimize it by caching values?
+  { if(type.IsByRef) // TODO: see if there's a better way to do this (rather than calling GetType with a string). this might not even be safe for types in other assemblies (we may need to search through assemblies). maybe optimize it by caching values?
     { EmitString(type.FullName+"&");
       EmitCall(typeof(Type), "GetType", new Type[] { typeof(string) });
     }

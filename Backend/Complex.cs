@@ -85,7 +85,7 @@ public struct Complex
 
   public static Complex Acos(Complex z) { return Math.PI/2 - Asin(z); }
 
-  // TODO: i suspect that these naive implementations have problems with certain inputs
+  // TODO: i suspect that these naive implementations have problems with certain edge cases
   public static Complex Asin(Complex z)
   { Complex iz=new Complex(-z.imag, z.real);
     z = Log(iz + Sqrt(1 - z*z));
