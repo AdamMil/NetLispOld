@@ -1,8 +1,28 @@
+/*
+NetLisp is the reference implementation for a language similar to
+Scheme, also called NetLisp. This implementation is both interpreted
+and compiled, targetting the Microsoft .NET Framework.
+
+http://www.adammil.net/
+Copyright (C) 2005 Adam Milazzo
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+*/
+
 using System;
 using System.Collections;
 using System.IO;
 using System.Reflection;
-using System.Reflection.Emit;
 
 namespace NetLisp.Backend
 {
@@ -130,100 +150,6 @@ public sealed class Importer
   static string currentDir;
   static Hashtable modules = new Hashtable();
   static System.Collections.Specialized.ListDictionary builtins = new System.Collections.Specialized.ListDictionary();
-}
-#endregion
-
-#region ModuleGenerator
-public sealed class ModuleGenerator
-{ ModuleGenerator() { }
-
-  public static Module Generate(ModuleNode mod)
-  { TypeGenerator tg = SnippetMaker.Assembly.DefineType("module"+index.Next+"$"+mod.Name, typeof(Module));
-
-    CodeGenerator cg = tg.DefineStaticMethod(MethodAttributes.Private, "Run", typeof(object),
-                                             new Type[] { typeof(LocalEnvironment) });
-    cg.Namespace = new TopLevelNamespace(cg);
-    if(mod.MaxNames!=0)
-    { cg.Namespace = new LocalNamespace(cg.Namespace, cg);
-      cg.EmitArgGet(0);
-      cg.EmitInt(mod.MaxNames);
-      cg.EmitNew(typeof(LocalEnvironment), new Type[] { typeof(LocalEnvironment), typeof(int) });
-      cg.EmitArgSet(0);
-    }
-    mod.Body.Emit(cg);
-    cg.Finish();
-
-    MethodBase run = cg.MethodBase;
-    cg = tg.DefineConstructor(Type.EmptyTypes);
-    cg.EmitThis();
-    cg.EmitString(mod.Name);
-    cg.EmitCall(typeof(Module).GetConstructor(new Type[] { typeof(string) }));
-
-    ConstructorInfo sci=typeof(Module.Export).GetConstructor(new Type[] { typeof(string) }),
-                   ssci=typeof(Module.Export).GetConstructor(new Type[] { typeof(string), typeof(string) }),
-                   snci=typeof(Module.Export).GetConstructor(new Type[] { typeof(string), typeof(TopLevel.NS) }),
-                  ssnci=typeof(Module.Export).GetConstructor(new Type[] { typeof(string), typeof(string), typeof(TopLevel.NS) });
-    cg.EmitThis();
-    cg.EmitNewArray(typeof(Module.Export), mod.Exports.Length);
-    for(int i=0; i<mod.Exports.Length; i++)
-    { Module.Export e = mod.Exports[i];
-      cg.ILG.Emit(OpCodes.Dup);
-      cg.EmitInt(i);
-      cg.ILG.Emit(OpCodes.Ldelema, typeof(Module.Export));
-      cg.EmitString(e.Name);
-      if(e.Name!=e.AsName) cg.EmitString(e.AsName);
-      if(e.NS==TopLevel.NS.Main) cg.EmitNew(e.Name==e.AsName ? sci : ssci);
-      else
-      { cg.EmitInt((int)e.NS);
-        cg.EmitNew(e.Name==e.AsName ? snci : ssnci);
-      }
-      cg.ILG.Emit(OpCodes.Stobj, typeof(Module.Export));
-    }
-    cg.EmitFieldSet(typeof(Module), "Exports");
-
-    Slot old = cg.AllocLocalTemp(typeof(TopLevel));
-    cg.EmitFieldGet(typeof(TopLevel), "Current");
-    old.EmitSet(cg);
-    cg.ILG.BeginExceptionBlock();
-    cg.EmitFieldGet(typeof(Builtins), "Instance");
-    cg.EmitThis();
-    cg.EmitFieldGet(typeof(Module), "TopLevel");
-    cg.ILG.Emit(OpCodes.Dup);
-    cg.EmitFieldSet(typeof(TopLevel), "Current");
-    cg.EmitCall(typeof(Module), "ImportAll");
-    cg.ILG.Emit(OpCodes.Ldnull);
-    cg.EmitCall((MethodInfo)run);
-    cg.ILG.Emit(OpCodes.Pop);
-    cg.ILG.BeginFinallyBlock();
-    old.EmitGet(cg);
-    cg.EmitFieldSet(typeof(TopLevel), "Current");
-    cg.ILG.EndExceptionBlock();
-    cg.EmitReturn();
-    cg.Finish();
-
-    return (Module)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
-  }
-
-  public static Module Generate(Type type)
-  { Module ret = new Module(type.FullName);
-    Builtins.Instance.ImportAll(ret.TopLevel);
-    ret.AddBuiltins(type);
-
-    object[] attrs = type.GetCustomAttributes(typeof(LispCodeAttribute), false);
-    if(attrs.Length!=0)
-    { TopLevel old = TopLevel.Current;
-      try
-      { TopLevel.Current = ret.TopLevel;
-        Builtins.eval(Parser.FromString(((LispCodeAttribute)attrs[0]).Code).Parse());
-      }
-      finally { TopLevel.Current = old; }
-    }
-
-    ret.CreateExports();
-    return ret;
-  }
-  
-  static Index index = new Index();
 }
 #endregion
 

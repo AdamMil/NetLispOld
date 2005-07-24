@@ -1,3 +1,24 @@
+/*
+NetLisp is the reference implementation for a language similar to
+Scheme, also called NetLisp. This implementation is both interpreted
+and compiled, targetting the Microsoft .NET Framework.
+
+http://www.adammil.net/
+Copyright (C) 2005 Adam Milazzo
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+*/
+
 using System;
 using System.Collections;
 using System.Reflection;
@@ -284,6 +305,13 @@ public sealed class CodeGenerator
     ILG.Emit(OpCodes.Ldarg_0);
   }
 
+  public void EmitTopLevel()
+  { Namespace ns = Namespace;
+    while(ns!=null && !(ns is TopLevelNamespace)) ns = ns.Parent;
+    if(ns!=null) ((TopLevelNamespace)ns).TopSlot.EmitGet(this);
+    else EmitFieldGet(typeof(TopLevel), "Current");
+  }
+
   public void EmitTypedNode(Node node, Type desired)
   { Type type = desired;
     node.Emit(this, ref type);
@@ -307,11 +335,21 @@ public sealed class CodeGenerator
     }
   }
 
-  public void Finish()
-  {
-  }
+  public void Finish() { if(localTemps!=null) localTemps.Clear(); }
 
   public void FreeLocalTemp(Slot slot) { localTemps.Add(slot); }
+
+  public void SetupNamespace(int maxNames) { SetupNamespace(maxNames, null); }
+  public void SetupNamespace(int maxNames, Slot topSlot)
+  { Namespace = topSlot==null ? new TopLevelNamespace(this) : new TopLevelNamespace(this, topSlot);
+    if(maxNames!=0)
+    { Namespace = new LocalNamespace(Namespace, this);
+      EmitArgGet(0);
+      EmitInt(maxNames);
+      EmitNew(typeof(LocalEnvironment), new Type[] { typeof(LocalEnvironment), typeof(int) });
+      EmitArgSet(0);
+    }
+  }
 
   public Namespace Namespace;
   public bool IsGenerator;

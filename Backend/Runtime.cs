@@ -1,3 +1,24 @@
+/*
+NetLisp is the reference implementation for a language similar to
+Scheme, also called NetLisp. This implementation is both interpreted
+and compiled, targetting the Microsoft .NET Framework.
+
+http://www.adammil.net/
+Copyright (C) 2005 Adam Milazzo
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+*/
+
 using System;
 using System.Collections;
 using System.Collections.Specialized;
@@ -137,14 +158,24 @@ public sealed class Binding
 }
 #endregion
 
+// FIXNOW: we need to load this from some constant place (snippets.dll won't always be available)
 #region RG (stuff that can't be written in C#)
 public sealed class RG
 { static RG()
-  { TypeGenerator tg;
+  { if(System.IO.File.Exists("NetLisp.Backend.LowLevel.dll"))
+      try
+      { Assembly ass = Assembly.LoadFrom("NetLisp.Backend.LowLevel.dll");
+        ClosureType = ass.GetType("NetLisp.Backend.ClosureF", true);
+        return;
+      }
+      catch { }
+
+    AssemblyGenerator ag = new AssemblyGenerator("NetLisp.Backend.LowLevel", "NetLisp.Backend.LowLevel.dll");
+    TypeGenerator tg;
     CodeGenerator cg;
 
     #region Closure
-    { tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed, "ClosureF", typeof(Closure));
+    { tg = ag.DefineType(TypeAttributes.Public|TypeAttributes.Sealed, "NetLisp.Backend.ClosureF", typeof(Closure));
       cg = tg.DefineConstructor(new Type[] { typeof(Template), typeof(LocalEnvironment) });
       cg.EmitThis();
       cg.EmitArgGet(0);
@@ -176,6 +207,8 @@ public sealed class RG
       ClosureType = tg.FinishType();
     }
     #endregion
+
+    try { ag.Save(); } catch { }
   }
 
   public static readonly Type ClosureType;
@@ -221,10 +254,33 @@ public sealed class LocalEnvironment
 public sealed class TopLevel
 { public enum NS { Main, Macro }
 
+  public void AddBuiltins(Type type)
+  { foreach(MethodInfo mi in type.GetMethods(BindingFlags.Public|BindingFlags.Static|BindingFlags.DeclaredOnly))
+    { object[] attrs = mi.GetCustomAttributes(typeof(SymbolNameAttribute), false);
+      string name = attrs.Length==0 ? mi.Name : ((SymbolNameAttribute)attrs[0]).Name;
+      Bind(name, Interop.MakeFunctionWrapper(mi, true));
+    }
+
+    foreach(Type ptype in type.GetNestedTypes(BindingFlags.Public))
+      if(ptype.IsSubclassOf(typeof(Primitive)))
+      { Primitive prim = (Primitive)ptype.GetConstructor(Type.EmptyTypes).Invoke(null);
+        Bind(prim.Name, prim);
+      }
+  }
+
   public void Bind(string name, object value)
   { Binding bind = (Binding)Globals[name];
     if(bind==null) Globals[name] = bind = new Binding(name);
     bind.Value = value;
+  }
+
+  public Module.Export[] CreateExports() // FIXME: this exports objects imported from the base (parent) module
+  { ArrayList exports = new ArrayList();
+    foreach(string name in Globals.Keys)
+      if(!name.StartsWith("#_")) exports.Add(new Module.Export(name));
+    foreach(string name in Macros.Keys)
+      if(!name.StartsWith("#_")) exports.Add(new Module.Export(name, TopLevel.NS.Macro));
+    return (Module.Export[])exports.ToArray(typeof(Module.Export));
   }
 
   public bool Contains(string name) { return Globals.Contains(name); }
@@ -295,6 +351,7 @@ public sealed class LispComparer : IComparer
 #region Module
 public class Module
 { public Module(string name) { Name=name; TopLevel=new TopLevel(); }
+  public Module(string name, TopLevel top) { Name=name; TopLevel=top; }
 
   public IDictionary GetExportDict()
   { Hashtable hash = new Hashtable();
@@ -311,20 +368,6 @@ public class Module
     public readonly TopLevel.NS NS;
   }
 
-  public void AddBuiltins(Type type)
-  { foreach(MethodInfo mi in type.GetMethods(BindingFlags.Public|BindingFlags.Static|BindingFlags.DeclaredOnly))
-    { object[] attrs = mi.GetCustomAttributes(typeof(SymbolNameAttribute), false);
-      string name = attrs.Length==0 ? mi.Name : ((SymbolNameAttribute)attrs[0]).Name;
-      TopLevel.Bind(name, Interop.MakeFunctionWrapper(mi, true));
-    }
-
-    foreach(Type ptype in type.GetNestedTypes(BindingFlags.Public))
-      if(ptype.IsSubclassOf(typeof(Primitive)))
-      { Primitive prim = (Primitive)ptype.GetConstructor(Type.EmptyTypes).Invoke(null);
-        TopLevel.Bind(prim.Name, prim);
-      }
-  }
-
   public void ImportAll(TopLevel top)
   { foreach(Export e in Exports)
       if(e.NS==TopLevel.NS.Main) top.Bind(e.AsName, TopLevel.Get(e.Name));
@@ -335,15 +378,11 @@ public class Module
   public readonly string Name;
   public Export[] Exports;
 
-  internal void CreateExports() // FIXME: this exports objects imported from the base (parent) module
-  { ArrayList exports = new ArrayList();
-    foreach(string name in TopLevel.Globals.Keys)
-      if(!name.StartsWith("#_")) exports.Add(new Module.Export(name));
-    foreach(string name in TopLevel.Macros.Keys)
-      if(!name.StartsWith("#_")) exports.Add(new Module.Export(name, TopLevel.NS.Macro));
+  internal void CreateExports() { Exports = TopLevel.CreateExports(); }
+}
 
-    Exports = (Export[])exports.ToArray(typeof(Export));
-  }
+public abstract class BuiltinModule : Module
+{ public BuiltinModule(Type type, TopLevel top) : base(type.FullName, top) { TopLevel.AddBuiltins(type); }
 }
 #endregion
 
@@ -1264,6 +1303,7 @@ public sealed class Ops
   public static readonly object Missing = new Singleton("<Missing>");
   public static readonly object FALSE=false, TRUE=true;
   public static readonly object[] EmptyArray = new object[0];
+  [ThreadStatic] public static Stack ExceptionStack;
 
   static bool IsIn(Type[] typeArr, Type type)
   { for(int i=0; i<typeArr.Length; i++) if(typeArr[i]==type) return true;

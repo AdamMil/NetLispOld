@@ -1,9 +1,31 @@
+/*
+NetLisp is the reference implementation for a language similar to
+Scheme, also called NetLisp. This implementation is both interpreted
+and compiled, targetting the Microsoft .NET Framework.
+
+http://www.adammil.net/
+Copyright (C) 2005 Adam Milazzo
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+*/
+
 using System;
 using NetLisp.Backend;
 
 namespace NetLisp.Mods
 {
 
+// FIXME: finish unzippers!
 // TODO: optimize filter, member, etc. to share the longest common tails
 // TODO: optimize methods that cons new lists so they don't do the if(head==null) ... thing inside the loop
 // TODO: list sets
@@ -122,7 +144,7 @@ namespace NetLisp.Mods
   (let recur ((lis lis))
     (if (null-list? lis) (values lis lis)
         (let ((elt (car lis)))
-          (receive (a b) (recur (cdr lis))
+          (let-values ((a b) (recur (cdr lis)))
             (values (cons (car  elt) a)
                     (cons (cadr elt) b)))))))
 
@@ -130,7 +152,7 @@ namespace NetLisp.Mods
   (let recur ((lis lis))
     (if (null-list? lis) (values lis lis lis)
         (let ((elt (car lis)))
-          (receive (a b c) (recur (cdr lis))
+          (let-values ((a b c) (recur (cdr lis)))
             (values (cons (car   elt) a)
                     (cons (cadr  elt) b)
                     (cons (caddr elt) c)))))))
@@ -139,7 +161,7 @@ namespace NetLisp.Mods
   (let recur ((lis lis))
     (if (null-list? lis) (values lis lis lis lis)
         (let ((elt (car lis)))
-          (receive (a b c d) (recur (cdr lis))
+          (let-values ((a b c d) (recur (cdr lis)))
             (values (cons (car    elt) a)
                     (cons (cadr   elt) b)
                     (cons (caddr  elt) c)
@@ -149,7 +171,7 @@ namespace NetLisp.Mods
   (let recur ((lis lis))
     (if (null-list? lis) (values lis lis lis lis lis)
         (let ((elt (car lis)))
-          (receive (a b c d e) (recur (cdr lis))
+          (let-values ((a b c d e) (recur (cdr lis)))
             (values (cons (car     elt) a)
                     (cons (cadr    elt) b)
                     (cons (caddr   elt) c)
