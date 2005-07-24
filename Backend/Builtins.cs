@@ -7,8 +7,6 @@ namespace NetLisp.Backend
 
 #region Lisp code
 [LispCode(@"
-(define error (lambda items (println ""error"")))
-
 (define caar (lambda (x) (car (car x))))
 (define cadr (lambda (x) (car (cdr x))))
 (define cdar (lambda (x) (cdr (car x))))
@@ -2592,7 +2590,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       System.Text.StringBuilder sb = new System.Text.StringBuilder();
 
       try { while(pair!=null) { sb.Append((char)pair.Car); pair=pair.Cdr as Pair; } }
-      catch(InvalidCastException) { throw new Exception(name+": expects a list of characters"); }
+      catch(InvalidCastException) { throw Ops.TypeError(name+": expects a list of characters"); }
       return sb.ToString();
     }
   }
@@ -2632,7 +2630,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     public override object Call(object[] args)
     { char[] chars = new char[args.Length];
       try { for(int i=0; i<args.Length; i++) chars[i] = (char)args[i]; }
-      catch(InvalidCastException) { throw new Exception(name+": expects character arguments"); }
+      catch(InvalidCastException) { throw Ops.TypeError(name+": expects character arguments"); }
       return new string(chars);
     }
   }
@@ -3523,6 +3521,12 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     return snip.Run(null);
   }
 
+  public static void error(params object[] objs) // TODO: use a macro to provide source information
+  { System.Text.StringBuilder sb = new System.Text.StringBuilder();
+    foreach(object o in objs) sb.Append(Ops.Str(o));
+    throw new RuntimeException(sb.ToString());
+  }
+  
   [SymbolName("#%import-module")]
   public static void _importModule(object module)
   { Importer.GetModule(module).ImportAll(TopLevel.Current);

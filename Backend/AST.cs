@@ -4,8 +4,6 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Reflection.Emit;
 
-// TODO: add exception handling
-
 namespace NetLisp.Backend
 {
 
@@ -76,17 +74,17 @@ public sealed class AST
       switch(sym.Name)
       { case "if":
         { int len = Builtins.length.core(pair);
-          if(len<3 || len>4) throw new Exception("if: expects 3 or 4 forms"); // FIXME: SyntaxException
+          if(len<3 || len>4) throw Ops.SyntaxError("if: expects 2 or 3 forms");
           pair = (Pair)pair.Cdr;
           Pair next = (Pair)pair.Cdr;
           return new IfNode(Parse(pair.Car), Parse(next.Car), next.Cdr==null ? null : Parse(Ops.FastCadr(next)));
         }
         case "begin":
-        { if(Builtins.length.core(pair)<2) throw new Exception("begin: no forms given");
+        { if(Builtins.length.core(pair)<2) throw Ops.SyntaxError("begin: no forms given");
           return ParseBody((Pair)pair.Cdr);
         }
         case "let":
-        { if(Builtins.length.core(pair)<3) throw new Exception("too few for let");
+        { if(Builtins.length.core(pair)<3) throw Ops.SyntaxError("let: must be of the form (let ([var | (var init)] ...) forms ...)");
           pair = (Pair)pair.Cdr;
 
           Pair bindings = (Pair)pair.Car;
@@ -104,28 +102,29 @@ public sealed class AST
           return new LetNode(names, inits, ParseBody((Pair)pair.Cdr));
         }
         case "lambda":
-        { if(Builtins.length.core(pair)<3) throw new Exception("too few for lambda"); // FIXME: SyntaxException
+        { if(Builtins.length.core(pair)<3) throw Ops.SyntaxError("lambda: must be of the form (lambda bindings forms ...)");
           pair = (Pair)pair.Cdr;
           bool hasList;
           return new LambdaNode(ParseLambaList(pair.Car, out hasList), hasList, ParseBody((Pair)pair.Cdr));
         }
         case "quote":
-        { if(Builtins.length.core(pair)!=2) throw new Exception("wrong number for quote"); // FIXME: ex
+        { if(Builtins.length.core(pair)!=2) throw Ops.SyntaxError("quote: expects exactly 1 form");
           return Quote(Ops.FastCadr(pair));
         }
         case "set!":
-        { if(Builtins.length.core(pair)!=3) throw new Exception("wrong number for set!"); // FIXME: SyntaxException
+        { if(Builtins.length.core(pair)!=3) goto error;
           pair = (Pair)pair.Cdr;
           sym = pair.Car as Symbol;
-          if(sym==null) throw new Exception("set must set symbol"); // FIXME: SyntaxException
+          if(sym==null) goto error;
           return new SetNode(sym.Name, Parse(Ops.FastCadr(pair)));
+          error: throw Ops.SyntaxError("set!: must be of form (set! symbol form)");
         }
         case "define":
         { int length = Builtins.length.core(pair);
-          if(length!=3) throw new Exception("wrong number for define"); // FIXME: ex
+          if(length!=3) throw Ops.SyntaxError("define: must be of form (define name value)");
           pair = (Pair)pair.Cdr;
           sym = (Symbol)pair.Car;
-          return new DefineNode(sym.Name, Parse(Ops.FastCadr(pair))); // (define name value)
+          return new DefineNode(sym.Name, Parse(Ops.FastCadr(pair)));
         }
         case "vector":
         { ArrayList items = new ArrayList();
@@ -136,6 +135,86 @@ public sealed class AST
           }
           return new VectorNode((Node[])items.ToArray(typeof(Node)));
         }
+        /* (try
+            (begin forms ...)
+            (catch (e exn:syntaxerror exn:othererror)
+              forms...)
+            (finally forms...))
+        */
+        case "try":
+        { if(Builtins.length.core(pair)<3) goto error;
+          pair = (Pair)pair.Cdr;
+          Node final=null, body=Parse(pair.Car);
+          ArrayList excepts=null, etypes=null;
+
+          while((pair=(Pair)pair.Cdr) != null)
+          { Pair form = pair.Car as Pair;
+            if(form==null) goto error;
+            sym = form.Car as Symbol;
+            if(sym==null) goto error;
+            if(sym.Name=="catch")
+            { if(excepts==null) excepts=new ArrayList();
+              string evar;
+              if(Builtins.length.core(form)<3) goto catchError;
+              form = (Pair)form.Cdr;
+              if(form.Car is Pair)
+              { Pair epair = (Pair)form.Car;
+                if(Builtins.length.core(epair)>2) goto catchError;
+                sym = epair.Car as Symbol;
+                if(sym==null) goto catchError;
+                evar = sym.Name;
+                epair = (Pair)epair.Cdr;
+                if(epair!=null)
+                { if(etypes==null) etypes = new ArrayList();
+                  else etypes.Clear();
+                  do
+                  { sym = epair.Car as Symbol;
+                    if(sym==null) goto catchError;
+                    etypes.Add(sym.Name);
+                  } while((epair=(Pair)epair.Cdr) != null);
+                }
+              }
+              else if(form.Car!=null) goto catchError;
+              else evar = null;
+              excepts.Add(new TryNode.Except(evar, etypes==null ? null : (string[])etypes.ToArray(typeof(string)),
+                                             ParseBody((Pair)form.Cdr)));
+            }
+            else if(sym.Name=="finally")
+            { if(final!=null) goto error;
+              final = ParseBody((Pair)form.Cdr);
+            }
+            else goto error;
+          }
+
+          if(excepts==null && final==null) goto error;
+          return new TryNode(body, excepts==null ? null : (TryNode.Except[])excepts.ToArray(typeof(TryNode.Except)),
+                             final);
+          error: throw Ops.SyntaxError("try form expects one body form followed by catch forms and/or an optional finally form");
+          catchError: throw Ops.SyntaxError("catch form should be of the form: (catch ([e [type ...]]) forms...)");
+        }
+        // (throw [type [objects ...]]) ; type-less throw only allowed within catch form
+        case "throw":
+        { string type=null;
+          ArrayList objs=null;
+
+          pair = pair.Cdr as Pair;
+          if(pair!=null)
+          { sym = pair.Car as Symbol;
+            if(sym==null) throw Ops.SyntaxError("throw must be of form (throw [type [forms ...]])");
+            type = sym.Name;
+            
+            pair = pair.Cdr as Pair;
+            if(pair!=null)
+            { objs = new ArrayList();
+              do
+              { objs.Add(Parse(pair.Car));
+                pair = pair.Cdr as Pair;
+              } while(pair!=null);
+            }
+          }
+          
+          return new ThrowNode(type, objs==null ? null : (Node[])objs.ToArray(typeof(Node)));
+        }
         // (module name-symbol (provides ...) body...)
         case "#%module":
         { if(Builtins.length.core(pair)<4) goto moduleError;
@@ -145,8 +224,8 @@ public sealed class AST
           CallNode provide=(CallNode)Parse(pair.Car);
           pair = (Pair)pair.Cdr;
           return new ModuleNode(name, provide, ParseBody(pair));
-          moduleError: throw new Exception("module definition should be of this form: "+
-                                           "(module name-symbol (provide ...) body ...)");
+          moduleError: throw Ops.SyntaxError("module definition should be of this form: "+
+                                             "(module name-symbol (provide ...) body ...)");
         }
       }
 
@@ -179,13 +258,14 @@ public sealed class AST
     else return new CallNode(func, (Node[])args.ToArray(typeof(Node)));
   }
 
-  static BodyNode ParseBody(Pair start)
+  static Node ParseBody(Pair start)
   { if(start==null) return null;
     ArrayList items = new ArrayList();
     while(start!=null)
     { items.Add(Parse(start.Car));
       start = start.Cdr as Pair;
     }
+    if(items.Count==1) return (Node)items[0];
     return new BodyNode((Node[])items.ToArray(typeof(Node)));
   }
 
@@ -197,19 +277,21 @@ public sealed class AST
     ArrayList names = new ArrayList();
     while(list!=null)
     { Symbol sym = list.Car as Symbol;
-      if(sym==null) throw new Exception("lambda list must contain symbols"); // FIXME: SyntaxException
+      if(sym==null) goto error;
       names.Add(sym.Name);
       object next = list.Cdr;
       list = next as Pair;
       if(list==null && next!=null)
       { sym = next as Symbol;
-        if(sym==null) throw new Exception("lambda list must contain symbols"); // FIXME: SyntaxException
+        if(sym==null) goto error;
         names.Add(sym.Name);
         hasList=true;
         break;
       }
     }
     return (string[])names.ToArray(typeof(string));
+    
+    error: throw Ops.SyntaxError("lambda bindings must be of the form: symbol | (symbol... [ . symbol])");
   }
 
   static Node Quote(object obj)
@@ -234,7 +316,7 @@ public sealed class AST
 
 #region Node
 public abstract class Node
-{ [Flags] public enum Flag : byte { Tail=1, Const=2 };
+{ [Flags] public enum Flag : byte { Tail=1, Const=2, };
 
   public bool IsConstant
   { get { return (Flags&Flag.Const) != 0; }
@@ -250,7 +332,15 @@ public abstract class Node
   { Type type = typeof(object);
     Emit(cg, ref type);
   }
+
   public abstract void Emit(CodeGenerator cg, ref Type etype);
+
+  public void EmitVoid(CodeGenerator cg)
+  { Type type = typeof(void);
+    Emit(cg, ref type);
+    if(type!=typeof(void)) cg.ILG.Emit(OpCodes.Pop);
+  }
+
   public virtual object Evaluate() { throw new NotSupportedException(); }
 
   public abstract Type GetNodeType();
@@ -268,6 +358,7 @@ public abstract class Node
   }
 
   public LambdaNode InFunc;
+  public TryNode InTry;
   public Flag Flags;
   
   public static bool AreEquivalent(Type type, Type desired)
@@ -330,6 +421,23 @@ public abstract class Node
   }
 
   protected struct negbool { }
+  
+  protected void TailReturn(CodeGenerator cg)
+  { if(Tail)
+    { if(InTry==null) cg.EmitReturn();
+      else
+      { InTry.ReturnSlot.EmitSet(cg);
+        cg.ILG.Emit(OpCodes.Leave, InTry.LeaveLabel);
+      }
+    }
+  }
+
+  protected static object[] MakeObjectArray(Node[] nodes)
+  { if(nodes.Length==0) return Ops.EmptyArray;
+    object[] ret = new object[nodes.Length];
+    for(int i=0; i<ret.Length; i++) ret[i] = nodes[i].Evaluate();
+    return ret;
+  }
 
   sealed class Optimizer : IWalker
   { public bool Walk(Node node) { return true; }
@@ -351,11 +459,7 @@ public sealed class BodyNode : Node
     }
     else
     { int i;
-      for(i=0; i<Forms.Length-1; i++)
-      { Type type = typeof(void);
-        Forms[i].Emit(cg, ref type);
-        if(type!=typeof(void)) cg.ILG.Emit(OpCodes.Pop);
-      }
+      for(i=0; i<Forms.Length-1; i++) Forms[i].EmitVoid(cg);
       Forms[i].Emit(cg, ref etype);
     }
   }
@@ -421,7 +525,7 @@ public sealed class CallNode : Node
   public override void Emit(CodeGenerator cg, ref Type etype)
   { if(IsConstant)
     { EmitConstant(cg, Evaluate(), ref etype);
-      if(Tail) cg.EmitReturn();
+      TailReturn(cg);
       return;
     }
 
@@ -430,12 +534,13 @@ public sealed class CallNode : Node
       if(Tail && FuncNameMatch(vn.Name, InFunc)) // see if we can tailcall ourselves with a branch
       { int positional = InFunc.Parameters.Length-(InFunc.HasList ? 1 : 0);
         if(Args.Length<positional)
-          throw new Exception(string.Format("{0} expects {1}{2} args, but is being passed {3}",
-                                            vn.Name, InFunc.HasList ? "at least " : "", positional, Args.Length));
+          throw new TargetParameterCountException(
+            string.Format("{0} expects {1}{2} args, but is being passed {3}",
+                          vn.Name, InFunc.HasList ? "at least " : "", positional, Args.Length));
         for(int i=0; i<positional; i++) Args[i].Emit(cg);
         if(InFunc.HasList) cg.EmitList(Args, positional);
         for(int i=InFunc.Parameters.Length-1; i>=0; i--) cg.EmitSet(InFunc.Parameters[i]);
-        cg.ILG.Emit(OpCodes.Br, InFunc.StartLabel);
+        cg.ILG.Emit(InTry==null ? OpCodes.Br : OpCodes.Leave, InFunc.StartLabel);
         etype = typeof(object);
         return;
       }
@@ -669,12 +774,12 @@ public sealed class CallNode : Node
           default: goto normal;
         }
 
-        if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
+        if(Tail && InTry==null) cg.ILG.Emit(OpCodes.Tailcall);
         cg.EmitCall(typeof(Ops), opname);
         objret:
         etype = typeof(object);
         ret:
-        if(Tail) cg.EmitReturn();
+        TailReturn(cg);
         return;
       }
     }
@@ -682,17 +787,16 @@ public sealed class CallNode : Node
     normal:
     cg.EmitTypedNode(Function, typeof(IProcedure));
     cg.EmitObjectArray(Args);
-    if(Tail) cg.ILG.Emit(OpCodes.Tailcall);
+    if(Tail && InTry==null) cg.ILG.Emit(OpCodes.Tailcall);
     cg.EmitCall(typeof(IProcedure), "Call");
     etype = typeof(object);
-    if(Tail) cg.EmitReturn();
+    TailReturn(cg);
   }
   #endregion
   
   #region Evaluate
   public override object Evaluate()
-  { object[] a = new object[Args.Length];
-    for(int i=0; i<Args.Length; i++) a[i] = Args[i].Evaluate();
+  { object[] a = MakeObjectArray(Args);
 
     if(IsConstant)
     { string name = ((VariableNode)Function).Name.String;
@@ -884,13 +988,7 @@ public sealed class CallNode : Node
                                               Ops.TypeName(args[num])));
   }
 
-  void EmitVoids(CodeGenerator cg)
-  { for(int i=0; i<Args.Length; i++)
-    { Type type = typeof(void);
-      Args[i].Emit(cg, ref type);
-      if(type!=typeof(void)) cg.ILG.Emit(OpCodes.Pop);
-    }
-  }
+  void EmitVoids(CodeGenerator cg) { for(int i=0; i<Args.Length; i++) Args[i].EmitVoid(cg); }
 
   static void EmitFromBool(CodeGenerator cg, bool brtrue)
   { Label yes=cg.ILG.DefineLabel(), end=cg.ILG.DefineLabel();
@@ -920,7 +1018,7 @@ public sealed class DefineNode : Node
   }
 
   public override void Emit(CodeGenerator cg, ref Type etype)
-  { if(InFunc!=null) throw new SyntaxErrorException("define: only allowed at toplevel scope");
+  { Debug.Assert(InFunc==null);
     cg.EmitFieldGet(typeof(TopLevel), "Current");
     cg.EmitString(Name.String);
     Value.Emit(cg);
@@ -930,11 +1028,11 @@ public sealed class DefineNode : Node
     { cg.EmitConstantObject(Symbol.Get(Name.String));
       etype = typeof(Symbol);
     }
-    if(Tail) cg.EmitReturn();
+    TailReturn(cg);
   }
 
   public override object Evaluate()
-  { if(InFunc!=null) throw new SyntaxErrorException("define: only allowed at toplevel scope");
+  { Debug.Assert(InFunc==null);
     TopLevel.Current.Bind(Name.String, Value.Evaluate());
     return Symbol.Get(Name.String);
   }
@@ -960,7 +1058,7 @@ public sealed class IfNode : Node
   public override void Emit(CodeGenerator cg, ref Type etype)
   { if(IsConstant)
     { EmitConstant(cg, Evaluate(), ref etype);
-      if(Tail) cg.EmitReturn();
+      TailReturn(cg);
     }
     else
     { Label endlbl=Tail ? new Label() : cg.ILG.DefineLabel(), falselbl=cg.ILG.DefineLabel();
@@ -984,7 +1082,7 @@ public sealed class IfNode : Node
       }
 
       if(!Tail) cg.ILG.MarkLabel(endlbl);
-      else if(IfFalse==null) cg.EmitReturn();
+      else if(IfFalse==null) TailReturn(cg);
     }
   }
 
@@ -1059,7 +1157,7 @@ public class LambdaNode : Node
       cg.EmitNew(RG.ClosureType, new Type[] { typeof(Template), typeof(LocalEnvironment) });
       etype = RG.ClosureType;
     }
-    if(Tail) cg.EmitReturn();
+    TailReturn(cg);
   }
 
   public override object Evaluate()
@@ -1125,14 +1223,19 @@ public class LambdaNode : Node
 
     public bool Walk(Node node)
     { node.InFunc = func;
+      node.InTry  = inTry;
 
       if(node is LambdaNode)
       { LambdaNode oldFunc=func;
+        TryNode oldTry;
         int oldFree=freeStart, oldBound=boundStart;
+        bool oldCatch=inCatch;
 
         func  = (LambdaNode)node;
+        oldTry = null;
         freeStart = free.Count;
         boundStart = bound.Count;
+        inCatch = false;
 
         foreach(Name name in func.Parameters)
         { bound.Add(name);
@@ -1168,7 +1271,7 @@ public class LambdaNode : Node
         values.RemoveRange(boundStart, bound.Count-boundStart);
         bound.RemoveRange(boundStart, bound.Count-boundStart);
         free.RemoveRange(freeStart, free.Count-freeStart);
-        func=oldFunc; boundStart=oldBound; freeStart=oldFree;
+        func=oldFunc; boundStart=oldBound; freeStart=oldFree; inTry=oldTry; inCatch=oldCatch;
         return false;
       }
       else if(node is LetNode)
@@ -1181,32 +1284,40 @@ public class LambdaNode : Node
         let.Body.Walk(this);
         return false;
       }
-      else if(node is VariableNode || node is SetNode)
-      { Name name = node is SetNode ? ((SetNode)node).Name : ((VariableNode)node).Name;
-        int index = IndexOf(name.String, bound);
-        if(index==-1)
-        { if(func==top) name.Depth=Backend.Name.Global;
-          else
-          { index = IndexOf(name.String, free);
-            if(index==-1) { free.Add(name); name.Depth=0; }
-            else
-            { Name bname = name = (Name)free[index];
-              if(node is SetNode) ((SetNode)node).Name=bname;
-              else ((VariableNode)node).Name=bname;
+      else if(node is VariableNode) HandleLocalReference(ref ((VariableNode)node).Name, null);
+      else if(node is SetNode)
+      { SetNode set = (SetNode)node;
+        HandleLocalReference(ref set.Name, set.Value);
+      }
+      else if(!inCatch && node is ThrowNode && ((ThrowNode)node).Type==null)
+        throw Ops.SyntaxError(node, "type-less throw form is only allowed within a catch statement");
+      else if(node is TryNode)
+      { TryNode oldTry=inTry, tn=(TryNode)node;
+        inTry = tn;
+
+        tn.Body.Walk(this);
+
+        if(tn.Excepts!=null)
+          foreach(TryNode.Except ex in tn.Excepts)
+          { if(ex.Types!=null)
+              for(int i=0; i<ex.Types.Length; i++) HandleLocalReference(ref ex.Types[i].Name, null);
+            if(ex.Var!=null)
+            { bound.Add(ex.Var);
+              values.Add(null);
+            }
+            inCatch = true;
+            ex.Body.Walk(this);
+            inCatch = false;
+            if(ex.Var!=null)
+            { bound.RemoveAt(bound.Count-1);
+              values.RemoveAt(values.Count-1);
             }
           }
-        }
-        else
-        { Name bname = name = (Name)bound[index];
-          if(node is SetNode)
-          { SetNode set = (SetNode)node;
-            set.Name=bname;
+        
+        if(tn.Finally!=null) tn.Finally.Walk(this);
 
-            if(values[index]==Backend.Binding.Unbound) values[index]=set.Value;
-            else values[index]=null;
-          }
-          else ((VariableNode)node).Name=bname;
-        }
+        inTry = oldTry;
+        return false;
       }
       return true;
     }
@@ -1227,6 +1338,7 @@ public class LambdaNode : Node
       else if(node is DefineNode)
       { DefineNode def = (DefineNode)node;
         if(def.InFunc==top || def.InFunc is ModuleNode) def.InFunc=null;
+        else if(def.InFunc!=null) throw Ops.SyntaxError(node, "define: only allowed at toplevel scope");
       }
     }
 
@@ -1236,9 +1348,30 @@ public class LambdaNode : Node
       return IndexOf(name, list, 0, list.Count);
     }
 
+    void HandleLocalReference(ref Name name, Node assign)
+    { int index = IndexOf(name.String, bound);
+      if(index==-1)
+      { if(func==top) name.Depth=Backend.Name.Global;
+        else
+        { index = IndexOf(name.String, free);
+          if(index==-1) { free.Add(name); name.Depth=0; }
+          else name = (Name)free[index];
+        }
+      }
+      else
+      { name = (Name)bound[index];
+        if(assign!=null)
+        { if(values[index]==Backend.Binding.Unbound) values[index]=assign;
+          else values[index]=null;
+        }
+      }
+    }
+
     LambdaNode func, top;
+    TryNode inTry;
     ArrayList bound=new ArrayList(), free=new ArrayList(), values=new ArrayList();
     int boundStart, freeStart;
+    bool inCatch;
 
     static int IndexOf(string name, IList list, int start, int end)
     { for(end--; end>=start; end--) if(((Name)list[end]).String==name) return end;
@@ -1262,7 +1395,7 @@ public sealed class ListNode : Node
       else cg.EmitList(Items, Dot);
       etype = Items.Length==0 && Dot==null ? null : typeof(Pair);
     }
-    if(Tail) cg.EmitReturn();
+    TailReturn(cg);
   }
 
   public override object Evaluate()
@@ -1297,7 +1430,7 @@ public sealed class LiteralNode : Node
 { public LiteralNode(object value) { Value=value; }
   public override void Emit(CodeGenerator cg, ref Type etype)
   { EmitConstant(cg, Value, ref etype);
-    if(Tail) cg.EmitReturn();
+    TailReturn(cg);
   }
   public override object Evaluate() { return Value; }
   public override Type GetNodeType() { return Value==null ? null : Value.GetType(); }
@@ -1414,7 +1547,7 @@ public sealed class ModuleNode : LambdaNode
     Exports = (Module.Export[])exports.ToArray(typeof(Module.Export));
 
     return;
-    badProvides: throw new SyntaxErrorException("Invalid 'provides' declaration");
+    badProvides: throw Ops.SyntaxError(this, "Invalid 'provides' declaration"); // TODO: move this check outside (or do whatever so we can get good error diagnostics)
   }
 
   public override void Emit(CodeGenerator cg, ref Type etype)
@@ -1423,7 +1556,7 @@ public sealed class ModuleNode : LambdaNode
     { cg.EmitConstantObject(Symbol.Get(Name));
       etype = typeof(Symbol);
     }
-    if(Tail) cg.EmitReturn();
+    TailReturn(cg);
   }
 
   public override void Walk(IWalker w)
@@ -1471,7 +1604,7 @@ public sealed class SetNode : Node
       etype = typeof(object);
     }
     cg.EmitSet(Name);
-    if(Tail) cg.EmitReturn();
+    TailReturn(cg);
   }
 
   public override object Evaluate()
@@ -1499,6 +1632,226 @@ public sealed class SetNode : Node
 }
 #endregion
 
+#region ThrowNode
+public sealed class ThrowNode : Node
+{ public ThrowNode(string type, Node[] objects) { Type=new VariableNode(type); Objects=objects; }
+
+  public override void Emit(CodeGenerator cg, ref Type etype)
+  { if(Type==null) cg.ILG.Emit(OpCodes.Rethrow);
+    else
+    { Type ttype = typeof(Type);
+      Type.Emit(cg, ref ttype);
+      if(ttype!=typeof(Type)) cg.EmitCall(typeof(Ops), "ExpectType");
+      if(Objects==null) cg.ILG.Emit(OpCodes.Ldnull);
+      else cg.EmitObjectArray(Objects);
+      cg.EmitCall(typeof(Ops), "MakeException");
+      cg.ILG.Emit(OpCodes.Throw);
+    }
+  }
+
+  public override Type GetNodeType() { return typeof(void); } // TODO: not sure what to return here
+  
+  public override object Evaluate()
+  { if(Type==null) throw new NotImplementedException("evaluation of type-less throw not implemented");
+    throw Ops.MakeException(Ops.ExpectType(Type.Evaluate()), Objects==null ? null : MakeObjectArray(Objects));
+  }
+
+  public override void MarkTail(bool tail)
+  { Tail=false;
+    if(Type!=null)
+    { Type.MarkTail(false);
+      if(Objects!=null) foreach(Node n in Objects) n.MarkTail(false);
+    }
+  }
+  
+  public override void Walk(IWalker w)
+  { if(w.Walk(this))
+    { if(Type!=null)
+      { Type.Walk(w);
+        if(Objects!=null) foreach(Node n in Objects) n.Walk(w);
+      }
+    }
+    w.PostWalk(this);
+  }
+
+  public readonly VariableNode Type;
+  public readonly Node[] Objects;
+}
+#endregion
+
+#region TryNode
+public sealed class TryNode : Node
+{ public TryNode(Node body, Except[] excepts, Node final) { Body=body; Excepts=excepts; Finally=final; }
+
+  public struct Except
+  { public Except(string var, string[] types, Node body)
+    { Var  = var==null ? null : new Name(var);
+      Body = body;
+      if(types==null || types.Length==0) Types=null;
+      else
+      { Types = new VariableNode[types.Length];
+        for(int i=0; i<types.Length; i++) Types[i] = new VariableNode(types[i]);
+      }
+    }
+    public Name Var;
+    public readonly VariableNode[] Types;
+    public readonly Node Body;
+  }
+
+  public Label LeaveLabel { get { return InTry==null ? leaveLabel : InTry.LeaveLabel; } }
+  public Slot  ReturnSlot { get { return InTry==null ? returnSlot : InTry.ReturnSlot; } }
+
+  public override void Emit(CodeGenerator cg, ref Type etype)
+  { returnSlot = etype==typeof(void) ? null : cg.AllocLocalTemp(typeof(object));
+    Debug.Assert(returnSlot!=null || !Tail);
+
+    leaveLabel = cg.ILG.BeginExceptionBlock();
+    if(returnSlot==null)
+    { Body.Emit(cg, ref etype);
+      if(etype!=typeof(void))
+      { etype = typeof(object);
+        cg.ILG.Emit(OpCodes.Pop);
+      }
+    }
+    else
+    { etype = typeof(object);
+      Body.Emit(cg);
+      if(!Tail) returnSlot.EmitSet(cg);
+    }
+
+    if(Excepts!=null && Excepts.Length!=0)
+    { cg.ILG.BeginCatchBlock(typeof(Exception));
+      Slot eslot=null;
+      bool needRethrow=true;
+
+      foreach(Except ex in Excepts)
+      { Label next;
+        if(ex.Types==null)
+        { needRethrow = false;
+          next = new Label();
+        }
+        else
+        { Label body=cg.ILG.DefineLabel();
+          next=cg.ILG.DefineLabel();
+          if(eslot==null)
+          { eslot = cg.AllocLocalTemp(typeof(Exception));
+            eslot.EmitSet(cg);
+          }
+          foreach(Node type in ex.Types)
+          { Type ttype = typeof(Type);
+            type.Emit(cg, ref ttype);
+            if(ttype!=typeof(Type)) cg.EmitCall(typeof(Ops), "ExpectType");
+            eslot.EmitGet(cg);
+            cg.EmitCall(typeof(Type), "IsInstanceOfType");
+            cg.ILG.Emit(OpCodes.Brtrue, body);
+          }
+          cg.ILG.Emit(OpCodes.Br, next);
+          cg.ILG.MarkLabel(body);
+        }
+        if(ex.Var!=null)
+        { if(eslot!=null) eslot.EmitGet(cg);
+          cg.EmitSet(ex.Var);
+        }
+        if(returnSlot==null) ex.Body.EmitVoid(cg);
+        else
+        { ex.Body.Emit(cg);
+          returnSlot.EmitSet(cg);
+        }
+        cg.ILG.Emit(OpCodes.Leave, Tail ? LeaveLabel : leaveLabel);
+        if(ex.Types==null) break;
+        else cg.ILG.MarkLabel(next);
+      }
+
+      if(needRethrow) cg.ILG.Emit(OpCodes.Rethrow);
+      if(eslot!=null) cg.FreeLocalTemp(eslot);
+    }
+
+    if(Finally!=null)
+    { cg.ILG.BeginFinallyBlock();
+      Finally.EmitVoid(cg);
+    }
+    cg.ILG.EndExceptionBlock();
+
+    if(returnSlot!=null)
+    { returnSlot.EmitGet(cg);
+      cg.FreeLocalTemp(returnSlot);
+      returnSlot = null;
+      TailReturn(cg);
+    }
+    else if(etype!=typeof(void)) cg.ILG.Emit(OpCodes.Ldnull);
+
+    leaveLabel = new Label();
+  }
+
+  public override object Evaluate()
+  { if(Excepts==null)
+      try { return Body.Evaluate(); }
+      finally { if(Finally!=null) Finally.Evaluate(); }
+    else
+      try { return Body.Evaluate(); }
+      catch(Exception e)
+      { foreach(Except ex in Excepts)
+        { if(ex.Types!=null)
+          { bool isMatch=false;  
+            foreach(VariableNode name in ex.Types)
+            { Type type = Ops.ExpectType(name.Evaluate());
+              if(type.IsInstanceOfType(e)) { isMatch=true; break; }
+            }
+            if(!isMatch) continue;
+          }
+
+          object ret;
+          if(ex.Var==null) ret = ex.Body.Evaluate();
+          else
+          { InterpreterEnvironment ne, old=InterpreterEnvironment.Current;
+            try
+            { InterpreterEnvironment.Current = ne = new InterpreterEnvironment(old);
+              ne.Bind(ex.Var.String, e);
+              ret = ex.Body.Evaluate();
+            }
+            finally { InterpreterEnvironment.Current = old; }
+          }
+          return ret;
+        }
+        throw;
+      }
+      finally { if(Finally!=null) Finally.Evaluate(); }
+  }
+
+  public override Type GetNodeType() { return Body.GetNodeType(); }
+
+  public override void MarkTail(bool tail)
+  { Tail=tail;
+    Body.MarkTail(tail);
+    if(Excepts!=null)
+      foreach(Except ex in Excepts)
+      { if(ex.Types!=null) foreach(Node n in ex.Types) n.MarkTail(false);
+        ex.Body.MarkTail(false);
+      }
+    if(Finally!=null) Finally.MarkTail(false);
+  }
+  
+  public override void Walk(IWalker w)
+  { if(w.Walk(this))
+    { Body.Walk(w);
+      if(Excepts!=null)
+        foreach(Except ex in Excepts)
+        { if(ex.Types!=null) foreach(Node n in ex.Types) n.Walk(w);
+          ex.Body.Walk(w);
+        }
+      if(Finally!=null) Finally.Walk(w);
+    }
+    w.PostWalk(this);
+  }
+
+  public readonly Node Body, Finally;
+  public readonly Except[] Excepts;
+  
+  Label leaveLabel;
+  Slot returnSlot;
+}
+#endregion
+
 #region VariableNode
 public sealed class VariableNode : Node
 { public VariableNode(string name) { Name=new Name(name); }
@@ -1514,7 +1867,7 @@ public sealed class VariableNode : Node
     { cg.EmitGet(Name);
       etype = typeof(object);
     }
-    if(Tail) cg.EmitReturn();
+    TailReturn(cg);
   }
 
   public override object Evaluate()
@@ -1534,28 +1887,16 @@ public sealed class VectorNode : Node
 
   public override void Emit(CodeGenerator cg, ref Type etype)
   { if(etype==typeof(void))
-    { foreach(Node node in Items)
-        if(!node.IsConstant)
-        { node.Emit(cg, ref etype);
-          if(etype!=typeof(void))
-          { cg.ILG.Emit(OpCodes.Pop);
-            etype = typeof(void);
-          }
-        }
-    }
+      foreach(Node node in Items) if(!node.IsConstant) node.EmitVoid(cg);
     else
     { if(IsConstant) cg.EmitConstantObject(Evaluate());
       else cg.EmitObjectArray(Items);
       etype = typeof(object[]);
     }
-    if(Tail) cg.EmitReturn();
+    TailReturn(cg);
   }
 
-  public override object Evaluate()
-  { object[] ret = new object[Items.Length];
-    for(int i=0; i<ret.Length; i++) ret[i] = Items[i].Evaluate();
-    return ret;
-  }
+  public override object Evaluate() { return MakeObjectArray(Items); }
 
   public override Type GetNodeType() { return typeof(object[]); }
 

@@ -126,7 +126,7 @@ public sealed class ReflectedField : SimpleProcedure
     FieldInfo fi = (FieldInfo)hash[inst.GetType()];
     if(fi==null)
     { fi = inst.GetType().GetField(FieldName);
-      if(fi==null) throw new Exception("Object "+Ops.TypeName(inst)+" has no field "+FieldName);
+      if(fi==null) throw Ops.ValueError("Object "+Ops.TypeName(inst)+" has no field "+FieldName);
       hash[inst.GetType()] = fi;
     }
 

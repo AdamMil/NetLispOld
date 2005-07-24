@@ -180,7 +180,7 @@
                 />
                 <File
                     RelPath = "TextBox.cs"
-                    SubType = "UserControl"
+                    SubType = "Code"
                     BuildAction = "Compile"
                 />
             </Include>

@@ -34,7 +34,7 @@ public sealed class Importer
     }
     catch { goto bad; }
 
-    if(module==null) throw new SyntaxErrorException("module not found");
+    if(module==null) throw new ModuleLoadException("module not found");
     return module;
 
     bad: throw new SyntaxErrorException("malformed module name");
@@ -69,7 +69,7 @@ public sealed class Importer
   { Module module = (Module)modules[mp];
 
     if(module==null)
-    { if(modules.Contains(mp)) throw new Exception("circular module requirements");
+    { if(modules.Contains(mp)) throw new ModuleLoadException("circular module requirements"); // TODO: improve this message
       modules[mp] = null;
 
       try
