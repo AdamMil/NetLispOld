@@ -59,6 +59,7 @@ public class SymbolNameAttribute : Attribute
 public interface IProcedure
 { int MinArgs { get; }
   int MaxArgs { get; }
+  bool NeedsFreshArgs { get; }
 
   object Call(params object[] args);
 }
@@ -66,6 +67,7 @@ public interface IProcedure
 public abstract class Lambda : IProcedure
 { public int MinArgs { get { return Template.NumParams; } }
   public int MaxArgs { get { return Template.HasList ? -1 : Template.NumParams; } }
+  public bool NeedsFreshArgs { get { return Template.CreatesClosure; } }
 
   public abstract object Call(params object[] args);
   public override string ToString() { return Template.Name==null ? "#<lambda>" : "#<lambda '"+Template.Name+"'>"; }
@@ -79,7 +81,7 @@ public abstract class Closure : Lambda
 
 public sealed class InterpretedProcedure : Lambda
 { public InterpretedProcedure(string name, string[] paramNames, bool hasList, Node body)
-  { Template   = new Template(IntPtr.Zero, name, paramNames.Length, hasList);
+  { Template   = new Template(IntPtr.Zero, name, paramNames.Length, hasList, false);
     ParamNames = paramNames;
     Body       = body;
   }
@@ -118,6 +120,7 @@ public abstract class SimpleProcedure : IProcedure
   public int MinArgs { get { return min; } }
   public int MaxArgs { get { return max; } }
   public string Name { get { return name; } }
+  public bool NeedsFreshArgs { get { return needsFreshArgs; } }
 
   public abstract object Call(object[] args);
   public override string ToString() { return name; }
@@ -126,6 +129,7 @@ public abstract class SimpleProcedure : IProcedure
 
   protected string name;
   protected int min, max;
+  protected bool needsFreshArgs;
 }
 
 public abstract class Primitive : SimpleProcedure
@@ -158,7 +162,6 @@ public sealed class Binding
 }
 #endregion
 
-// FIXNOW: we need to load this from some constant place (snippets.dll won't always be available)
 #region RG (stuff that can't be written in C#)
 public sealed class RG
 { static RG()
@@ -268,9 +271,14 @@ public sealed class TopLevel
       }
   }
 
+  public void AddMacro(string name, IProcedure value) { lock(Macros) Macros[name] = value; }
+
   public void Bind(string name, object value)
-  { Binding bind = (Binding)Globals[name];
-    if(bind==null) Globals[name] = bind = new Binding(name);
+  { Binding bind;
+    lock(Globals)
+    { bind = (Binding)Globals[name];
+      if(bind==null) Globals[name] = bind = new Binding(name);
+    }
     bind.Value = value;
   }
 
@@ -283,40 +291,48 @@ public sealed class TopLevel
     return (Module.Export[])exports.ToArray(typeof(Module.Export));
   }
 
-  public bool Contains(string name) { return Globals.Contains(name); }
+  public bool Contains(string name) { lock(Globals) return Globals.Contains(name); }
+  public bool ContainsMacro(string name) { lock(Macros) return Macros.Contains(name); }
 
   public object Get(string name)
-  { Binding obj = (Binding)Globals[name];
+  { Binding obj;
+    lock(Globals) obj = (Binding)Globals[name];
     if(obj==null || obj.Value==Binding.Unbound) throw new NameException("no such name: "+name);
     return obj.Value;
   }
 
   public bool Get(string name, out object value)
-  { Binding obj = (Binding)Globals[name];
+  { Binding obj;
+    lock(Globals) obj = (Binding)Globals[name];
     if(obj==null || obj.Value==Binding.Unbound) { value=null; return false; }
     value = obj.Value;
     return true;
   }
 
   public Binding GetBinding(string name)
-  { Binding obj = (Binding)Globals[name];
+  { Binding obj;
+    lock(Globals) obj = (Binding)Globals[name];
     if(obj==null) Globals[name] = obj = new Binding(name);
     return obj;
   }
 
+  public IProcedure GetMacro(string name) { lock(Macros) return (IProcedure)Macros[name]; }
+
   public Module GetModule(string name)
-  { return Modules==null ? null : (Module)Modules[name];
+  { if(Modules==null) return null;
+    else lock(Modules) return (Module)Modules[name];
   }
 
   public void Set(string name, object value)
-  { Binding obj = (Binding)Globals[name];
+  { Binding obj;
+    lock(Globals) obj = (Binding)Globals[name];
     if(obj==null) throw new NameException("no such name: "+name);
     obj.Value = value;
   }
 
   public void SetModule(string name, Module module)
-  { if(Modules==null) Modules = new ListDictionary();
-    Modules[name] = module;
+  { if(Modules==null) lock(this) Modules = new ListDictionary();
+    lock(Modules) Modules[name] = module;
   }
 
   public Hashtable Globals=new Hashtable(), Macros=new Hashtable();
@@ -382,7 +398,8 @@ public class Module
 }
 
 public abstract class BuiltinModule : Module
-{ public BuiltinModule(Type type, TopLevel top) : base(type.FullName, top) { TopLevel.AddBuiltins(type); }
+{ // TODO: calling TopLevel.AddBuiltins() is slow. we want module loading to be fast!
+  public BuiltinModule(Type type, TopLevel top) : base(type.FullName, top) { TopLevel.AddBuiltins(type); }
 }
 #endregion
 
@@ -571,6 +588,12 @@ public sealed class Ops
   public static object CheckVariable(object value, string name)
   { if(value==Binding.Unbound) throw new NameException("use of unbound variable: "+name);
     return value;
+  }
+
+  public static object[] CheckValues(MultipleValues values, int length)
+  { if(values.Values.Length<length) throw Ops.ValueError("expected at least "+length.ToString()+
+                                                         " values, but received "+values.Values.Length.ToString());
+    return values.Values;
   }
 
   public static Snippet CompileRaw(object obj) { return SnippetMaker.Generate(AST.Create(obj)); }
@@ -817,7 +840,13 @@ public sealed class Ops
 
   public static Type ExpectType(object obj)
   { Type ret = obj as Type;
-    if(ret==null) throw new ArgumentException("expect type but received "+TypeName(obj));
+    if(ret==null) throw new ArgumentException("expected type but received "+TypeName(obj));
+    return ret;
+  }
+
+  public static MultipleValues ExpectValues(object obj)
+  { MultipleValues ret = obj as MultipleValues;
+    if(ret==null) throw new ArgumentException("expected multiplevalues but received "+TypeName(obj));
     return ret;
   }
 
@@ -1170,7 +1199,7 @@ public sealed class Ops
   { return new SyntaxErrorException(string.Format(format, args));
   }
   public static SyntaxErrorException SyntaxError(Node node, string message)
-  { return new SyntaxErrorException(message); // TODO: improve this
+  { return new SyntaxErrorException(message); // TODO: improve this with source information
   }
   public static SyntaxErrorException SyntaxError(Node node, string format, params object[] args)
   { return SyntaxError(node, string.Format(format, args));
@@ -1383,9 +1412,11 @@ public sealed class Symbol
   public override string ToString() { return Name; }
 
   public static Symbol Get(string name)
-  { Symbol sym = (Symbol)table[name];
-    if(sym==null) table[name] = sym = new Symbol(name);
-    return sym;
+  { lock(table)
+    { Symbol sym = (Symbol)table[name];
+      if(sym==null) table[name] = sym = new Symbol(name);
+      return sym;
+    }
   }
 
   static readonly Hashtable table = new Hashtable();
@@ -1394,8 +1425,8 @@ public sealed class Symbol
 
 #region Template
 public sealed class Template
-{ public Template(IntPtr func, string name, int numParams, bool hasList)
-  { TopLevel=TopLevel.Current; FuncPtr=func; Name=name; NumParams=numParams; HasList=hasList;
+{ public Template(IntPtr func, string name, int numParams, bool hasList, bool closure)
+  { TopLevel=TopLevel.Current; FuncPtr=func; Name=name; NumParams=numParams; HasList=hasList; CreatesClosure=closure;
   }
 
   public object[] FixArgs(object[] args)
@@ -1420,7 +1451,7 @@ public sealed class Template
   public readonly string Name;
   public readonly IntPtr FuncPtr;
   public readonly int  NumParams;
-  public readonly bool HasList;
+  public readonly bool HasList, CreatesClosure;
 }
 #endregion
 

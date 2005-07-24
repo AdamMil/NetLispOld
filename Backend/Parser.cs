@@ -103,6 +103,8 @@ public sealed class Parser
     }
   }
   
+  public static object ParseNumber(string str, int radix) { return ParseNum(str, "", radix, '\0'); }
+
   public static readonly object EOF = new Singleton("<EOF>");
 
   void Eat(Token type) { if(token!=type) Unexpected(token, type); NextToken(); }
@@ -179,44 +181,6 @@ public sealed class Parser
     }
     else token = ReadToken();
     return token;
-  }
-
-  object ParseInt(string str, int radix)
-  { if(str=="") return 0;
-    try { return Convert.ToInt32(str, radix); }
-    catch(OverflowException)
-    { try { return Convert.ToInt64(str, radix); }
-      catch(OverflowException) { return new Integer(str, radix); }
-    }
-  }
-
-  double ParseNum(string str, int radix)
-  { if(radix==10) return double.Parse(str);
-    else
-    { int pos = str.IndexOf('.');
-      if(pos==-1) return Convert.ToDouble(ParseInt(str, radix));
-      double whole=Convert.ToDouble(ParseInt(str.Substring(0, pos), radix));
-      double  part=Convert.ToDouble(ParseInt(str.Substring(pos+1), radix));
-      return whole + part/radix;
-    }
-  }
-
-  object ParseNum(string str, string exp, int radix, char exact)
-  { double num = ParseNum(str, radix);
-    if(exp!="") num *= Math.Pow(10, ParseNum(exp, radix));
-
-    if(Math.IEEERemainder(num, 1)==0) // integer
-    { if(exact=='i') return num;
-      try { return checked((int)num); }
-      catch(OverflowException)
-      { try { return checked((long)num); }
-        catch(OverflowException) { return new Integer(num); }
-      }
-    }
-    else 
-    { if(exact=='e') throw new NotImplementedException("rationals");
-      return num;
-    }
   }
 
   char ReadChar()
@@ -424,6 +388,44 @@ public sealed class Parser
   char   lastChar;
 
   static bool IsDelimiter(char c) { return char.IsWhiteSpace(c) || c=='(' || c==')' || c=='#' || c=='`' || c==',' || c=='\'' || c=='\0'; }
+
+  static object ParseInt(string str, int radix)
+  { if(str=="") return 0;
+    try { return Convert.ToInt32(str, radix); }
+    catch(OverflowException)
+    { try { return Convert.ToInt64(str, radix); }
+      catch(OverflowException) { return new Integer(str, radix); }
+    }
+  }
+
+  static double ParseNum(string str, int radix)
+  { if(radix==10) return double.Parse(str);
+    else
+    { int pos = str.IndexOf('.');
+      if(pos==-1) return Convert.ToDouble(ParseInt(str, radix));
+      double whole=Convert.ToDouble(ParseInt(str.Substring(0, pos), radix));
+      double  part=Convert.ToDouble(ParseInt(str.Substring(pos+1), radix));
+      return whole + part/radix;
+    }
+  }
+
+  static object ParseNum(string str, string exp, int radix, char exact)
+  { double num = ParseNum(str, radix);
+    if(exp!="") num *= Math.Pow(10, ParseNum(exp, radix));
+
+    if(Math.IEEERemainder(num, 1)==0) // integer
+    { if(exact=='i') return num;
+      try { return checked((int)num); }
+      catch(OverflowException)
+      { try { return checked((long)num); }
+        catch(OverflowException) { return new Integer(num); }
+      }
+    }
+    else 
+    { if(exact=='e') throw new NotImplementedException("rationals");
+      return num;
+    }
+  }
 
   static readonly Regex binNum =
     new Regex(@"^(:?(?<num>[+-]?(?:[01]+(?:\.[01]*)?|\.[01]+))(?:e(?<exp>[+-]?(?:[01]+(?:\.[01]*)?|\.[01]+)))?

@@ -34,6 +34,7 @@ public abstract class FieldWrapper : IProcedure
 
   public int MinArgs { get { return 1; } }
   public int MaxArgs { get { return 2; } }
+  public bool NeedsFreshArgs { get { return false; } }
 
   public abstract object Call(object[] args);
   public override string ToString() { return "#<field '"+Name+"'>"; }
@@ -46,6 +47,7 @@ public abstract class FieldWrapper : IProcedure
 public abstract class FunctionWrapper : IProcedure
 { public abstract int MinArgs { get; }
   public abstract int MaxArgs { get; }
+  public bool NeedsFreshArgs { get { return false; } }
 
   public abstract object Call(object[] args);
   public abstract Conversion TryMatch(object[] args, Type[] types);
@@ -120,9 +122,10 @@ public sealed class ReflectedConstructor : SimpleProcedure
 
   public override object Call(object[] args)
   { if(funcs==null)
-    { funcs = Interop.GetConstructors(type);
-      type = null;
-    }
+      lock(this)
+      { funcs = Interop.GetConstructors(type);
+        type = null;
+      }
     return Interop.Call(funcs, args);
   }
 
@@ -143,12 +146,15 @@ public sealed class ReflectedField : SimpleProcedure
     object inst = args[0];
     if(inst==null) throw new ArgumentNullException("field '"+FieldName+"': instance cannot be null");
 
-    if(hash==null) hash=new HybridDictionary();
-    FieldInfo fi = (FieldInfo)hash[inst.GetType()];
-    if(fi==null)
-    { fi = inst.GetType().GetField(FieldName);
-      if(fi==null) throw Ops.ValueError("Object "+Ops.TypeName(inst)+" has no field "+FieldName);
-      hash[inst.GetType()] = fi;
+    FieldInfo fi;
+    lock(this)
+    { if(hash==null) hash=new HybridDictionary();
+      fi = (FieldInfo)hash[inst.GetType()];
+      if(fi==null)
+      { fi = inst.GetType().GetField(FieldName);
+        if(fi==null) throw Ops.ValueError("Object "+Ops.TypeName(inst)+" has no field "+FieldName);
+        hash[inst.GetType()] = fi;
+      }
     }
 
     if(args.Length==1) return fi.GetValue(inst);
@@ -167,13 +173,14 @@ public sealed class ReflectedFunction : SimpleProcedure
 
   public override object Call(object[] args)
   { if(funcs==null)
-    { ArrayList list = new ArrayList();
-      foreach(MethodInfo mi in type.GetMethods(BindingFlags.Public|BindingFlags.Static))
-        if(mi.Name==methodName) list.Add(Interop.MakeFunctionWrapper(mi));
-      funcs = (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
-      type  = null;
-      methodName = null;
-    }
+      lock(this)
+      { ArrayList list = new ArrayList();
+        foreach(MethodInfo mi in type.GetMethods(BindingFlags.Public|BindingFlags.Static))
+          if(mi.Name==methodName) list.Add(Interop.MakeFunctionWrapper(mi));
+        funcs = (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
+        type  = null;
+        methodName = null;
+      }
     return Interop.Call(funcs, args);
   }
 
@@ -193,9 +200,12 @@ public sealed class ReflectedMethod : SimpleProcedure
   { CheckArity(args);
     object inst = args[0];
     if(inst==null) throw new ArgumentNullException("property '"+MethodName+"': instance cannot be null");
-    if(hash==null) hash = new HybridDictionary();
-    FunctionWrapper[] funcs = (FunctionWrapper[])hash[inst.GetType()]; // TODO: thread safety?
-    if(funcs==null) hash[inst.GetType()] = funcs = Interop.GetFunctions(inst.GetType(), MethodName);
+    FunctionWrapper[] funcs;
+    lock(this)
+    { if(hash==null) hash = new HybridDictionary();
+      funcs = (FunctionWrapper[])hash[inst.GetType()];
+      if(funcs==null) hash[inst.GetType()] = funcs = Interop.GetFunctions(inst.GetType(), MethodName);
+    }
     return Interop.Call(funcs, args);
   }
 
@@ -215,9 +225,12 @@ public sealed class ReflectedProperty : SimpleProcedure
     object inst = args[0];
     if(inst==null) throw new ArgumentNullException("property '"+PropertyName+"': instance cannot be null");
 
-    if(hash==null) hash = new HybridDictionary();
-    FunctionWrapper[] funcs = (FunctionWrapper[])hash[inst.GetType()]; // TODO: thread safety?
-    if(funcs==null) hash[inst.GetType()] = funcs = Interop.GetPropertyFunctions(inst.GetType(), PropertyName);
+    FunctionWrapper[] funcs;
+    lock(this)
+    { if(hash==null) hash = new HybridDictionary();
+      funcs = (FunctionWrapper[])hash[inst.GetType()];
+      if(funcs==null) hash[inst.GetType()] = funcs = Interop.GetPropertyFunctions(inst.GetType(), PropertyName);
+    }
     return Interop.Call(funcs, args);
   }
 
@@ -521,7 +534,7 @@ public sealed class Interop
       else if(!top.Get(name, out obj) || !(obj is ReflectedMethod) || ((ReflectedMethod)obj).MethodName!=realName)
       { obj = new ReflectedMethod(realName);
         top.Bind(name, obj);
-        top.Bind(fullName, obj); // TODO: optimize this by making the full version not dispatch on type
+        top.Bind(fullName, obj); // TODO: optimize this by making the full version not dispatch on type?
       }
       else top.Bind(fullName, obj); // ^-- this will be affected by the optimization too
     }
@@ -554,60 +567,61 @@ public sealed class Interop
   public static object MakeDelegateWrapper(IProcedure proc, Type delegateType)
   { Create cr;
     lock(handlers) cr = (Create)handlers[delegateType];
-    
+
     if(cr==null)
     { MethodInfo mi = delegateType.GetMethod("Invoke", BindingFlags.Public|BindingFlags.Instance);
       Signature sig = new Signature(mi, true);
 
-      lock(dsigs) cr = (Create)dsigs[sig]; // FIXME: improve thread safety here and elsewhere
-      if(cr==null)
-      { for(int i=0; i<sig.Params.Length; i++)
-          if(sig.Params[i].IsByRef) throw new NotImplementedException(); // TODO: implement this
-        TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
-                                                            "dw$"+dwi.Next, null);
-        Slot pslot = tg.DefineField(FieldAttributes.Private, "proc", typeof(IProcedure));
+      lock(dsigs)
+      { cr = (Create)dsigs[sig];
+        if(cr==null)
+        { for(int i=0; i<sig.Params.Length; i++)
+            if(sig.Params[i].IsByRef) throw new NotImplementedException(); // TODO: implement this
+          TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
+                                                              "dw$"+dwi.Next, null);
+          Slot pslot = tg.DefineField(FieldAttributes.Private, "proc", typeof(IProcedure));
 
-        CodeGenerator cg = tg.DefineConstructor(new Type[] { typeof(IProcedure) });
-        cg.EmitArgGet(0);
-        pslot.EmitSet(cg);
-        cg.EmitReturn();
-        cg.Finish();
-        ConstructorInfo cons = (ConstructorInfo)cg.MethodBase;
-        
-        cg = tg.DefineMethod("Handle", sig.Return, sig.Params);
-        pslot.EmitGet(cg);
-        if(sig.Params.Length==0) cg.EmitFieldGet(typeof(Ops), "EmptyArray");
-        else
-        { cg.EmitNewArray(typeof(object), sig.Params.Length);
-          for(int i=0; i<sig.Params.Length; i++)
-          { cg.ILG.Emit(OpCodes.Dup);
-            cg.EmitInt(i);
-            cg.EmitArgGet(i);
-            if(sig.Params[i].IsValueType) cg.ILG.Emit(OpCodes.Box, sig.Params[i]);
-            cg.ILG.Emit(OpCodes.Stelem_Ref);
-          }
-          if(sig.Return==typeof(object)) cg.ILG.Emit(OpCodes.Tailcall);
-          cg.EmitCall(typeof(IProcedure), "Call");
-          if(sig.Return==typeof(void)) cg.ILG.Emit(OpCodes.Pop);
-          else EmitConvertTo(cg, sig.Return);
+          CodeGenerator cg = tg.DefineConstructor(new Type[] { typeof(IProcedure) });
+          cg.EmitArgGet(0);
+          pslot.EmitSet(cg);
           cg.EmitReturn();
           cg.Finish();
+          ConstructorInfo cons = (ConstructorInfo)cg.MethodBase;
+          
+          cg = tg.DefineMethod("Handle", sig.Return, sig.Params);
+          pslot.EmitGet(cg);
+          if(sig.Params.Length==0) cg.EmitFieldGet(typeof(Ops), "EmptyArray");
+          else
+          { cg.EmitNewArray(typeof(object), sig.Params.Length);
+            for(int i=0; i<sig.Params.Length; i++)
+            { cg.ILG.Emit(OpCodes.Dup);
+              cg.EmitInt(i);
+              cg.EmitArgGet(i);
+              if(sig.Params[i].IsValueType) cg.ILG.Emit(OpCodes.Box, sig.Params[i]);
+              cg.ILG.Emit(OpCodes.Stelem_Ref);
+            }
+            if(sig.Return==typeof(object)) cg.ILG.Emit(OpCodes.Tailcall);
+            cg.EmitCall(typeof(IProcedure), "Call");
+            if(sig.Return==typeof(void)) cg.ILG.Emit(OpCodes.Pop);
+            else EmitConvertTo(cg, sig.Return);
+            cg.EmitReturn();
+            cg.Finish();
+          }
+
+          cg = tg.DefineStaticMethod("Create", typeof(object), new Type[] { typeof(IProcedure) });
+          cg.EmitArgGet(0);
+          cg.EmitNew(cons);
+          cg.EmitReturn();
+          cg.Finish();
+
+          Type type = tg.FinishType();
+          dsigs[sig] = cr = (Create)Delegate.CreateDelegate(typeof(Create), type.GetMethod("Create"));
         }
-
-        cg = tg.DefineStaticMethod("Create", typeof(object), new Type[] { typeof(IProcedure) });
-        cg.EmitArgGet(0);
-        cg.EmitNew(cons);
-        cg.EmitReturn();
-        cg.Finish();
-
-        Type type = tg.FinishType();
-        cr = (Create)Delegate.CreateDelegate(typeof(Create), type.GetMethod("Create"));
-        lock(dsigs) dsigs[sig] = cr;
       }
-      
+
       lock(handlers) handlers[delegateType] = cr;
     }
-    
+
     return cr(proc);
   }
   #endregion
@@ -616,96 +630,124 @@ public sealed class Interop
   internal static FunctionWrapper MakeFunctionWrapper(MethodBase mi) { return MakeFunctionWrapper(mi, false); }
   internal static FunctionWrapper MakeFunctionWrapper(MethodBase mi, bool isPrimitive)
   { IntPtr ptr = mi.MethodHandle.Value;
-    FunctionWrapper ret = (FunctionWrapper)funcs[ptr];
-    if(ret==null)
-    { bool isCons = mi is ConstructorInfo;
-      funcs[ptr] = ret = (FunctionWrapper)MakeSignatureWrapper(mi)
-                           .GetConstructor(isCons ? Type.EmptyTypes : new Type[] { typeof(IntPtr) })
-                           .Invoke(isCons ? Ops.EmptyArray : new object[] { mi.MethodHandle.GetFunctionPointer() });
+    lock(funcs)
+    { FunctionWrapper ret = (FunctionWrapper)funcs[ptr];
+      if(ret==null)
+      { bool isCons = mi is ConstructorInfo;
+        funcs[ptr] = ret = (FunctionWrapper)MakeSignatureWrapper(mi)
+                            .GetConstructor(isCons ? Type.EmptyTypes : new Type[] { typeof(IntPtr) })
+                            .Invoke(isCons ? Ops.EmptyArray : new object[] { mi.MethodHandle.GetFunctionPointer() });
+      }
+      return ret;
     }
-    return ret;
   }
   #endregion
 
-  // TODO: check arity
   #region MakeGetWrapper
   static FieldWrapper MakeGetWrapper(FieldInfo fi)
   { IntPtr ptr = fi.FieldHandle.Value;
-    FieldWrapper ret = (FieldWrapper)gets[ptr];
-    if(ret==null)
-    { TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
-                                                          "fg"+fwi.Next+"$"+fi.Name, typeof(FieldWrapper));
-      CodeGenerator cg = tg.DefineMethodOverride("Call", true);
-      if(!fi.IsStatic)
-      { cg.EmitArgGet(0);
-        cg.EmitInt(0);
-        cg.ILG.Emit(OpCodes.Ldelem_Ref);
-        if(fi.DeclaringType != typeof(object))
-          cg.ILG.Emit(fi.DeclaringType.IsValueType ? OpCodes.Unbox : OpCodes.Castclass, fi.DeclaringType);
+    lock(gets)
+    { FieldWrapper ret = (FieldWrapper)gets[ptr];
+      if(ret==null)
+      { TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
+                                                            "fg"+fwi.Next+"$"+fi.Name, typeof(FieldWrapper));
+        CodeGenerator cg = tg.DefineMethodOverride("Call", true);
+        if(!fi.IsStatic)
+        { if(Options.Debug)
+          { Label good = cg.ILG.DefineLabel();
+            cg.EmitArgGet(0);
+            cg.ILG.Emit(OpCodes.Ldlen);
+            cg.EmitInt(1);
+            cg.ILG.Emit(OpCodes.Bge_S, good);
+            cg.EmitString("non-static field getter expects 1 argument");
+            cg.EmitNew(typeof(TargetParameterCountException), new Type[] { typeof(string) });
+            cg.ILG.Emit(OpCodes.Throw);
+            cg.ILG.MarkLabel(good);
+          }
+          cg.EmitArgGet(0);
+          cg.EmitInt(0);
+          cg.ILG.Emit(OpCodes.Ldelem_Ref);
+          if(fi.DeclaringType != typeof(object))
+            cg.ILG.Emit(fi.DeclaringType.IsValueType ? OpCodes.Unbox : OpCodes.Castclass, fi.DeclaringType);
+        }
+        cg.EmitFieldGet(fi.DeclaringType, fi.Name);
+        if(fi.FieldType.IsValueType) cg.ILG.Emit(OpCodes.Box, fi.FieldType);
+        cg.EmitReturn();
+        cg.Finish();
+
+        cg = tg.DefineConstructor(Type.EmptyTypes);
+        cg.EmitThis();
+        cg.EmitString(fi.IsStatic ? fi.DeclaringType.FullName+"."+fi.Name : fi.Name);
+        cg.EmitCall(typeof(FieldWrapper).GetConstructor(new Type[] { typeof(string) }));
+        cg.EmitReturn();
+        cg.Finish();
+
+        gets[ptr] = ret = (FieldWrapper)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
       }
-      cg.EmitFieldGet(fi.DeclaringType, fi.Name);
-      if(fi.FieldType.IsValueType) cg.ILG.Emit(OpCodes.Box, fi.FieldType);
-      cg.EmitReturn();
-      cg.Finish();
-
-      cg = tg.DefineConstructor(Type.EmptyTypes);
-      cg.EmitThis();
-      cg.EmitString(fi.IsStatic ? fi.DeclaringType.FullName+"."+fi.Name : fi.Name);
-      cg.EmitCall(typeof(FieldWrapper).GetConstructor(new Type[] { typeof(string) }));
-      cg.EmitReturn();
-      cg.Finish();
-
-      gets[ptr] = ret = (FieldWrapper)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
+      return ret;
     }
-    return ret;
   }
   #endregion
 
-  // TODO: check arity
   #region MakeSetWrapper
   static FieldWrapper MakeSetWrapper(FieldInfo fi)
   { IntPtr ptr = fi.FieldHandle.Value;
-    FieldWrapper ret = (FieldWrapper)sets[ptr];
-    if(ret==null)
-    { TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
-                                                          "fs"+fwi.Next+"$"+fi.Name, typeof(FieldWrapper));
-      CodeGenerator cg = tg.DefineMethodOverride("Call", true);
+    lock(sets)
+    { FieldWrapper ret = (FieldWrapper)sets[ptr];
+      if(ret==null)
+      { TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
+                                                            "fs"+fwi.Next+"$"+fi.Name, typeof(FieldWrapper));
+        CodeGenerator cg = tg.DefineMethodOverride("Call", true);
 
-      if(!fi.IsStatic)
-      { cg.EmitArgGet(0);
-        cg.EmitInt(0);
+        if(Options.Debug)
+        { Label good = cg.ILG.DefineLabel();
+          cg.EmitArgGet(0);
+          cg.ILG.Emit(OpCodes.Ldlen);
+          cg.EmitInt(fi.IsStatic ? 1 : 2);
+          cg.ILG.Emit(OpCodes.Bge_S, good);
+          cg.EmitString((fi.IsStatic ? "static" : "non-static")+" field getter expects "+
+                        (fi.IsStatic ? "1 argument" : "2 arguments"));
+          cg.EmitNew(typeof(TargetParameterCountException), new Type[] { typeof(string) });
+          cg.ILG.Emit(OpCodes.Throw);
+          cg.ILG.MarkLabel(good);
+        }
+
+        if(!fi.IsStatic)
+        { cg.EmitArgGet(0);
+          cg.EmitInt(0);
+          cg.ILG.Emit(OpCodes.Ldelem_Ref);
+          if(fi.DeclaringType != typeof(object))
+            cg.ILG.Emit(fi.DeclaringType.IsValueType ? OpCodes.Unbox : OpCodes.Castclass, fi.DeclaringType);
+        }
+        
+        cg.EmitArgGet(0);
+        cg.EmitInt(fi.IsStatic ? 0 : 1);
         cg.ILG.Emit(OpCodes.Ldelem_Ref);
-        if(fi.DeclaringType != typeof(object))
-          cg.ILG.Emit(fi.DeclaringType.IsValueType ? OpCodes.Unbox : OpCodes.Castclass, fi.DeclaringType);
-      }
-      
-      cg.EmitArgGet(0);
-      cg.EmitInt(fi.IsStatic ? 0 : 1);
-      cg.ILG.Emit(OpCodes.Ldelem_Ref);
-      if(UsesIndirectCopy(fi.FieldType))
-      { cg.EmitFieldGetAddr(fi.DeclaringType, fi.Name);
-        EmitConvertTo(cg, fi.FieldType, true);
-        cg.ILG.Emit(OpCodes.Cpobj, fi.FieldType);
-      }
-      else
-      { EmitConvertTo(cg, fi.FieldType);
-        cg.EmitFieldSet(fi.DeclaringType, fi.Name);
-      }
+        if(UsesIndirectCopy(fi.FieldType))
+        { cg.EmitFieldGetAddr(fi.DeclaringType, fi.Name);
+          EmitConvertTo(cg, fi.FieldType, true);
+          cg.ILG.Emit(OpCodes.Cpobj, fi.FieldType);
+        }
+        else
+        { EmitConvertTo(cg, fi.FieldType);
+          cg.EmitFieldSet(fi.DeclaringType, fi.Name);
+        }
 
-      cg.ILG.Emit(OpCodes.Ldnull);
-      cg.EmitReturn();
-      cg.Finish();
+        cg.ILG.Emit(OpCodes.Ldnull);
+        cg.EmitReturn();
+        cg.Finish();
 
-      cg = tg.DefineConstructor(Type.EmptyTypes);
-      cg.EmitThis();
-      cg.EmitString(fi.IsStatic ? fi.DeclaringType.FullName+"."+fi.Name : fi.Name);
-      cg.EmitCall(typeof(FieldWrapper).GetConstructor(new Type[] { typeof(string) }));
-      cg.EmitReturn();
-      cg.Finish();
+        cg = tg.DefineConstructor(Type.EmptyTypes);
+        cg.EmitThis();
+        cg.EmitString(fi.IsStatic ? fi.DeclaringType.FullName+"."+fi.Name : fi.Name);
+        cg.EmitCall(typeof(FieldWrapper).GetConstructor(new Type[] { typeof(string) }));
+        cg.EmitReturn();
+        cg.Finish();
 
-      sets[ptr] = ret = (FieldWrapper)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
+        sets[ptr] = ret = (FieldWrapper)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
+      }
+      return ret;
     }
-    return ret;
   }
   #endregion
   
@@ -870,7 +912,7 @@ public sealed class Interop
       }
 
       if(min<numnp) // default arguments
-      { Slot len = cg.AllocLocalTemp(typeof(int)); // TODO: test this code somehow
+      { Slot len = cg.AllocLocalTemp(typeof(int)); // TODO: test this code
         cg.EmitArgGet(0);
         cg.ILG.Emit(OpCodes.Ldlen);
         len.EmitSet(cg);
@@ -1048,7 +1090,8 @@ public sealed class Interop
         if(mi.DeclaringType.IsValueType) cg.ILG.Emit(OpCodes.Box, mi.DeclaringType);
       }
       else
-      { if(sig.IndirectThis) cg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)mi); // HACK: we hardcode the function pointer in this case because MethodHandle.GetFunctionPointer() doesn't return the correct value for instance calls on value types. this should be a safe hack
+      { // TODO: report this to microsoft and see if we can get a straight answer
+        if(sig.IndirectThis) cg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)mi); // HACK: we hardcode the function pointer in this case because MethodHandle.GetFunctionPointer() doesn't return the correct value for instance calls on value types. i'm not sure if this is safe, but it seems to work.
         else
         { cg.EmitThis();
           cg.EmitFieldGet(typeof(FunctionWrapperI), "methodPtr");
@@ -1080,26 +1123,30 @@ public sealed class Interop
   }
   #endregion
 
-  // TODO: cache these
   #region MakeStructCreator
   internal static StructCreator MakeStructCreator(Type type)
-  { TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
-                                                        "sc$"+sci.Next, typeof(StructCreator));
-    CodeGenerator cg = tg.DefineMethodOverride("Call", true);
-    Slot slot = cg.AllocLocalTemp(type);
-    slot.EmitGetAddr(cg);
-    cg.ILG.Emit(OpCodes.Initobj, type);
-    slot.EmitGet(cg);
-    cg.ILG.Emit(OpCodes.Box, type);
-    cg.EmitReturn();
-    cg.Finish();
-
-    return (StructCreator)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
+  { lock(structs)
+    { StructCreator sc = (StructCreator)structs[type];
+      if(sc==null)
+      { TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
+                                                            "sc$"+sci.Next, typeof(StructCreator));
+        CodeGenerator cg = tg.DefineMethodOverride("Call", true);
+        Slot slot = cg.AllocLocalTemp(type);
+        slot.EmitGetAddr(cg);
+        cg.ILG.Emit(OpCodes.Initobj, type);
+        slot.EmitGet(cg);
+        cg.ILG.Emit(OpCodes.Box, type);
+        cg.EmitReturn();
+        cg.Finish();
+        structs[type] = sc = (StructCreator)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
+      }
+      return sc;
+    }
   }
   #endregion
 
   static readonly Hashtable sigs=new Hashtable(), funcs=new Hashtable(), gets=new Hashtable(), sets=new Hashtable(),
-                  handlers=new Hashtable(), dsigs=new Hashtable(), opnames=new Hashtable();
+                  handlers=new Hashtable(), dsigs=new Hashtable(), opnames=new Hashtable(), structs=new Hashtable();
   static Index dwi=new Index(), fwi=new Index(), swi=new Index(), sci=new Index();
 }
 #endregion

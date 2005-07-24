@@ -28,10 +28,10 @@ using System.Reflection.Emit;
 namespace NetLisp.Backend
 {
 
-#region ModuleGenerator
 public sealed class ModuleGenerator
 { ModuleGenerator() { }
 
+  #region Generate from a ModuleNode
   public static Module Generate(ModuleNode mod)
   { TypeGenerator tg = SnippetMaker.Assembly.DefineType("module"+index.Next+"$"+mod.Name, typeof(Module));
 
@@ -73,7 +73,9 @@ public sealed class ModuleGenerator
 
     return (Module)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
   }
+  #endregion
 
+  #region Generate from builtin type
   public static BuiltinModule Generate(Type type) { return Generate(type, false); }
   public static BuiltinModule Generate(Type type, bool parseOneByOne)
   { 
@@ -190,7 +192,9 @@ public sealed class ModuleGenerator
     }
     finally { TopLevel.Current=oldTL; Options.Debug=debug; Options.Optimize=optimize; }
   }
+  #endregion
   
+  #region Generate compiled file
   public static void Generate(string name, string filename, LambdaNode body, PEFileKinds fileKind)
   { System.Diagnostics.Debug.Assert(TopLevel.Current==null); // TODO: currently this can only be called once. improve that...
 
@@ -230,7 +234,9 @@ public sealed class ModuleGenerator
 
     ag.Save();
   }
+  #endregion
   
+  #region EmitExports
   static void EmitExports(CodeGenerator cg, Module.Export[] exports)
   { ConstructorInfo sci=typeof(Module.Export).GetConstructor(new Type[] { typeof(string) }),
                    ssci=typeof(Module.Export).GetConstructor(new Type[] { typeof(string), typeof(string) }),
@@ -252,9 +258,9 @@ public sealed class ModuleGenerator
       cg.ILG.Emit(OpCodes.Stobj, typeof(Module.Export));
     }
   }
+  #endregion
 
   static Index index = new Index();
 }
-#endregion
 
 } // namespace NetLisp.Backend

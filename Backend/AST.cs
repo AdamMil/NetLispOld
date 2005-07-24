@@ -93,16 +93,16 @@ public sealed class AST
     sym = pair.Car as Symbol;
     if(sym!=null)
       switch(sym.Name)
-      { case "if":
+      { case "quote":
+        { if(Builtins.length.core(pair)!=2) throw Ops.SyntaxError("quote: expects exactly 1 form");
+          return Quote(Ops.FastCadr(pair));
+        }
+        case "if":
         { int len = Builtins.length.core(pair);
           if(len<3 || len>4) throw Ops.SyntaxError("if: expects 2 or 3 forms");
           pair = (Pair)pair.Cdr;
           Pair next = (Pair)pair.Cdr;
           return new IfNode(Parse(pair.Car), Parse(next.Car), next.Cdr==null ? null : Parse(Ops.FastCadr(next)));
-        }
-        case "begin":
-        { if(Builtins.length.core(pair)<2) throw Ops.SyntaxError("begin: no forms given");
-          return ParseBody((Pair)pair.Cdr);
         }
         case "let":
         { if(Builtins.length.core(pair)<3) throw Ops.SyntaxError("let: must be of the form (let ([var | (var init)] ...) forms ...)");
@@ -122,15 +122,15 @@ public sealed class AST
 
           return new LetNode(names, inits, ParseBody((Pair)pair.Cdr));
         }
+        case "begin":
+        { if(Builtins.length.core(pair)<2) throw Ops.SyntaxError("begin: no forms given");
+          return ParseBody((Pair)pair.Cdr);
+        }
         case "lambda":
         { if(Builtins.length.core(pair)<3) throw Ops.SyntaxError("lambda: must be of the form (lambda bindings forms ...)");
           pair = (Pair)pair.Cdr;
           bool hasList;
           return new LambdaNode(ParseLambaList(pair.Car, out hasList), hasList, ParseBody((Pair)pair.Cdr));
-        }
-        case "quote":
-        { if(Builtins.length.core(pair)!=2) throw Ops.SyntaxError("quote: expects exactly 1 form");
-          return Quote(Ops.FastCadr(pair));
         }
         case "set!":
         { if(Builtins.length.core(pair)!=3) goto error;
@@ -156,11 +156,46 @@ public sealed class AST
           }
           return new VectorNode((Node[])items.ToArray(typeof(Node)));
         }
+        /* (let-values (((a b c) (values 1 2 3))
+                        ((x y) (values 4 5 6)))
+              (+ a b c x y))
+        */
+        case "let-values":
+        { if(Builtins.length.core(pair)<3) goto error;
+          pair = (Pair)pair.Cdr;
+          Pair bindings = pair.Car as Pair;
+          if(bindings==null)
+          { if(pair.Car==null) return ParseBody((Pair)pair.Cdr);
+            goto error;
+          }
+          ArrayList names=new ArrayList(), inits=new ArrayList();
+          do
+          { Pair binding = bindings.Car as Pair;
+            if(binding==null) goto bindingError;
+            Pair namePair = binding.Car as Pair;
+            if(namePair==null) goto bindingError;
+            Name[] narr = new Name[Builtins.length.core(namePair)];
+            for(int i=0; i<narr.Length; namePair=namePair.Cdr as Pair,i++)
+            { sym = namePair.Car as Symbol;
+              if(sym==null) goto bindingError;
+              narr[i] = new Name(sym.Name);
+            }
+            names.Add(narr);
+            inits.Add(Parse(Ops.FastCadr(binding)));
+            bindings = bindings.Cdr as Pair;
+          } while(bindings!=null);
+
+          return new LetValuesNode((Name[][])names.ToArray(typeof(Name[])),
+                                   (Node[])inits.ToArray(typeof(Node)), ParseBody((Pair)pair.Cdr));
+          error: throw Ops.SyntaxError("let-value: must be of form (let-values bindings form ...)");
+          bindingError: throw Ops.SyntaxError("let-value: bindings must be of form (((symbol ...) form) ...)");
+        }
         /* (try
             (begin forms ...)
             (catch (e exn:syntaxerror exn:othererror)
-              forms...)
-            (finally forms...))
+              forms ...)
+            (catch () forms ...)
+            (finally forms ...))
         */
         case "try":
         { if(Builtins.length.core(pair)<3) goto error;
@@ -747,7 +782,7 @@ public sealed class CallNode : Node
           case "=": case "!=": case "<": case ">": case "<=": case ">=":
             CheckArity(2, -1);
             if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
-            if(Args.Length!=2) goto normal; // TODO: do the code generation for more than 2 arguments
+            if(Args.Length!=2) goto normal;
             Args[0].Emit(cg);
             Args[1].Emit(cg);
             if(etype==typeof(bool))
@@ -786,10 +821,11 @@ public sealed class CallNode : Node
           case "values":
             CheckArity(1, -1);
             if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
-            if(Args.Length==1) cg.EmitExpression(Args[0]);
+            if(Args.Length==1) { cg.EmitExpression(Args[0]); goto objret; }
             else
             { cg.EmitObjectArray(Args);
               cg.EmitNew(typeof(MultipleValues), new Type[] { typeof(object[]) });
+              etype = typeof(MultipleValues);
             }
             goto ret;
           default: goto normal;
@@ -1169,7 +1205,9 @@ public class LambdaNode : Node
         icg.EmitString(Name!=null ? Name : Binding!=null ? Binding.String : null);
         icg.EmitInt(Parameters.Length);
         icg.EmitBool(HasList);
-        icg.EmitNew(typeof(Template), new Type[] { typeof(IntPtr), typeof(string), typeof(int), typeof(bool) });
+        icg.EmitBool(MaxNames!=0); // TODO: make sure this is as precise as possible (ie, is never true when it shouldn't be)
+        icg.EmitNew(typeof(Template), new Type[] { typeof(IntPtr), typeof(string), typeof(int),
+                                                   typeof(bool), typeof(bool) });
         tmpl.EmitSet(icg);
       }
 
@@ -1305,6 +1343,14 @@ public class LambdaNode : Node
         let.Body.Walk(this);
         return false;
       }
+      else if(node is LetValuesNode)
+      { LetValuesNode let = (LetValuesNode)node;
+        foreach(Node n in let.Inits) n.Walk(this);
+        foreach(Name[] names in let.Names)
+          foreach(Name name in names) { bound.Add(name); values.Add(null); }
+        let.Body.Walk(this);
+        return false;
+      }
       else if(node is VariableNode) HandleLocalReference(ref ((VariableNode)node).Name, null);
       else if(node is SetNode)
       { SetNode set = (SetNode)node;
@@ -1346,13 +1392,21 @@ public class LambdaNode : Node
     public void PostWalk(Node node)
     { if(node is LetNode)
       { LetNode let = (LetNode)node;
-        int start=bound.Count-let.Names.Length, len=let.Names.Length;
+        int len=let.Names.Length, start=bound.Count-len;
 
         for(int i=start; i<values.Count; i++)
         { LambdaNode lambda = values[i] as LambdaNode;
           if(lambda!=null) lambda.Binding = (Name)bound[i];
         }
 
+        bound.RemoveRange(start, len);
+        values.RemoveRange(start, len);
+      }
+      else if(node is LetValuesNode)
+      { LetValuesNode let = (LetValuesNode)node;
+        int len=0, start;
+        foreach(Name[] names in let.Names) len += names.Length;
+        start = bound.Count-len;
         bound.RemoveRange(start, len);
         values.RemoveRange(start, len);
       }
@@ -1411,7 +1465,7 @@ public sealed class ListNode : Node
 { public ListNode(Node[] items, Node dot) { Items=items; Dot=dot; }
 
   public override void Emit(CodeGenerator cg, ref Type etype)
-  { if(!IsConstant || etype!=typeof(void)) // TODO: maybe use cg.EmitConstantObject()
+  { if(!IsConstant || etype!=typeof(void))
     { if(IsConstant) cg.EmitConstantObject(Evaluate());
       else cg.EmitList(Items, Dot);
       etype = Items.Length==0 && Dot==null ? null : typeof(Pair);
@@ -1521,6 +1575,153 @@ public sealed class LetNode : Node
   public Name[] Names;
   public Node[] Inits;
   public Node Body;
+}
+#endregion
+
+#region LetValuesNode
+public sealed class LetValuesNode : Node
+{ public LetValuesNode(Name[][] names, Node[] inits, Node body) { Names=names; Inits=inits; Body=body; }
+
+  public override void Emit(CodeGenerator cg, ref Type etype)
+  { if(IsConstant) EmitConstant(cg, Evaluate(), ref etype);
+    else
+    { for(int i=0; i<Names.Length; i++)
+      { Name[] bindings = Names[i];
+        Label end = new Label();
+        bool useEnd = false;
+
+        object constValue = this; // this means "not set"
+        { int constLength;
+          if(Inits[i].IsConstant)
+          { constValue = Inits[i].Evaluate();
+            MultipleValues mv = constValue as MultipleValues;
+            if(mv==null) constLength = -1;
+            else { constLength=mv.Values.Length; constValue=mv.Values; }
+          }
+          else if(Options.Optimize && Inits[i] is CallNode)
+          { CallNode cn = (CallNode)Inits[i];
+            if(cn.Function is VariableNode && ((VariableNode)cn.Function).Name.String=="values")
+            { constLength = cn.Args.Length;
+              if(constLength<bindings.Length) goto checkLength;
+              object[] values = new object[bindings.Length];
+              for(int j=0; j<bindings.Length; j++)
+                values[j] = cn.Args[j].IsConstant ? cn.Args[j].Evaluate() : cn.Args[j];
+              constValue = values;
+            }
+            else goto skip;
+          }
+          else goto skip;
+          checkLength:
+          if(constLength!=-2 && (constLength==-1 ? 1 : constLength) < bindings.Length)
+            throw Ops.SyntaxError("expected at least "+bindings.Length.ToString()+" values, but received "+
+                                  constLength.ToString());
+        }
+
+        skip:
+        if(constValue==this)
+        { if(bindings.Length!=1)
+          { cg.EmitTypedNode(Inits[i], typeof(MultipleValues));
+            cg.EmitInt(bindings.Length);
+            cg.EmitCall(typeof(Ops), "CheckValues");
+          }
+          else
+          { Type itype = typeof(MultipleValues);
+            Inits[i].Emit(cg, ref itype);
+            if(itype==typeof(MultipleValues))
+            { cg.EmitInt(bindings.Length);
+              cg.EmitCall(typeof(Ops), "CheckValues");
+            }
+            else
+            { Slot tmp = cg.AllocLocalTemp(typeof(object));
+              Label loop = cg.ILG.DefineLabel();
+              end = cg.ILG.DefineLabel();
+              useEnd = true;
+
+              cg.ILG.Emit(OpCodes.Dup);
+              tmp.EmitSet(cg);
+              cg.ILG.Emit(OpCodes.Isinst, typeof(MultipleValues));
+              cg.ILG.Emit(OpCodes.Dup);
+              cg.ILG.Emit(OpCodes.Brtrue_S, loop);
+              cg.ILG.Emit(OpCodes.Pop);
+              tmp.EmitGet(cg);
+              cg.EmitSet(bindings[0]);
+              cg.ILG.Emit(OpCodes.Br, end);
+
+              cg.FreeLocalTemp(tmp);
+              cg.ILG.MarkLabel(loop);
+            }
+          }
+          for(int j=0; j<bindings.Length; j++)
+          { if(j!=bindings.Length-1) cg.ILG.Emit(OpCodes.Dup);
+            cg.EmitInt(j);
+            cg.ILG.Emit(OpCodes.Ldelem_Ref);
+            cg.EmitSet(bindings[j]);
+          }
+          if(useEnd) cg.ILG.MarkLabel(end);
+        }
+        else if(constValue is object[])
+        { object[] values = (object[])constValue;
+          for(int j=0; j<bindings.Length; j++)
+          { if(values[j] is Node) ((Node)values[j]).Emit(cg);
+            else cg.EmitConstantObject(values[j]);
+            cg.EmitSet(bindings[j]);
+          }
+        }
+        else
+        { Debug.Assert(bindings.Length==1);
+          cg.EmitConstantObject(constValue);
+          cg.EmitSet(bindings[0]);
+        }
+      }
+      Body.Emit(cg, ref etype);
+    }
+  }
+
+  public override object Evaluate()
+  { if(IsConstant) return Body.Evaluate();
+
+    InterpreterEnvironment ne, old=InterpreterEnvironment.Current;
+    try
+    { InterpreterEnvironment.Current = ne = new InterpreterEnvironment(old);
+      for(int i=0; i<Names.Length; i++)
+      { Name[] bindings = Names[i];
+        object value = Inits[i].Evaluate();
+        if(bindings.Length==1 && !(value is MultipleValues)) ne.Bind(bindings[0].String, value);
+        else
+        { object[] values = Ops.CheckValues(Ops.ExpectValues(value), bindings.Length);
+          for(int j=0; j<bindings.Length; j++) ne.Bind(bindings[j].String, values[j]);
+        }
+      }
+      return Body.Evaluate();
+    }
+    finally { InterpreterEnvironment.Current=old; }
+  }
+
+  public override Type GetNodeType() { return Body.GetNodeType(); }
+
+  public override void MarkTail(bool tail)
+  { Tail=tail;
+    foreach(Node n in Inits) n.MarkTail(false);
+    Body.MarkTail(tail);
+  }
+
+  public override void Optimize()
+  { bool isconst = true;
+    foreach(Node n in Inits) if(!n.IsConstant) { isconst=false; break; }
+    IsConstant = isconst && Body.IsConstant;
+  }
+
+  public override void Walk(IWalker w)
+  { if(w.Walk(this))
+    { foreach(Node n in Inits) n.Walk(w);
+      Body.Walk(w);
+    }
+    w.PostWalk(this);
+  }
+
+  public readonly Name[][] Names;
+  public readonly Node[] Inits;
+  public readonly Node Body;
 }
 #endregion
 
