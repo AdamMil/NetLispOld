@@ -6,7 +6,10 @@ namespace NetLisp.Frontend
 {
 
 public class App
-{ static void Main()
+{ int foo()
+  { try { return 5; } catch { throw; }
+  }
+  static void Main()
   { Options.Debug = true;
     Options.Optimize = true;
 

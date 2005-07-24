@@ -3,6 +3,8 @@ using System.Collections;
 using System.IO;
 using System.Windows.Forms;
 
+[assembly: System.Reflection.AssemblyKeyFile("../../../NetLisp.snk")]
+
 namespace NetLisp.IDE
 {
 

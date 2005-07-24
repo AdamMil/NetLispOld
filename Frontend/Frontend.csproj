@@ -9,7 +9,7 @@
             <Settings
                 ApplicationIcon = ""
                 AssemblyKeyContainerName = ""
-                AssemblyName = "Frontend"
+                AssemblyName = "NetLisp"
                 AssemblyOriginatorKeyFile = ""
                 DefaultClientScript = "JScript"
                 DefaultHTMLPageLayout = "Grid"
@@ -18,7 +18,7 @@
                 OutputType = "Exe"
                 PreBuildEvent = ""
                 PostBuildEvent = ""
-                RootNamespace = "Frontend"
+                RootNamespace = "NetLisp.Frontend"
                 RunPostBuildEvent = "OnBuildSuccess"
                 StartupObject = ""
             >

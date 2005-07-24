@@ -13,4 +13,4 @@ using System.Runtime.CompilerServices;
 
 [assembly: AssemblyVersion("0.5.0.0")]
 
-[assembly: AssemblyKeyFile("C:/code/AdamMil.snk")]
+[assembly: AssemblyKeyFile("../../../NetLisp.snk")]

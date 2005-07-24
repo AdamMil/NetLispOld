@@ -33,7 +33,7 @@ public sealed class Parser
     while(token!=Token.EOF)
     { object item = ParseOne();
       Pair next = new Pair(item, null);
-      if(tail==null) list=tail=next;
+      if(list==null) list=tail=next;
       else { tail.Cdr=next; tail=next; }
     }
     if(list==null) return null;

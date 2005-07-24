@@ -156,19 +156,6 @@ public sealed class RG
       cg.Finish();
 
       cg = tg.DefineMethodOverride(typeof(Lambda), "Call", true);
-      // FIXME: this was put here to switch TopLevel.Current when a lambda is called, but that breaks compilation
-      // because the call to "expand" installs macros into the wrong place. but removing it causes problems too.
-      // find a solution that works for both.
-      /*Slot old = cg.AllocLocalTemp(typeof(TopLevel));
-      cg.EmitFieldGet(typeof(TopLevel), "Current");
-      old.EmitSet(cg);
-
-      cg.ILG.BeginExceptionBlock();
-      cg.EmitThis();
-      cg.EmitFieldGet(typeof(Lambda), "Template");
-      cg.EmitFieldGet(typeof(Template), "TopLevel");
-      cg.EmitFieldSet(typeof(TopLevel), "Current");*/
-
       cg.EmitThis();
       cg.EmitFieldGet(typeof(Closure), "Environment");
 
@@ -184,12 +171,6 @@ public sealed class RG
       cg.ILG.EmitCalli(OpCodes.Calli, CallingConventions.Standard, typeof(object),
                        new Type[] { typeof(LocalEnvironment), typeof(object[]) }, null);
       cg.EmitReturn();
-      /*cg.ILG.BeginFinallyBlock();
-      old.EmitGet(cg);
-      cg.EmitFieldSet(typeof(TopLevel), "Current");
-      cg.ILG.EndExceptionBlock();
-      cg.EmitReturn();
-      cg.FreeLocalTemp(old);*/
       cg.Finish();
 
       ClosureType = tg.FinishType();
@@ -250,7 +231,7 @@ public sealed class TopLevel
 
   public object Get(string name)
   { Binding obj = (Binding)Globals[name];
-    if(obj==null || obj.Value==Binding.Unbound) throw new Exception("no such name: "+name); // FIXME: use a different exception
+    if(obj==null || obj.Value==Binding.Unbound) throw new NameException("no such name: "+name);
     return obj.Value;
   }
 
@@ -273,7 +254,7 @@ public sealed class TopLevel
 
   public void Set(string name, object value)
   { Binding obj = (Binding)Globals[name];
-    if(obj==null) throw new Exception("no such name: "+name); // FIXME: ex
+    if(obj==null) throw new NameException("no such name: "+name);
     obj.Value = value;
   }
 
@@ -544,12 +525,12 @@ public sealed class Ops
   }
 
   public static Binding CheckBinding(Binding bind)
-  { if(bind.Value==Binding.Unbound) throw new Exception("use of unbound variable: "+bind.Name);
+  { if(bind.Value==Binding.Unbound) throw new NameException("use of unbound variable: "+bind.Name);
     return bind;
   }
 
   public static object CheckVariable(object value, string name)
-  { if(value==Binding.Unbound) throw new Exception("use of unbound variable: "+name);
+  { if(value==Binding.Unbound) throw new NameException("use of unbound variable: "+name);
     return value;
   }
 
@@ -795,6 +776,12 @@ public sealed class Ops
     return ret;
   }
 
+  public static Type ExpectType(object obj)
+  { Type ret = obj as Type;
+    if(ret==null) throw new ArgumentException("expect type but received "+TypeName(obj));
+    return ret;
+  }
+
   public static object[] ExpectVector(object obj)
   { object[] ret = obj as object[];
     if(ret==null) throw new ArgumentException("expected vector but received "+TypeName(obj));
@@ -889,6 +876,20 @@ public sealed class Ops
   { IProcedure proc = callable as IProcedure;
     if(proc==null) throw new ArgumentException("delegate: expected a procedure");
     return Delegate.CreateDelegate(delegateType, Interop.MakeDelegateWrapper(proc, delegateType), "Handle");
+  }
+
+  public static Exception MakeException(Type type, object[] args)
+  { ConstructorInfo ci = type.GetConstructor(new Type[] { typeof(string) });
+    if(ci!=null)
+    { System.Text.StringBuilder sb = new System.Text.StringBuilder();
+      if(args!=null) foreach(object o in args) sb.Append(Str(o));
+      return (Exception)ci.Invoke(new object[1] { sb.ToString() });
+    }
+    
+    ci = type.GetConstructor(Type.EmptyTypes);
+    if(ci!=null) return (Exception)ci.Invoke(EmptyArray);
+    
+    throw new NotSupportedException("unable to construct exception type: "+type.FullName);
   }
 
   public static object Modulus(object a, object b)
@@ -1088,8 +1089,12 @@ public sealed class Ops
     throw TypeError("unsupported operand types for >>: '{0}' and '{1}'", TypeName(a), TypeName(b));
   }
 
-  static string Source(Node node) { throw new NotImplementedException(); }
-
+  public static string Str(object o)
+  { TypeCode tc = Convert.GetTypeCode(o);
+    if(tc==TypeCode.Object) return Repr(o);
+    else if(tc==TypeCode.Empty) return "[NULL]";
+    else return tc.ToString();
+  }
 
   public static object Subtract(object a, object b)
   { switch(Convert.GetTypeCode(a))
@@ -1119,6 +1124,17 @@ public sealed class Ops
       }
     }
     throw TypeError("unsupported operand types for -: '{0}' and '{1}'", TypeName(a), TypeName(b));
+  }
+
+  public static SyntaxErrorException SyntaxError(string message) { return new SyntaxErrorException(message); }
+  public static SyntaxErrorException SyntaxError(string format, params object[] args)
+  { return new SyntaxErrorException(string.Format(format, args));
+  }
+  public static SyntaxErrorException SyntaxError(Node node, string message)
+  { return new SyntaxErrorException(message); // TODO: improve this
+  }
+  public static SyntaxErrorException SyntaxError(Node node, string format, params object[] args)
+  { return SyntaxError(node, string.Format(format, args));
   }
 
   public static double ToFloat(object o)
@@ -1208,9 +1224,6 @@ public sealed class Ops
   public static TypeErrorException TypeError(string format, params object[] args)
   { return new TypeErrorException(string.Format(format, args));
   }
-  public static TypeErrorException TypeError(Node node, string format, params object[] args)
-  { return new TypeErrorException(Source(node)+string.Format(format, args));
-  }
 
   public static string TypeName(object o) { return TypeName(o==null ? null : o.GetType()); }
   public static string TypeName(Type type)
@@ -1231,6 +1244,8 @@ public sealed class Ops
         if(type==typeof(Integer)) return "bigint";
         if(type==typeof(Complex)) return "complex";
         if(type==typeof(MultipleValues)) return "multiplevalues";
+        if(type==typeof(Reference)) return "ref";
+        if(type==typeof(Type)) return "type";
         goto default;
       case TypeCode.Double: return "flonum64";
       case TypeCode.Single: return "flonum32";
@@ -1244,9 +1259,6 @@ public sealed class Ops
   }
   public static ValueErrorException ValueError(string format, params object[] args)
   { return new ValueErrorException(string.Format(format, args));
-  }
-  public static ValueErrorException ValueError(Node node, string format, params object[] args)
-  { return new ValueErrorException(Source(node)+string.Format(format, args));
   }
 
   public static readonly object Missing = new Singleton("<Missing>");
@@ -1356,9 +1368,11 @@ public sealed class Template
         nargs[positional] = Ops.List(args, positional);
         args = nargs;
       }
-      else throw new Exception(Name+": expected at least "+positional+" arguments, but received "+args.Length); // FIXME: use other exception
+      else throw new TargetParameterCountException(Name+": expected at least "+positional+" arguments, but received "+
+                                                   args.Length);
     }
-    else if(args.Length!=NumParams) throw new Exception(Name+": expected "+NumParams+" arguments, but received "+args.Length); // FIXME: use other exception
+    else if(args.Length!=NumParams)
+      throw new TargetParameterCountException(Name+": expected "+NumParams+" arguments, but received "+args.Length);
     return args;
   }
 
