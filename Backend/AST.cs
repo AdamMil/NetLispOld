@@ -1,3 +1,24 @@
+/*
+NetLisp is the reference implementation for a language similar to
+Scheme, also called NetLisp. This implementation is both interpreted
+and compiled, targetting the Microsoft .NET Framework.
+
+http://www.adammil.net/
+Copyright (C) 2005 Adam Milazzo
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+*/
+
 using System;
 using System.Collections;
 using System.Diagnostics;
@@ -166,7 +187,6 @@ public sealed class AST
                 epair = (Pair)epair.Cdr;
                 if(epair!=null)
                 { if(etypes==null) etypes = new ArrayList();
-                  else etypes.Clear();
                   do
                   { sym = epair.Car as Symbol;
                     if(sym==null) goto catchError;
@@ -178,6 +198,7 @@ public sealed class AST
               else evar = null;
               excepts.Add(new TryNode.Except(evar, etypes==null ? null : (string[])etypes.ToArray(typeof(string)),
                                              ParseBody((Pair)form.Cdr)));
+              if(etypes!=null) etypes.Clear();
             }
             else if(sym.Name=="finally")
             { if(final!=null) goto error;
@@ -1019,7 +1040,7 @@ public sealed class DefineNode : Node
 
   public override void Emit(CodeGenerator cg, ref Type etype)
   { Debug.Assert(InFunc==null);
-    cg.EmitFieldGet(typeof(TopLevel), "Current");
+    cg.EmitTopLevel();
     cg.EmitString(Name.String);
     Value.Emit(cg);
     cg.EmitCall(typeof(TopLevel), "Bind");
@@ -1634,7 +1655,7 @@ public sealed class SetNode : Node
 
 #region ThrowNode
 public sealed class ThrowNode : Node
-{ public ThrowNode(string type, Node[] objects) { Type=new VariableNode(type); Objects=objects; }
+{ public ThrowNode(string type, Node[] objects) { Type = type==null ? null : new VariableNode(type); Objects=objects; }
 
   public override void Emit(CodeGenerator cg, ref Type etype)
   { if(Type==null) cg.ILG.Emit(OpCodes.Rethrow);
@@ -1646,13 +1667,17 @@ public sealed class ThrowNode : Node
       else cg.EmitObjectArray(Objects);
       cg.EmitCall(typeof(Ops), "MakeException");
       cg.ILG.Emit(OpCodes.Throw);
+      if(etype!=typeof(void))
+      { cg.ILG.Emit(OpCodes.Ldnull);
+        etype = typeof(object);
+      }
     }
   }
 
-  public override Type GetNodeType() { return typeof(void); } // TODO: not sure what to return here
+  public override Type GetNodeType() { return typeof(void); }
   
   public override object Evaluate()
-  { if(Type==null) throw new NotImplementedException("evaluation of type-less throw not implemented");
+  { if(Type==null) throw (Exception)Ops.ExceptionStack.Peek();
     throw Ops.MakeException(Ops.ExpectType(Type.Evaluate()), Objects==null ? null : MakeObjectArray(Objects));
   }
 
@@ -1737,22 +1762,22 @@ public sealed class TryNode : Node
           { eslot = cg.AllocLocalTemp(typeof(Exception));
             eslot.EmitSet(cg);
           }
-          foreach(Node type in ex.Types)
+          for(int i=0; i<ex.Types.Length; i++)
           { Type ttype = typeof(Type);
-            type.Emit(cg, ref ttype);
+            ex.Types[i].Emit(cg, ref ttype);
             if(ttype!=typeof(Type)) cg.EmitCall(typeof(Ops), "ExpectType");
             eslot.EmitGet(cg);
             cg.EmitCall(typeof(Type), "IsInstanceOfType");
-            cg.ILG.Emit(OpCodes.Brtrue, body);
+            if(i<ex.Types.Length-1) cg.ILG.Emit(OpCodes.Brtrue, body);
+            else cg.ILG.Emit(OpCodes.Brfalse, next);
           }
-          cg.ILG.Emit(OpCodes.Br, next);
           cg.ILG.MarkLabel(body);
         }
         if(ex.Var!=null)
         { if(eslot!=null) eslot.EmitGet(cg);
           cg.EmitSet(ex.Var);
         }
-        if(returnSlot==null) ex.Body.EmitVoid(cg);
+        if(returnSlot==null || ex.Body.GetNodeType()==typeof(void)) ex.Body.EmitVoid(cg);
         else
         { ex.Body.Emit(cg);
           returnSlot.EmitSet(cg);
@@ -1801,7 +1826,12 @@ public sealed class TryNode : Node
           }
 
           object ret;
-          if(ex.Var==null) ret = ex.Body.Evaluate();
+          if(Ops.ExceptionStack==null) Ops.ExceptionStack = new Stack();
+          Ops.ExceptionStack.Push(e);
+
+          if(ex.Var==null)
+            try { ret=ex.Body.Evaluate(); }
+            finally { Ops.ExceptionStack.Pop(); }
           else
           { InterpreterEnvironment ne, old=InterpreterEnvironment.Current;
             try
@@ -1809,7 +1839,7 @@ public sealed class TryNode : Node
               ne.Bind(ex.Var.String, e);
               ret = ex.Body.Evaluate();
             }
-            finally { InterpreterEnvironment.Current = old; }
+            finally { InterpreterEnvironment.Current=old; Ops.ExceptionStack.Pop(); }
           }
           return ret;
         }

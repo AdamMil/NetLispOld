@@ -1,3 +1,24 @@
+/*
+NetLisp is the reference implementation for a language similar to
+Scheme, also called NetLisp. This implementation is both interpreted
+and compiled, targetting the Microsoft .NET Framework.
+
+http://www.adammil.net/
+Copyright (C) 2005 Adam Milazzo
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+*/
+
 using System;
 using System.Collections;
 using System.Reflection;
@@ -48,8 +69,6 @@ namespace NetLisp.Backend
 
 (define expand (lambda (x) (initial-expander x initial-expander)))
 (define expand-once (lambda (x) (initial-expander x (lambda (x e) x))))
-
-(install-expander 'quote (lambda (x e) x))
 
 (install-expander 'quasiquote
   (lambda (x e)
@@ -112,11 +131,11 @@ namespace NetLisp.Backend
                       bindings)
                 ,@(#_body-expander (cddr x) e))))))
 
-(install-expander 'if
-  (lambda (x e) `(if ,@(map (lambda (x) (e x e)) (cdr x)))))
-
-(install-expander 'set!
-  (lambda (x e) `(set! ,(cadr x) ,(e (caddr x) e))))
+(install-expander 'let-values
+  (lambda (x e)
+    (let ((bindings (cadr x)))
+      `(let-values ,(map (lambda (init) (list (car init) (e (cadr init) e))) bindings)
+         ,@(#_body-expander (cddr x) e)))))
 
 (install-expander 'lambda
   (lambda (x e) `(lambda ,(cadr x) ,@(#_body-expander (cddr x) e))))
@@ -157,6 +176,20 @@ namespace NetLisp.Backend
       (if (null? (cdr items)) (car items)
           `(if ,(car items) (and ,@(cdr items)) #f))))
 
+(install-expander 'try
+  (lambda (x e)
+    (let ((mex (lambda (x) (e x e))))
+      `(try
+        ,(e (cadr x) e)
+        ,@(map (lambda (cf)
+                 (if (pair? cf)
+                     (case (car cf)
+                      (catch `(catch ,(cadr cf) ,@(map mex (cddr cf))))
+                      (finally `(finally ,@(map mex (cdr cf))))
+                      (else cf))
+                     cf))
+               (cddr x))))))        
+
 (defmacro letrec (bindings . body)
   `(let ,(map (lambda (init) (if (pair? init) (car init) init)) bindings)
      ,@(apply append (map (lambda (init) (if (pair? init) `((set! ,(car init) ,(cadr init))))) bindings))
@@ -168,6 +201,17 @@ namespace NetLisp.Backend
         `(let (,(if (pair? (car bindings)) `(,(caar bindings) ,(cadar bindings))
                     (car bindings)))
            ,(rec (cdr bindings))))))
+
+(defmacro fluid-let (bindings . body)
+  (if (null? bindings) `(begin ,@body)
+      (let ((gensyms (map (lambda (init) (gensym (symbol->string (car init)))) bindings)))
+        `(let ,(map (lambda (init sym) (list sym (car init))) bindings gensyms)
+          (try
+            (begin
+              ,@(map (lambda (init) `(set! ,(car init) ,(cadr init))) bindings)
+              ,@body)
+            (finally
+              ,@(map (lambda (init sym) `(set! ,(car init) ,sym)) bindings gensyms)))))))
 
 (defmacro or items
   (if (null? items) #f
@@ -269,31 +313,14 @@ namespace NetLisp.Backend
 ")]
 #endregion
 public sealed class Builtins
-{ static Builtins()
-  { Instance = new Module("Builtins");
-    Instance.AddBuiltins(typeof(Builtins));
-
-    TopLevel old = TopLevel.Current;
-    try
-    { TopLevel.Current = Instance.TopLevel;
-      string code=((LispCodeAttribute)typeof(Builtins).GetCustomAttributes(typeof(LispCodeAttribute), false)[0]).Code;
-      Parser p = Parser.FromString(code);
-      while(true)
-      { object obj = p.ParseOne();
-        if(obj==Parser.EOF) break;
-        eval(obj);
-      }
-      Instance.CreateExports();
-    }
-    finally { TopLevel.Current=old; }
-  }
-
+{ 
 [SymbolName("load-assembly-by-name")]
 public static void loadByName(string name) { Interop.LoadAssemblyByName(name); }
 [SymbolName("load-assembly-from-file")]
 public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name); }
 public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
+  // TODO: add support for operators (.+ .- .*, etc)
   #region .NET functions
   #region MemberKey
   struct MemberKey
@@ -1735,6 +1762,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   #endregion
 
   // TODO: number->string
+  // TODO: string->number
   #region Numeric functions
   #region complex?
   public sealed class complexP : Primitive
@@ -3616,11 +3644,11 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  public static readonly Module Instance;
-
   static Hashtable dotFuncs=new Hashtable(), dotPgets=new Hashtable(), dotPsets=new Hashtable(),
                    dotFields=new Hashtable(), dotNews=new Hashtable();
   static Index gensyms = new Index();
+
+  public static readonly Module Instance = ModuleGenerator.Generate(typeof(Builtins), true);
 }
 
 } // namespace NetLisp.Backend
