@@ -21,6 +21,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 using System;
 using System.Collections;
+using System.IO;
 using System.Reflection;
 
 namespace NetLisp.Backend
@@ -64,8 +65,9 @@ namespace NetLisp.Backend
 (define initial-expander
   (lambda (x e)
     (if (not (pair? x)) x
-        (if (expander? (car x)) ((expander-function (car x)) x e)
-            (map (lambda (x) (e x e)) x)))))
+        (let ((first (car x)))
+          (if (expander? first) ((expander-function first) x e)
+              (map (lambda (x) (e x e)) x))))))
 
 (define expand (lambda (x) (initial-expander x initial-expander)))
 (define expand-once (lambda (x) (initial-expander x (lambda (x e) x))))
@@ -119,9 +121,9 @@ namespace NetLisp.Backend
     (let ((bindings (cadr x)))
       (if (symbol? bindings) ; named let
           (let ((name bindings))
-            (set! bindings (map (lambda (init) (if (pair? init)
-                                                   init
-                                                   (list init nil)))
+            (set! bindings (map (lambda (init)
+                                  (set! init (#%strip-debug init))
+                                  (if (pair? init) init (list init nil)))
                                 (caddr x)))
             (e `(letrec ((,name (lambda ,(map car bindings) ,@(cdddr x))))
                   (,name ,@(map cadr bindings))) e))
@@ -134,11 +136,11 @@ namespace NetLisp.Backend
 (install-expander 'let-values
   (lambda (x e)
     (let ((bindings (cadr x)))
-      `(let-values ,(map (lambda (init) (list (car init) (e (cadr init) e))) bindings)
+      `(let-values ,(map (lambda (init) (list (#%strip-debug (car init)) (e (cadr init) e))) bindings)
          ,@(#_body-expander (cddr x) e)))))
 
 (install-expander 'lambda
-  (lambda (x e) `(lambda ,(cadr x) ,@(#_body-expander (cddr x) e))))
+  (lambda (x e) `(lambda ,(#%strip-debug (cadr x)) ,@(#_body-expander (cddr x) e))))
 
 (install-expander 'defmacro
   (lambda (x e)
@@ -184,7 +186,7 @@ namespace NetLisp.Backend
         ,@(map (lambda (cf)
                  (if (pair? cf)
                      (case (car cf)
-                      (catch `(catch ,(cadr cf) ,@(map mex (cddr cf))))
+                      (catch `(catch ,(#%strip-debug (cadr cf)) ,@(map mex (cddr cf))))
                       (finally `(finally ,@(map mex (cdr cf))))
                       (else cf))
                      cf))
@@ -221,16 +223,6 @@ namespace NetLisp.Backend
                           `(if (set! ,tmp ,(car items)) ,tmp
                                ,(rec (cdr items)))))))
         `(let (,tmp) ,(rec items)))))
-
-(defmacro do (inits test . body)
-  (let ((loop (gensym ""loop"")))
-    `(let ,loop ,(map (lambda (init) (list (car init) (cadr init))) inits)
-       (if ,(car test)
-           ,(if (null? (cdr test)) nil `(begin ,@(cdr test)))
-           (begin ,@body
-                  (,loop ,@(map (lambda (init)
-                                  (if (cddr init) (caddr init) (car init)))
-                                inits)))))))
 
 (defmacro defstruct (name . fields)
   (let* ((name-s (symbol->string name))
@@ -276,6 +268,23 @@ namespace NetLisp.Backend
          (define ,(string->symbol (string-append name-s ""?""))
            (lambda (s) (and (vector? s) (eq? (vector-ref s 0) ',name))))))))
 
+(defmacro do (inits test . body)
+  (let ((loop (gensym ""loop"")))
+    `(let ,loop ,(map (lambda (init) (list (car init) (cadr init))) inits)
+       (if ,(car test)
+           ,(if (null? (cdr test)) nil `(begin ,@(cdr test)))
+           (begin ,@body
+                  (,loop ,@(map (lambda (init)
+                                  (if (cddr init) (caddr init) (car init)))
+                                inits)))))))
+
+(defmacro dynamic-wind (before thunk after)
+  `(try
+    (begin
+     (,before)
+     (,thunk))
+    (finally (,after))))
+
 (defmacro while (cond . body)
   (let ((loop (gensym ""loop"")))
     `(let ,loop ()
@@ -289,6 +298,9 @@ namespace NetLisp.Backend
        (while (.call ""MoveNext"" ,e)
          (let ((,name (.get ""Current"" ,e)))
            ,@body)))))
+
+(defmacro delay (form)
+  `(#%delay (lambda () ,form)))
 
 (install-expander 'require
   (lambda (x e)
@@ -310,6 +322,7 @@ namespace NetLisp.Backend
       `(install-expander ,name ,body))))
 ")]
 #endregion
+
 public sealed class Builtins
 { 
 [SymbolName("load-assembly-by-name")]
@@ -547,6 +560,57 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       else { instance=args[1]; value=args[2]; }
       dotGetf.core(name, instance, Ops.ExpectString(args[0])).SetValue(instance, value);
       return value;
+    }
+  }
+  #endregion
+
+  #region make-ref
+  public sealed class makeRef : Primitive
+  { public makeRef() : base("make-ref", 0, 1) { }
+    
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return new Reference(args.Length==0 ? null : args[0]);
+    }
+  }
+  #endregion
+
+  #region ref
+  public sealed class @ref : Primitive
+  { public @ref() : base("ref", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IList list = args[0] as IList;
+      if(list!=null) return list[Ops.ExpectInt(args[1])];
+      IDictionary dict = args[0] as IDictionary;
+      if(dict!=null) return dict[args[1]];
+      string str = args[0] as string;
+      if(str!=null) return str[Ops.ExpectInt(args[1])];
+      Pair pair = args[0] as Pair;
+      if(pair!=null) return listRef.core(name, pair, Ops.ExpectInt(args[1]));
+      throw Ops.TypeError(name+": expected container type, but received "+Ops.TypeName(args[0]));
+    }
+  }
+  #endregion
+
+  #region ref-get
+  public sealed class refGet : Primitive
+  { public refGet() : base("ref-get", 1, 1) { }
+    
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectRef(args[0]).Value;
+    }
+  }
+  #endregion
+
+  #region ref-set!
+  public sealed class refSetN : Primitive
+  { public refSetN() : base("ref-set!", 2, 2) { }
+    
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectRef(args[0]).Value=args[1];
     }
   }
   #endregion
@@ -936,6 +1000,21 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     }
   }
   #endregion
+  #endregion
+  
+  // TODO: almost everything (http://www.schemers.org/Documents/Standards/R5RS/HTML/r5rs-Z-H-2.html#%_toc_%_sec_6.6)
+  #region I/O functions
+  [SymbolName("input-port?")]
+  public bool inputPortP(object obj)
+  { Stream stream = obj as Stream;
+    return stream!=null && stream.CanRead;
+  }
+
+  [SymbolName("output-port?")]
+  public bool outputPortP(object obj)
+  { Stream stream = obj as Stream;
+    return stream!=null && stream.CanWrite;
+  }
   #endregion
 
   #region List functions
@@ -1427,6 +1506,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
+  // TODO: lcm, gcd, etc
   #region Math functions
   #region abs
   public sealed class abs : Primitive
@@ -2510,11 +2590,46 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
   
+  [SymbolName("call-with-current-continuation")]
+  public void callCC(IProcedure proc)
+  { throw new NotImplementedException("sorry, manipulable continuations aren't implemented yet");
+  }
+
+  #region call-with-values
+  public sealed class callWithValues : Primitive
+  { public callWithValues() : base("call-with-values", 2, 2) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure thunk=Ops.ExpectProcedure(args[0]), func=Ops.ExpectProcedure(args[1]);
+      object ret = thunk.Call(Ops.EmptyArray);
+      MultipleValues mv = ret as MultipleValues;
+      return mv==null ? func.Call(ret) : func.Call(func.NeedsFreshArgs ? (object[])mv.Values.Clone() : mv.Values);
+    }
+  }
+  #endregion
+
   [SymbolName("compiled-procedure?")]
   public static object compiledProcedureP(object obj) { return Ops.FromBool(obj is IProcedure); }
 
   [SymbolName("compound-procedure?")]
   public static object compoundProcedureP(object obj) { return Ops.FALSE; }
+
+  #region dynamic-wind
+  public sealed class dynamicWind : Primitive
+  { public dynamicWind() : base("dynamic-wind", 3, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      IProcedure before=Ops.ExpectProcedure(args[0]), thunk=Ops.ExpectProcedure(args[1]),
+                  after=Ops.ExpectProcedure(args[2]);
+      try
+      { before.Call(Ops.EmptyArray);
+        return thunk.Call(Ops.EmptyArray);
+      }
+      finally { after.Call(Ops.EmptyArray); }
+    }
+  }
+  #endregion
 
   #region primitive-procedure?
   public sealed class primitiveProcedureP : Primitive
@@ -2561,6 +2676,65 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       IProcedure proc = Ops.ExpectProcedure(args[0]);
       int max = proc.MaxArgs;
       return new Pair(proc.MinArgs, max==-1 ? Ops.FALSE : max);
+    }
+  }
+  #endregion
+  #endregion
+  
+  #region Promise functions
+  #region #%delay
+  public sealed class _delay : Primitive
+  { public _delay() : base("#%delay", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return new Promise(Ops.ExpectProcedure(args[0]));
+    }
+  }
+  #endregion
+  
+  #region force
+  public sealed class force : Primitive
+  { public force() : base("force", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Promise p = Ops.ExpectPromise(args[0]);
+      if(p.Form!=null)
+      { p.Value = p.Form.Call(Ops.EmptyArray);
+        p.Form  = null;
+      }
+      return p.Value;
+    }
+  }
+  #endregion
+  
+  #region promise?
+  public sealed class promiseP : Primitive
+  { public promiseP() : base("promise?", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return args[0] is Promise;
+    }
+  }
+  #endregion
+  
+  #region promise-forced?
+  public sealed class promiseForced : Primitive
+  { public promiseForced() : base("promise-forced?", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectPromise(args[0]).Form==null ? Ops.TRUE : Ops.FALSE;
+    }
+  }
+  #endregion
+  
+  #region promise-value
+  public sealed class promiseValue : Primitive
+  { public promiseValue() : base("promise-value", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Promise p = Ops.ExpectPromise(args[0]);
+      if(p.Form!=null) throw Ops.ValueError(name+": the promise has not be forced yet");
+      return p.Value;
     }
   }
   #endregion
@@ -3522,22 +3696,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   #endregion
   #endregion
 
-  #region call-with-values
-  public sealed class callWithValues : Primitive
-  { public callWithValues() : base("call-with-values", 2, 2) { }
-
-    public override object Call(object[] args)
-    { CheckArity(args);
-      IProcedure thunk=Ops.ExpectProcedure(args[0]), func=Ops.ExpectProcedure(args[1]);
-      object ret = thunk.Call(Ops.EmptyArray);
-      MultipleValues mv = ret as MultipleValues;
-      return mv==null ? func.Call(ret) : func.Call(func.NeedsFreshArgs ? (object[])mv.Values.Clone() : mv.Values);
-    }
-  }
-  #endregion
-
-  public static Snippet compile(object obj) { return Ops.CompileRaw(Ops.Call("expand", obj)); }
-
   #region eq?
   public sealed class eqP : Primitive
   { public eqP() : base("eq?", 2, 2) { }
@@ -3571,11 +3729,58 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  public static object eval(object obj)
-  { Snippet snip = obj as Snippet;
-    if(snip==null) snip = compile(obj);
-    return snip.Run(null);
+  // TODO: scheme-report-environment, null-environment, interaction-environment
+  #region Evaluation / compilation
+  public static Snippet compile(object obj) { return Ops.CompileRaw(Ops.Call("expand", obj)); }
+  // TODO: consider not always compiling... perhaps simple expressions can be interpreted
+  #region eval
+  public sealed class eval : Primitive
+  { public eval() : base("eval", 1, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Snippet snip = args[0] as Snippet;
+      if(args.Length==1)
+      { if(snip==null) snip = compile(args[0]);
+        return snip.Run(null);
+      }
+      else
+      { TopLevel top=args[1] as TopLevel, old=TopLevel.Current;
+        if(top==null) throw Ops.TypeError(name+": expected environment, but received "+Ops.TypeName(args[1]));
+        try
+        { TopLevel.Current = top;
+          if(snip==null) snip = compile(args[0]);
+          return snip.Run(null);
+        }
+        finally { TopLevel.Current = old; }
+      }
+    }
+
+    public static object core(object obj)
+    { Snippet snip = obj as Snippet;
+      if(snip==null) snip = compile(obj);
+      return snip.Run(null);
+    }
   }
+  #endregion
+  #endregion
+
+  #region #%strip-debug
+  public sealed class _stripDebug : Primitive
+  { public _stripDebug() : base("#%strip-debug", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object obj = args[0];
+      if(Options.Debug)
+      { Pair pair = obj as Pair;
+        if(pair!=null)
+        { Symbol sym = pair.Car as Symbol;
+          if(sym!=null && sym.Name=="#%mark-position") obj = Ops.FastCadr(pair);
+        }
+      }
+      return obj;
+    }
+  }
+  #endregion
 
   public static void error(params object[] objs) // TODO: use a macro to provide source information
   { System.Text.StringBuilder sb = new System.Text.StringBuilder();
@@ -3587,17 +3792,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   public static void _importModule(object module)
   { Importer.GetModule(module).ImportAll(TopLevel.Current);
   }
-
-  #region make-ref
-  public sealed class makeRef : Primitive
-  { public makeRef() : base("make-ref", 0, 1) { }
-    
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return new Reference(args.Length==0 ? null : args[0]);
-    }
-  }
-  #endregion
 
   #region not
   public sealed class not : Primitive
@@ -3617,46 +3811,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     public override object Call(object[] args)
     { CheckArity(args);
       return args[0]==null ? Ops.TRUE : Ops.FALSE;
-    }
-  }
-  #endregion
-
-  #region ref
-  public sealed class @ref : Primitive
-  { public @ref() : base("ref", 2, 2) { }
-    public override object Call(object[] args)
-    { CheckArity(args);
-      IList list = args[0] as IList;
-      if(list!=null) return list[Ops.ExpectInt(args[1])];
-      IDictionary dict = args[0] as IDictionary;
-      if(dict!=null) return dict[args[1]];
-      string str = args[0] as string;
-      if(str!=null) return str[Ops.ExpectInt(args[1])];
-      Pair pair = args[0] as Pair;
-      if(pair!=null) return listRef.core(name, pair, Ops.ExpectInt(args[1]));
-      throw Ops.TypeError(name+": expected container type, but received "+Ops.TypeName(args[0]));
-    }
-  }
-  #endregion
-
-  #region ref-get
-  public sealed class refGet : Primitive
-  { public refGet() : base("ref-get", 1, 1) { }
-    
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return Ops.ExpectRef(args[0]).Value;
-    }
-  }
-  #endregion
-
-  #region ref-set!
-  public sealed class refSetN : Primitive
-  { public refSetN() : base("ref-set!", 2, 2) { }
-    
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return Ops.ExpectRef(args[0]).Value=args[1];
     }
   }
   #endregion

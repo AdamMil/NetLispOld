@@ -63,11 +63,18 @@ public sealed class Parser
   }
 
   public object ParseOne()
-  { switch(token)
+  { if(Options.Debug && !emittedSource)
+    { posStack = new Stack();
+      emittedSource = true;
+      return Ops.List(Symbol.Get("#%mark-source"), sourceFile, data);
+    }
+
+    switch(token)
     { case Token.LParen:
         if(NextToken()==Token.RParen) { NextToken(); return null; }
         else
-        { ArrayList items = new ArrayList();
+        { MarkPosition();
+          ArrayList items = new ArrayList();
           object dot = null;
           do
           { items.Add(ParseOne());
@@ -76,7 +83,11 @@ public sealed class Parser
           while(token!=Token.RParen && token!=Token.EOF);
           if(items.Count==0 && dot!=null) throw SyntaxError("malformed dotted list");
           Eat(Token.RParen);
-          return Ops.DottedList(dot, (object[])items.ToArray(typeof(object)));
+          object ret = Ops.DottedList(dot, (object[])items.ToArray(typeof(object)));
+          Symbol sym = items[0] as Symbol;
+          if(sym!=null && sym.Name!="quote" && sym.Name!="quasiquote") ret = PositionMarker(ret);
+          else UnmarkPosition();
+          return ret;
         }
       case Token.Symbol:
       { object val=value;
@@ -88,15 +99,42 @@ public sealed class Parser
         NextToken();
         return val;
       }
-      case Token.BackQuote: NextToken(); return Ops.List(Symbol.Get("quasiquote"), ParseOne());
-      case Token.Comma: NextToken(); return Ops.List(Symbol.Get("unquote"), ParseOne());
-      case Token.Quote: NextToken(); return Ops.List(Symbol.Get("quote"), ParseOne());
-      case Token.Splice: NextToken(); return Ops.List(Symbol.Get("unquote-splicing"), ParseOne());
+      case Token.BackQuote:
+      { NextToken();
+        quoteDepth++;
+        object ret = Ops.List(quasiSym, ParseOne());
+        quoteDepth--;
+        return ret;
+      }
+      case Token.Comma:
+      { NextToken();
+        quoteDepth--;
+        object ret = Ops.List(unquoteSym, ParseOne());
+        quoteDepth++;
+        return ret;
+      }
+      case Token.Quote:
+      { NextToken();
+        quoteDepth++;
+        object ret = Ops.List(quoteSym, ParseOne());
+        quoteDepth--;
+        return ret;
+      }
+      case Token.Splice:
+      { NextToken();
+        quoteDepth--;
+        object ret = Ops.List(spliceSym, ParseOne());
+        quoteDepth++;
+        return ret;
+      }
       case Token.Vector:
-      { ArrayList items = new ArrayList();
+      { MarkPosition();
+        ArrayList items = new ArrayList();
         NextToken();
         while(!TryEat(Token.RParen)) items.Add(ParseOne());
-        return Ops.List2(Symbol.Get("vector"), (object[])items.ToArray(typeof(object)));
+        object ret = Ops.List2(vectorSym, (object[])items.ToArray(typeof(object)));
+        if(Options.Debug) ret = PositionMarker(ret);
+        return ret;
       }
       case Token.EOF: return EOF;
       default: throw SyntaxError("unexpected token: "+token);
@@ -106,6 +144,11 @@ public sealed class Parser
   public static object ParseNumber(string str, int radix) { return ParseNum(str, "", radix, '\0'); }
 
   public static readonly object EOF = new Singleton("<EOF>");
+
+  struct Position
+  { public Position(int startLine, int startCol) { StartLine=startLine; StartCol=startCol; }
+    public int StartLine, StartCol;
+  }
 
   void Eat(Token type) { if(token!=type) Unexpected(token, type); NextToken(); }
   void Expect(Token type) { if(token!=type) Unexpected(token); }
@@ -174,6 +217,10 @@ public sealed class Parser
     }
   }
 
+  void MarkPosition()
+  { if(Options.Debug && quoteDepth==0) posStack.Push(new Position(line, column));
+  }
+
   Token NextToken()
   { if(nextToken!=Token.None)
     { token = nextToken;
@@ -181,6 +228,14 @@ public sealed class Parser
     }
     else token = ReadToken();
     return token;
+  }
+
+  object PositionMarker(object form)
+  { if(Options.Debug && quoteDepth==0)
+    { Position pos = (Position)posStack.Pop();
+      form = Ops.List(markPosSym, form, pos.StartLine, pos.StartCol, line, column);
+    }
+    return form;
   }
 
   char ReadChar()
@@ -380,12 +435,16 @@ public sealed class Parser
   void Unexpected(Token got, Token expect)
   { SyntaxError("unexpected token {0} (expecting {1})", got, expect, sourceFile, line, column);
   }
+  
+  void UnmarkPosition() { if(Options.Debug && quoteDepth==0) posStack.Pop(); }
 
   string sourceFile, data;
   Token  token=Token.None, nextToken=Token.None;
+  Stack  posStack;
   object value;
-  int    line=1, column=1, pos;
+  int    line=1, column=1, pos, quoteDepth;
   char   lastChar;
+  bool   emittedSource;
 
   static bool IsDelimiter(char c) { return char.IsWhiteSpace(c) || c=='(' || c==')' || c=='#' || c=='`' || c==',' || c=='\'' || c=='\0'; }
 
@@ -426,6 +485,10 @@ public sealed class Parser
       return num;
     }
   }
+
+  static readonly Symbol markPosSym=Symbol.Get("#%mark-position"), quoteSym=Symbol.Get("quote"),
+                         unquoteSym=Symbol.Get("unquote"), spliceSym=Symbol.Get("unquote-splicing"),
+                         quasiSym=Symbol.Get("quasiquote"), vectorSym=Symbol.Get("vector");
 
   static readonly Regex binNum =
     new Regex(@"^(:?(?<num>[+-]?(?:[01]+(?:\.[01]*)?|\.[01]+))(?:e(?<exp>[+-]?(?:[01]+(?:\.[01]*)?|\.[01]+)))?

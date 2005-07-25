@@ -42,7 +42,6 @@ public sealed class AssemblyGenerator
     Assembly = AppDomain.CurrentDomain
                  .DefineDynamicAssembly(an, AssemblyBuilderAccess.RunAndSave, dir, null, null, null, null, true);
     Module   = Assembly.DefineDynamicModule(outFileName, outFileName, debug);
-    Symbols  = debug ? Module.DefineDocument(outFileName, Guid.Empty, Guid.Empty, SymDocumentType.Text) : null;
     OutFileName = outFileName;
   }
 
