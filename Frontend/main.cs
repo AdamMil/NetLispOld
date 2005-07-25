@@ -44,13 +44,13 @@ public class App
         for(int i=0; i<line.Length; i++)
           if(line[i]=='(') parens++;
           else if(line[i]==')') parens--;
-        code += line;
+        code += line + "\n";
       } while(parens>0);
 
       if(code.Trim().Length==0) continue;
       try
       { object parsed = Parser.FromString(code).Parse();
-        Console.WriteLine(Ops.Repr(Compiled ? Builtins.eval(Builtins.compile(parsed))
+        Console.WriteLine(Ops.Repr(Compiled ? Builtins.eval.core(Builtins.compile(parsed))
                                             : AST.Create(parsed, true).Evaluate()));
       }
       catch(Exception e) { Console.WriteLine("ERROR: "+e.ToString()); }

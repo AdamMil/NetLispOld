@@ -67,7 +67,7 @@ public interface IProcedure
 public abstract class Lambda : IProcedure
 { public int MinArgs { get { return Template.NumParams; } }
   public int MaxArgs { get { return Template.HasList ? -1 : Template.NumParams; } }
-  public bool NeedsFreshArgs { get { return Template.CreatesClosure; } }
+  public bool NeedsFreshArgs { get { return Template.ArgsClosed; } }
 
   public abstract object Call(params object[] args);
   public override string ToString() { return Template.Name==null ? "#<lambda>" : "#<lambda '"+Template.Name+"'>"; }
@@ -820,6 +820,12 @@ public sealed class Ops
     return ret;
   }
 
+  public static Promise ExpectPromise(object obj)
+  { Promise ret = obj as Promise;
+    if(ret==null) throw new ArgumentException("expected promise but received "+TypeName(obj));
+    return ret;
+  }
+
   public static Reference ExpectRef(object obj)
   { Reference ret = obj as Reference;
     if(ret==null) throw new ArgumentException("expected ref but received "+TypeName(obj));
@@ -1313,6 +1319,7 @@ public sealed class Ops
         if(type==typeof(Complex)) return "complex";
         if(type==typeof(MultipleValues)) return "multiplevalues";
         if(type==typeof(Reference)) return "ref";
+        if(type==typeof(Promise)) return "promise";
         if(type==typeof(Type)) return "type";
         goto default;
       case TypeCode.Double: return "flonum64";
@@ -1396,6 +1403,15 @@ public sealed class Pair
 }
 #endregion
 
+#region Promise
+public sealed class Promise
+{ public Promise(IProcedure form) { Form=form; }
+  public override string ToString() { return "#<promise>"; }
+  public IProcedure Form;
+  public object Value;
+}
+#endregion
+
 #region Reference
 public sealed class Reference
 { public Reference(object value) { Value=value; }
@@ -1425,8 +1441,8 @@ public sealed class Symbol
 
 #region Template
 public sealed class Template
-{ public Template(IntPtr func, string name, int numParams, bool hasList, bool closure)
-  { TopLevel=TopLevel.Current; FuncPtr=func; Name=name; NumParams=numParams; HasList=hasList; CreatesClosure=closure;
+{ public Template(IntPtr func, string name, int numParams, bool hasList, bool argsClosed)
+  { TopLevel=TopLevel.Current; FuncPtr=func; Name=name; NumParams=numParams; HasList=hasList; ArgsClosed=argsClosed;
   }
 
   public object[] FixArgs(object[] args)
@@ -1451,7 +1467,7 @@ public sealed class Template
   public readonly string Name;
   public readonly IntPtr FuncPtr;
   public readonly int  NumParams;
-  public readonly bool HasList, CreatesClosure;
+  public readonly bool HasList, ArgsClosed;
 }
 #endregion
 

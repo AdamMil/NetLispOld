@@ -215,11 +215,6 @@ public sealed class CodeGenerator
     }
   }
 
-  public void EmitLine(int line)
-  { if(TypeGenerator.Assembly.Symbols!=null)
-      ILG.MarkSequencePoint(TypeGenerator.Assembly.Symbols, line, 0, line+1, 0);
-  }
-
   public void EmitList(Node[] items) { EmitList(items, null, 0); }
   public void EmitList(Node[] items, Node dot) { EmitList(items, dot, 0); }
   public void EmitList(Node[] items, int start) { EmitList(items, null, start); }
@@ -271,11 +266,6 @@ public sealed class CodeGenerator
   }
 
   public void EmitPair(Node node) { EmitTypedNode(node, typeof(Pair)); }
-
-  // TODO: make this use actual spans
-  public void EmitPosition(Node node)
-  { throw new NotImplementedException();
-  }
 
   public void EmitReturn() { ILG.Emit(OpCodes.Ret); }
   public void EmitReturn(Node expr)
@@ -338,6 +328,14 @@ public sealed class CodeGenerator
   public void Finish() { if(localTemps!=null) localTemps.Clear(); }
 
   public void FreeLocalTemp(Slot slot) { localTemps.Add(slot); }
+
+  public void MarkPosition(Node node)
+  { MarkPosition(node.StartLine, node.StartColumn, node.EndLine, node.EndColumn);
+  }
+  public void MarkPosition(int startLine, int startCol, int endLine, int endCol)
+  { if(TypeGenerator.Assembly.Symbols!=null && startLine!=0 && endLine!=0)
+      ILG.MarkSequencePoint(TypeGenerator.Assembly.Symbols, startLine, startCol, endLine, endCol);
+  }
 
   public void SetupNamespace(int maxNames) { SetupNamespace(maxNames, null); }
   public void SetupNamespace(int maxNames, Slot topSlot)

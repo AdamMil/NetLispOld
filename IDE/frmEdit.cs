@@ -63,7 +63,7 @@ public class EditForm : System.Windows.Forms.Form
     Backend.TopLevel old = Backend.TopLevel.Current;
     try
     { Backend.TopLevel.Current = lispModule.TopLevel;
-      object ret = Builtins.eval(Parser.FromString(code).Parse());
+      object ret = Builtins.eval.core(Parser.FromString(code).Parse());
       if(interactive) immediate.AppendLine(Ops.Repr(ret));
     }
     catch(Exception ex) { immediate.AppendLine("Error {0}: {1}", ex.GetType().Name, ex.Message); }
