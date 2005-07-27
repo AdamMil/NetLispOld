@@ -28,7 +28,7 @@ public class NameException : RuntimeException
 { public NameException(string message) : base(message) { }
 }
 
-public abstract class CompileTimeException : NetLispException
+public class CompileTimeException : NetLispException
 { public CompileTimeException(string message) : base(message) { }
 }
 

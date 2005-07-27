@@ -59,7 +59,7 @@ public sealed class Options
 
 public sealed class Singleton
 { public Singleton(string name) { Name=name; }
-  public override string ToString() { return "Singleton: "+Name; }
+  public override string ToString() { return "#<singleton: "+Name+">"; }
   public string Name;
 }
 
@@ -579,7 +579,7 @@ public sealed class CallNode : Node
     { "-", "Subtract", "bitnot", "BitwiseNegate", "+", "Add", "*", "Multiply", "/", "Divide", "//", "FloorDivide",
       "%", "Modulus",  "bitand", "BitwiseAnd", "bitor", "BitwiseOr", "bitxor", "BitwiseXor", "=", "AreEqual",
       "!=", "NotEqual", "<", "Less", ">", "More", "<=", "LessEqual", ">=", "MoreEqual", "expt", "Power",
-      "lshift", "LeftShift", "rshift", "RightShift", "exptmod", "PowerMod"
+      "lshift", "LeftShift", "rshift", "RightShift", "exptmod", "PowerMod", "->tostring", "Str"
     };
     for(int i=0; i<arr.Length; i+=2)
     { ops[arr[i]] = arr[i+1];
@@ -588,7 +588,7 @@ public sealed class CallNode : Node
     cfunc.AddRange(new string[] {
       "eq?", "eqv?", "equal?", "null?", "pair?", "char?", "symbol?", "string?", "procedure?", "vector?", "values",
       "not", "string-null?", "string-length", "string-ref", "vector-length", "vector-ref", "car", "cdr", "promise?",
-      "char-upcase", "char-downcase"});
+      "char-upcase", "char-downcase", "->string"});
 
     cfunc.Sort();
     constant = (string[])cfunc.ToArray(typeof(string));
@@ -785,7 +785,7 @@ public sealed class CallNode : Node
             cg.EmitNew(typeof(Promise), new Type[] { typeof(IProcedure) });
             etype = typeof(Promise);
             goto ret;
-          case "bitnot":
+          case "bitnot": case "->string":
             CheckArity(1);
             if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
             Args[0].Emit(cg);
@@ -982,7 +982,8 @@ public sealed class CallNode : Node
       catch(Exception e) { throw new ArgumentException(name+": "+e.Message); }
       
       switch(name)
-      { case "car": CheckArity(1); CheckType(a, 0, typeof(Pair)); return ((Pair)a[0]).Car;
+      { case "->string": CheckArity(1); return Ops.Str(a[0]);
+        case "car": CheckArity(1); CheckType(a, 0, typeof(Pair)); return ((Pair)a[0]).Car;
         case "cdr": CheckArity(1); CheckType(a, 0, typeof(Pair)); return ((Pair)a[0]).Cdr;
         case "char?": CheckArity(1); return a[0] is char;
         case "char-downcase": CheckArity(1); CheckType(a, 0, typeof(char)); return char.ToLower((char)a[0]);
@@ -1117,7 +1118,7 @@ public sealed class DefineNode : Node
     cg.EmitTopLevel();
     cg.EmitString(Name.String);
     Value.Emit(cg);
-    cg.EmitCall(typeof(TopLevel), "Bind");
+    cg.EmitCall(typeof(TopLevel), "Bind", new Type[] { typeof(string), typeof(object) });
     cg.Namespace.GetSlot(Name); // side effect of creating the slot
     if(etype!=typeof(void))
     { cg.EmitConstantObject(Symbol.Get(Name.String));
@@ -1901,9 +1902,12 @@ public sealed class SetNode : Node
 
   public override object Evaluate()
   { object value = Value.Evaluate();
-    InterpreterEnvironment cur = InterpreterEnvironment.Current;
-    if(cur==null) TopLevel.Current.Set(Name.String, value);
-    else cur.Set(Name.String, value);
+    if(Name.Depth==Name.Global) TopLevel.Current.Set(Name.String, value);
+    else
+    { InterpreterEnvironment cur = InterpreterEnvironment.Current;
+      if(cur==null) TopLevel.Current.Set(Name.String, value);
+      else cur.Set(Name.String, value);
+    }
     return value;
   }
 
@@ -2174,8 +2178,11 @@ public sealed class VariableNode : Node
   }
 
   public override object Evaluate()
-  { InterpreterEnvironment cur = InterpreterEnvironment.Current;
-    return cur==null ? TopLevel.Current.Get(Name.String) : cur.Get(Name.String);
+  { if(Name.Depth==Name.Global) return TopLevel.Current.Get(Name.String);
+    else
+    { InterpreterEnvironment cur = InterpreterEnvironment.Current;
+      return cur==null ? TopLevel.Current.Get(Name.String) : cur.Get(Name.String);
+    }
   }
 
   public override Type GetNodeType() { return typeof(object); }

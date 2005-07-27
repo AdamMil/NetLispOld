@@ -31,6 +31,9 @@ namespace NetLisp.Backend
 public sealed class ModuleGenerator
 { ModuleGenerator() { }
 
+  // TODO: this is only a temporary solution. replace it with a better one
+  public static string CachePath = "dllcache/";
+
   #region Generate from a ModuleNode
   public static Module Generate(ModuleNode mod)
   { TypeGenerator tg = SnippetMaker.Assembly.DefineType("module"+index.Next+"$"+mod.Name, typeof(Module));
@@ -55,7 +58,7 @@ public sealed class ModuleGenerator
     cg.EmitFieldGet(typeof(TopLevel), "Current");
     old.EmitSet(cg);
     cg.ILG.BeginExceptionBlock();
-    cg.EmitFieldGet(typeof(Builtins), "Instance");
+    cg.EmitPropGet(typeof(Builtins), "Instance");
     cg.EmitThis();
     cg.EmitFieldGet(typeof(Module), "TopLevel");
     cg.ILG.Emit(OpCodes.Dup);
@@ -78,11 +81,11 @@ public sealed class ModuleGenerator
   #region Generate from builtin type
   public static BuiltinModule Generate(Type type) { return Generate(type, false); }
   public static BuiltinModule Generate(Type type, bool parseOneByOne)
-  { 
+  { string filename = CachePath+type.FullName.Replace('+', '.')+".dll";
     #if !DEBUG
-    if(File.Exists(type.FullName+".dll"))
+    if(File.Exists(filename))
       try
-      { Assembly ass = Assembly.LoadFrom(type.FullName+".dll");
+      { Assembly ass = Assembly.LoadFrom(filename);
         Type mtype = ass.GetType("module");
         if(mtype!=null && mtype.IsSubclassOf(typeof(BuiltinModule)))
           return (BuiltinModule)mtype.GetConstructor(Type.EmptyTypes).Invoke(null);
@@ -90,7 +93,8 @@ public sealed class ModuleGenerator
       catch { }
     #endif
 
-    AssemblyGenerator ag = new AssemblyGenerator(type.FullName, type.FullName+".dll");
+    // TODO: come up with a better naming scheme (replacing '+' with '.' can create collisions)
+    AssemblyGenerator ag = new AssemblyGenerator(type.FullName, filename);
     TopLevel oldTL = TopLevel.Current;
     bool debug=Options.Debug, optimize=Options.Optimize;
     try
@@ -109,7 +113,7 @@ public sealed class ModuleGenerator
         topslot.EmitSet(cg);
       }
       else
-      { cg.EmitFieldGet(typeof(Builtins), "Instance");
+      { cg.EmitPropGet(typeof(Builtins), "Instance");
         cg.EmitNew(typeof(TopLevel));
         cg.ILG.Emit(OpCodes.Dup);
         topslot.EmitSet(cg);
@@ -207,7 +211,7 @@ public sealed class ModuleGenerator
     TypeGenerator tg = ag.DefineType(TypeAttributes.Public|TypeAttributes.Sealed, name);
 
     CodeGenerator cg = tg.GetInitializer();
-    cg.EmitFieldGet(typeof(Builtins), "Instance");
+    cg.EmitPropGet(typeof(Builtins), "Instance");
     cg.EmitNew(typeof(TopLevel));
     cg.ILG.Emit(OpCodes.Dup);
     cg.EmitFieldSet(typeof(TopLevel), "Current");

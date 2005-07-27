@@ -174,10 +174,7 @@ public sealed class ReflectedFunction : SimpleProcedure
   public override object Call(object[] args)
   { if(funcs==null)
       lock(this)
-      { ArrayList list = new ArrayList();
-        foreach(MethodInfo mi in type.GetMethods(BindingFlags.Public|BindingFlags.Static))
-          if(mi.Name==methodName) list.Add(Interop.MakeFunctionWrapper(mi));
-        funcs = (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
+      { funcs = Interop.GetFunctions(type, methodName, true);
         type  = null;
         methodName = null;
       }
@@ -321,15 +318,18 @@ public sealed class Interop
   { ConstructorInfo[] ci = type.GetConstructors();
     bool needDefault = type.IsValueType && !type.IsPrimitive;
     FunctionWrapper[] ret = new FunctionWrapper[ci.Length + (needDefault ? 1 : 0)];
-    for(int i=0; i<ci.Length; i++) ret[i] = Interop.MakeFunctionWrapper(ci[i]);
-    if(needDefault) ret[ci.Length] = Interop.MakeStructCreator(type);
+    for(int i=0; i<ci.Length; i++) ret[i] = MakeFunctionWrapper(ci[i]);
+    if(needDefault) ret[ci.Length] = MakeStructCreator(type);
     return ret;
   }
 
   public static FunctionWrapper[] GetFunctions(Type type, string name)
   { ArrayList list = new ArrayList();
+
     foreach(MethodInfo mi in type.GetMethods())
-      if(mi.Name==name) list.Add(Interop.MakeFunctionWrapper(mi));
+      if(mi.Name==name) list.Add(MakeFunctionWrapper(mi));
+    IncludeInterfaceMethods(type, name, list);
+
     if(list.Count==0) throw new ArgumentException("type "+type.FullName+" does not have a '"+name+"' method");
     return (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
   }
@@ -338,7 +338,8 @@ public sealed class Interop
   { ArrayList list = new ArrayList();
     foreach(MethodInfo mi in type.GetMethods(statics ? BindingFlags.Public|BindingFlags.Static
                                                      : BindingFlags.Public|BindingFlags.Instance))
-      if(mi.Name==name) list.Add(Interop.MakeFunctionWrapper(mi));
+      if(mi.Name==name) list.Add(MakeFunctionWrapper(mi));
+    if(!statics) IncludeInterfaceMethods(type, name, list);
     if(list.Count==0) throw new ArgumentException("type "+type.FullName+" does not have a '"+name+"' method");
     return (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
   }
@@ -347,8 +348,8 @@ public sealed class Interop
   { ArrayList list = new ArrayList();
     foreach(PropertyInfo pi in type.GetProperties())
       if(pi.Name==name)
-      { if(pi.CanRead) list.Add(Interop.MakeFunctionWrapper(pi.GetGetMethod()));
-        if(pi.CanWrite) list.Add(Interop.MakeFunctionWrapper(pi.GetSetMethod()));
+      { if(pi.CanRead) list.Add(MakeFunctionWrapper(pi.GetGetMethod()));
+        if(pi.CanWrite) list.Add(MakeFunctionWrapper(pi.GetSetMethod()));
       }
     if(list.Count==0) throw new ArgumentException("type "+type.FullName+" does not have a '"+name+"' property");
     return (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
@@ -358,7 +359,7 @@ public sealed class Interop
   { ArrayList list = new ArrayList();
     foreach(PropertyInfo pi in type.GetProperties(statics ? BindingFlags.Public|BindingFlags.Static
                                                           : BindingFlags.Public|BindingFlags.Instance))
-      if(pi.CanRead && pi.Name==name) list.Add(Interop.MakeFunctionWrapper(pi.GetGetMethod()));
+      if(pi.CanRead && pi.Name==name) list.Add(MakeFunctionWrapper(pi.GetGetMethod()));
     if(list.Count==0) throw new ArgumentException("type "+type.FullName+" does not have a '"+name+"' getter");
     return (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
   }
@@ -367,7 +368,7 @@ public sealed class Interop
   { ArrayList list = new ArrayList();
     foreach(PropertyInfo pi in type.GetProperties(statics ? BindingFlags.Public|BindingFlags.Static
                                                           : BindingFlags.Public|BindingFlags.Instance))
-      if(pi.CanWrite && pi.Name==name) list.Add(Interop.MakeFunctionWrapper(pi.GetSetMethod()));
+      if(pi.CanWrite && pi.Name==name) list.Add(MakeFunctionWrapper(pi.GetSetMethod()));
     if(list.Count==0) throw new ArgumentException("type "+type.FullName+" does not have a '"+name+"' setter");
     return (FunctionWrapper[])list.ToArray(typeof(FunctionWrapper));
   }
@@ -504,6 +505,16 @@ public sealed class Interop
       if(!mi.IsSpecialName || !mi.Name.StartsWith("get_") && !mi.Name.StartsWith("set_") &&
          mi.Name!="op_Implicit" && mi.Name!="op_Explicit" && mi.Name!="op_UnaryPlus") // TODO: handle implicit & explicit somehow?
         methods.Add(mi);
+    int count = methods.Count;
+    if(!type.IsInterface)
+      foreach(Type itype in type.GetInterfaces())
+      { InterfaceMapping map = type.GetInterfaceMap(itype);
+        foreach(MethodInfo mi in map.TargetMethods)
+          if(!mi.IsPublic && methods.IndexOf(mi, 0, count)==-1 &&
+            (!mi.IsSpecialName || !mi.Name.StartsWith("get_") && !mi.Name.StartsWith("set_") &&
+              mi.Name!="op_Implicit" && mi.Name!="op_Explicit" && mi.Name!="op_UnaryPlus"))
+            methods.Add(mi);
+      }
     ImportMethods(top, type, (MethodInfo[])methods.ToArray(typeof(MethodInfo)), "", null);
   }
 
@@ -544,11 +555,13 @@ public sealed class Interop
   #region ImportProperties
   static void ImportProperties(TopLevel top, Type type)
   { ListDictionary dict = new ListDictionary();
+
     foreach(PropertyInfo pi in type.GetProperties())
     { ArrayList list = (ArrayList)dict[pi.Name];
       if(list==null) dict[pi.Name]=list=new ArrayList();
       list.Add(pi);
     }
+
     foreach(DictionaryEntry de in dict)
     { ArrayList gets=new ArrayList(), sets=new ArrayList();
       foreach(PropertyInfo pi in (ArrayList)de.Value)
@@ -562,6 +575,24 @@ public sealed class Interop
     }
   }
   #endregion
+
+  static void IncludeInterfaceMethods(Type type, string methodName, ArrayList list)
+  { if(type.IsInterface) return;
+
+    int count = list.Count;
+    foreach(Type itype in type.GetInterfaces())
+    { InterfaceMapping map = type.GetInterfaceMap(itype);
+      foreach(MethodInfo mi in map.TargetMethods)
+      { if(!mi.IsPublic && list.IndexOf(mi, 0, count)==-1)
+        { string name = mi.Name;
+          int pos = mi.Name.LastIndexOf('.');
+          if(pos!=-1) name = name.Substring(pos+1);
+
+          if(name==methodName) list.Add(MakeFunctionWrapper(mi));
+        }
+      }
+    }
+  }
 
   #region MakeDelegateWrapper
   public static object MakeDelegateWrapper(IProcedure proc, Type delegateType)
@@ -625,10 +656,9 @@ public sealed class Interop
     return cr(proc);
   }
   #endregion
-  
+
   #region MakeFunctionWrapper
-  internal static FunctionWrapper MakeFunctionWrapper(MethodBase mi) { return MakeFunctionWrapper(mi, false); }
-  internal static FunctionWrapper MakeFunctionWrapper(MethodBase mi, bool isPrimitive)
+  internal static FunctionWrapper MakeFunctionWrapper(MethodBase mi)
   { IntPtr ptr = mi.MethodHandle.Value;
     lock(funcs)
     { FunctionWrapper ret = (FunctionWrapper)funcs[ptr];
@@ -908,7 +938,7 @@ public sealed class Interop
           refs[refi++] = new Ref(i, tmp);
         }
         else if(sig.Params[i].IsPointer) EmitConvertTo(cg, typeof(IntPtr));
-        else EmitConvertTo(cg, sig.Params[i], i==0 && sig.IndirectThis);
+        else EmitConvertTo(cg, sig.Params[i], i==0 && sig.PointerHack!=IntPtr.Zero);
       }
 
       if(min<numnp) // default arguments
@@ -1091,7 +1121,7 @@ public sealed class Interop
       }
       else
       { // TODO: report this to microsoft and see if we can get a straight answer
-        if(sig.IndirectThis) cg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)mi); // HACK: we hardcode the function pointer in this case because MethodHandle.GetFunctionPointer() doesn't return the correct value for instance calls on value types. i'm not sure if this is safe, but it seems to work.
+        if(sig.PointerHack!=IntPtr.Zero) cg.ILG.Emit(OpCodes.Ldftn, (MethodInfo)mi); // HACK: we hardcode the function pointer in this case because MethodHandle.GetFunctionPointer() doesn't return the correct value for instance calls on value types. i'm not sure if this is safe, but it seems to work.
         else
         { cg.EmitThis();
           cg.EmitFieldGet(typeof(FunctionWrapperI), "methodPtr");
@@ -1168,7 +1198,7 @@ sealed class Signature
 
     if(so==1)
     { Params[0] = mi.DeclaringType;
-      IndirectThis = mi.DeclaringType.IsValueType;
+      PointerHack = mi.DeclaringType.IsValueType ? mi.MethodHandle.Value : IntPtr.Zero;
     }
     for(int i=0,req=-1; i<pi.Length; i++)
     { Params[i + so] = pi[i].ParameterType;
@@ -1185,7 +1215,7 @@ sealed class Signature
   public override bool Equals(object obj)
   { Signature o = (Signature)obj;
     if(Params.Length!=o.Params.Length || ParamArray!=o.ParamArray || Return!=o.Return || Convention!=o.Convention ||
-        IsCons!=o.IsCons || IndirectThis!=o.IndirectThis ||
+        IsCons!=o.IsCons || PointerHack!=o.PointerHack ||
        (Defaults==null && o.Defaults!=null || Defaults!=null && o.Defaults==null ||
         Defaults!=null && Defaults.Length!=o.Defaults.Length))
       return false;
@@ -1205,7 +1235,8 @@ sealed class Signature
   public Type[]   Params;
   public object[] Defaults;
   public CallingConventions Convention;
-  public bool     IsCons, IndirectThis, ParamArray;
+  public IntPtr PointerHack;
+  public bool     IsCons, ParamArray;
 }
 #endregion
 
