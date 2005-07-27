@@ -70,7 +70,8 @@ namespace NetLisp.Backend
               (map (lambda (x) (e x e)) x))))))
 
 (define expand (lambda (x) (initial-expander x initial-expander)))
-(define expand-once (lambda (x) (initial-expander x (lambda (x e) x))))
+
+(install-expander 'quote (lambda (x e) x))
 
 (install-expander 'quasiquote
   (lambda (x e)
@@ -121,9 +122,7 @@ namespace NetLisp.Backend
     (let ((bindings (cadr x)))
       (if (symbol? bindings) ; named let
           (let ((name bindings))
-            (set! bindings (map (lambda (init)
-                                  (set! init (#%strip-debug init))
-                                  (if (pair? init) init (list init nil)))
+            (set! bindings (map (lambda (init) (if (pair? init) init (list init nil)))
                                 (caddr x)))
             (e `(letrec ((,name (lambda ,(map car bindings) ,@(cdddr x))))
                   (,name ,@(map cadr bindings))) e))
@@ -136,11 +135,11 @@ namespace NetLisp.Backend
 (install-expander 'let-values
   (lambda (x e)
     (let ((bindings (cadr x)))
-      `(let-values ,(map (lambda (init) (list (#%strip-debug (car init)) (e (cadr init) e))) bindings)
+      `(let-values ,(map (lambda (init) (list (car init) (e (cadr init) e))) bindings)
          ,@(#_body-expander (cddr x) e)))))
 
 (install-expander 'lambda
-  (lambda (x e) `(lambda ,(#%strip-debug (cadr x)) ,@(#_body-expander (cddr x) e))))
+  (lambda (x e) `(lambda ,(cadr x) ,@(#_body-expander (cddr x) e))))
 
 (install-expander 'defmacro
   (lambda (x e)
@@ -186,7 +185,7 @@ namespace NetLisp.Backend
         ,@(map (lambda (cf)
                  (if (pair? cf)
                      (case (car cf)
-                      (catch `(catch ,(#%strip-debug (cadr cf)) ,@(map mex (cddr cf))))
+                      (catch `(catch ,(cadr cf) ,@(map mex (cddr cf))))
                       (finally `(finally ,@(map mex (cdr cf))))
                       (else cf))
                      cf))
@@ -291,6 +290,9 @@ namespace NetLisp.Backend
        (if ,cond
            (begin ,@body (,loop))))))
 
+(defmacro until (cond . body)
+  `(while (not ,cond) ,@body))
+
 (defmacro .foreach ((name in) . body)
   (let ((e (gensym ""enum""))
         (loop (gensym ""loop"")))
@@ -330,6 +332,13 @@ public static void loadByName(string name) { Interop.LoadAssemblyByName(name); }
 [SymbolName("load-assembly-from-file")]
 public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name); }
 public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
+
+  public static Module Instance
+  { get
+    { if(instance==null) instance = ModuleGenerator.Generate(typeof(Builtins), true);
+      return instance;
+    }
+  }
 
   // TODO: add support for operators (.+ .- .*, etc)
   #region .NET functions
@@ -593,9 +602,9 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  #region ref-get
-  public sealed class refGet : Primitive
-  { public refGet() : base("ref-get", 1, 1) { }
+  #region ref-value
+  public sealed class refValue : Primitive
+  { public refValue() : base("ref-value", 1, 1) { }
     
     public override object Call(object[] args)
     { CheckArity(args);
@@ -604,13 +613,40 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  #region ref-set!
-  public sealed class refSetN : Primitive
-  { public refSetN() : base("ref-set!", 2, 2) { }
+  #region ref-set-value!
+  public sealed class refSetValueN : Primitive
+  { public refSetValueN() : base("ref-set-value!", 2, 2) { }
     
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectRef(args[0]).Value=args[1];
+    }
+  }
+  #endregion
+
+  #region set-ref!
+  public sealed class setRefN : Primitive
+  { public setRefN() : base("set-ref!", 3, 3) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object value = args[2];
+
+      IList list = args[0] as IList;
+      if(list!=null) return list[Ops.ExpectInt(args[1])] = value;
+
+      IDictionary dict = args[0] as IDictionary;
+      if(dict!=null) return dict[args[1]] = value;
+
+      // TODO: strings?
+
+      Pair pair = args[0] as Pair;
+      if(pair!=null)
+      { pair = Mods.Srfi1.drop.core(name, pair, Ops.ExpectInt(args[1]));
+        if(pair==null) throw new ArgumentException(name+": list is not long enough");
+        return pair.Car = value;
+      }
+
+      throw Ops.TypeError(name+": expected mutable container type, but received "+Ops.TypeName(args[0]));
     }
   }
   #endregion
@@ -1001,7 +1037,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
   #endregion
-  
+
   // TODO: almost everything (http://www.schemers.org/Documents/Standards/R5RS/HTML/r5rs-Z-H-2.html#%_toc_%_sec_6.6)
   #region I/O functions
   [SymbolName("input-port?")]
@@ -1473,7 +1509,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
   #endregion
-  
+
   #region Macro expansion
   public static object expand(object form) { return form; }
 
@@ -1854,6 +1890,35 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
   // TODO: number->string
   #region Numeric functions
+  #region ->number
+  public sealed class toNumber : Primitive
+  { public toNumber() : base("->number", 1, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      object value = args[0];
+      switch(Convert.GetTypeCode(value))
+      { case TypeCode.Byte: case TypeCode.Decimal: case TypeCode.Double:
+        case TypeCode.Int16: case TypeCode.Int32: case TypeCode.Int64:
+        case TypeCode.SByte: case TypeCode.Single:
+        case TypeCode.UInt16: case TypeCode.UInt32: case TypeCode.UInt64:
+          return value;
+        default: case TypeCode.DBNull: case TypeCode.Empty: return 0;
+        case TypeCode.Boolean: return (bool)value ? 1 : 0;
+        case TypeCode.String:
+        { string str = (string)value;
+          int radix = args.Length==1 ? 10 : Ops.ExpectInt(args[1]);
+          if(str.Length==0 || !char.IsDigit(str[0]) && str[0]!='.') return 0;
+          try { return Parser.ParseNumber(str, radix); }
+          catch { return 0; }
+        }
+        case TypeCode.Object: return value is Complex || value is Integer ? value : 0;
+        case TypeCode.Char: return (int)(char)value;
+        case TypeCode.DateTime: return ((DateTime)value).Ticks;
+      }
+    }
+  }
+  #endregion
+
   #region complex?
   public sealed class complexP : Primitive
   { public complexP() : base("complex?", 1, 1) { }
@@ -2806,6 +2871,16 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
   // TODO: string-search-chars (and related)
   #region String functions
+  #region ->string
+  public sealed class toString : Primitive
+  { public toString() : base("->string", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.Str(args[0]);
+    }
+  }
+  #endregion
+
   #region list->string
   public sealed class listToString : Primitive
   { public listToString() : base("list->string", 1, 1) { }
@@ -3729,7 +3804,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  // TODO: scheme-report-environment, null-environment, interaction-environment
+  // TODO: scheme-report-environment, null-environment, interaction-environment, etc
   #region Evaluation / compilation
   public static Snippet compile(object obj) { return Ops.CompileRaw(Ops.Call("expand", obj)); }
   // TODO: consider not always compiling... perhaps simple expressions can be interpreted
@@ -3762,24 +3837,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     }
   }
   #endregion
-  #endregion
-
-  #region #%strip-debug
-  public sealed class _stripDebug : Primitive
-  { public _stripDebug() : base("#%strip-debug", 1, 1) { }
-    public override object Call(object[] args)
-    { CheckArity(args);
-      object obj = args[0];
-      if(Options.Debug)
-      { Pair pair = obj as Pair;
-        if(pair!=null)
-        { Symbol sym = pair.Car as Symbol;
-          if(sym!=null && sym.Name=="#%mark-position") obj = Ops.FastCadr(pair);
-        }
-      }
-      return obj;
-    }
-  }
   #endregion
 
   public static void error(params object[] objs) // TODO: use a macro to provide source information
@@ -3829,8 +3886,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   static Hashtable dotFuncs=new Hashtable(), dotPgets=new Hashtable(), dotPsets=new Hashtable(),
                    dotFields=new Hashtable(), dotNews=new Hashtable();
   static Index gensyms = new Index();
-
-  public static readonly Module Instance = ModuleGenerator.Generate(typeof(Builtins), true);
+  static Module instance;
 }
 
 } // namespace NetLisp.Backend

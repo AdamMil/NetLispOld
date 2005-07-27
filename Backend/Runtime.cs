@@ -55,6 +55,7 @@ public class SymbolNameAttribute : Attribute
 
 // FIXME: if a lambda accesses top-level environment (by calling EVAL), it will get the TL of the caller,
 //        not of where it was defined
+// FIXME: implement tail-call elimination in interpreted mode
 #region Procedures
 public interface IProcedure
 { int MinArgs { get; }
@@ -150,13 +151,14 @@ public enum Conversion
 
 #region Binding
 public sealed class Binding
-{ public Binding(string name) { Value=Unbound; Name=name; }
+{ public Binding(string name, TopLevel env) { Value=Unbound; Name=name; Environment=env; }
 
   public override bool Equals(object obj) { return this==obj; }
   public override int GetHashCode() { return Name.GetHashCode(); }
 
   public object Value;
   public string Name;
+  public TopLevel Environment;
 
   public readonly static object Unbound = new Singleton("<UNBOUND>");
 }
@@ -165,7 +167,7 @@ public sealed class Binding
 #region RG (stuff that can't be written in C#)
 public sealed class RG
 { static RG()
-  { if(System.IO.File.Exists("NetLisp.Backend.LowLevel.dll"))
+  { if(System.IO.File.Exists(ModuleGenerator.CachePath+"NetLisp.Backend.LowLevel.dll"))
       try
       { Assembly ass = Assembly.LoadFrom("NetLisp.Backend.LowLevel.dll");
         ClosureType = ass.GetType("NetLisp.Backend.ClosureF", true);
@@ -173,7 +175,8 @@ public sealed class RG
       }
       catch { }
 
-    AssemblyGenerator ag = new AssemblyGenerator("NetLisp.Backend.LowLevel", "NetLisp.Backend.LowLevel.dll");
+    AssemblyGenerator ag = new AssemblyGenerator("NetLisp.Backend.LowLevel",
+                                                 ModuleGenerator.CachePath+"NetLisp.Backend.LowLevel.dll");
     TypeGenerator tg;
     CodeGenerator cg;
 
@@ -226,13 +229,13 @@ public sealed class InterpreterEnvironment
 
   public object Get(string name)
   { object ret = dict[name];
-    if(ret==null && !dict.Contains(name)) return parent==null ? TopLevel.Current.Get(name) : parent.Get(name);
+    if(ret==null && !dict.Contains(name)) return parent!=null ? parent.Get(name) : TopLevel.Current.Get(name);
     return ret;
   }
 
   public void Set(string name, object value)
   { if(dict.Contains(name)) dict[name] = value;
-    else if(parent==null) parent.Set(name, value);
+    else if(parent!=null) parent.Set(name, value);
     else TopLevel.Current.Set(name, value);
   }
 
@@ -257,11 +260,58 @@ public sealed class LocalEnvironment
 public sealed class TopLevel
 { public enum NS { Main, Macro }
 
+  #region BindingSpace
+  public sealed class BindingSpace
+  { public void Bind(string name, object value, TopLevel env)
+    { Binding bind;
+      lock(Dict)
+      { bind = (Binding)Dict[name];
+        if(bind==null) Dict[name] = bind = new Binding(name, env);
+        else bind.Environment = env;
+      }
+      bind.Value = value;
+    }
+
+    public bool Contains(string name) { return Dict.Contains(name); }
+
+    public object Get(string name)
+    { Binding obj;
+      lock(Dict) obj = (Binding)Dict[name];
+      if(obj==null || obj.Value==Binding.Unbound) throw new NameException("no such name: "+name);
+      return obj.Value;
+    }
+
+    public bool Get(string name, out object value)
+    { Binding obj;
+      lock(Dict) obj = (Binding)Dict[name];
+      if(obj==null || obj.Value==Binding.Unbound) { value=null; return false; }
+      value = obj.Value;
+      return true;
+    }
+
+    public Binding GetBinding(string name, TopLevel env)
+    { Binding obj;
+      lock(Dict) obj = (Binding)Dict[name];
+      if(obj==null) Dict[name] = obj = new Binding(name, env);
+      return obj;
+    }
+
+    public void Set(string name, object value)
+    { Binding obj;
+      lock(Dict) obj = (Binding)Dict[name];
+      if(obj==null) throw new NameException("no such name: "+name);
+      obj.Value = value;
+    }
+    
+    public readonly Hashtable Dict = new Hashtable();
+  }
+  #endregion
+
   public void AddBuiltins(Type type)
   { foreach(MethodInfo mi in type.GetMethods(BindingFlags.Public|BindingFlags.Static|BindingFlags.DeclaredOnly))
     { object[] attrs = mi.GetCustomAttributes(typeof(SymbolNameAttribute), false);
       string name = attrs.Length==0 ? mi.Name : ((SymbolNameAttribute)attrs[0]).Name;
-      Bind(name, Interop.MakeFunctionWrapper(mi, true));
+      Bind(name, Interop.MakeFunctionWrapper(mi));
     }
 
     foreach(Type ptype in type.GetNestedTypes(BindingFlags.Public))
@@ -271,73 +321,49 @@ public sealed class TopLevel
       }
   }
 
-  public void AddMacro(string name, IProcedure value) { lock(Macros) Macros[name] = value; }
+  public void AddMacro(string name, IProcedure value) { Macros.Bind(name, value, this); }
 
-  public void Bind(string name, object value)
-  { Binding bind;
-    lock(Globals)
-    { bind = (Binding)Globals[name];
-      if(bind==null) Globals[name] = bind = new Binding(name);
-    }
-    bind.Value = value;
-  }
+  public void Bind(string name, object value) { Globals.Bind(name, value, this); }
+  public void Bind(string name, object value, TopLevel env) { Globals.Bind(name, value, env); }
 
-  public Module.Export[] CreateExports() // FIXME: this exports objects imported from the base (parent) module
+  public Module.Export[] CreateExports()
   { ArrayList exports = new ArrayList();
-    foreach(string name in Globals.Keys)
-      if(!name.StartsWith("#_")) exports.Add(new Module.Export(name));
-    foreach(string name in Macros.Keys)
-      if(!name.StartsWith("#_")) exports.Add(new Module.Export(name, TopLevel.NS.Macro));
+    foreach(DictionaryEntry de in Globals.Dict)
+    { string name=(string)de.Key;
+      if(!name.StartsWith("#_") && ((Binding)de.Value).Environment==this)
+        exports.Add(new Module.Export(name));
+    }
+    foreach(DictionaryEntry de in Macros.Dict)
+    { string name=(string)de.Key;
+      if(!name.StartsWith("#_") && ((Binding)de.Value).Environment==this)
+        exports.Add(new Module.Export(name, TopLevel.NS.Macro));
+    }
     return (Module.Export[])exports.ToArray(typeof(Module.Export));
   }
 
-  public bool Contains(string name) { lock(Globals) return Globals.Contains(name); }
-  public bool ContainsMacro(string name) { lock(Macros) return Macros.Contains(name); }
+  public bool Contains(string name) { return Globals.Contains(name); }
+  public bool ContainsMacro(string name) { return Macros.Contains(name); }
 
-  public object Get(string name)
-  { Binding obj;
-    lock(Globals) obj = (Binding)Globals[name];
-    if(obj==null || obj.Value==Binding.Unbound) throw new NameException("no such name: "+name);
-    return obj.Value;
-  }
-
-  public bool Get(string name, out object value)
-  { Binding obj;
-    lock(Globals) obj = (Binding)Globals[name];
-    if(obj==null || obj.Value==Binding.Unbound) { value=null; return false; }
-    value = obj.Value;
-    return true;
-  }
-
-  public Binding GetBinding(string name)
-  { Binding obj;
-    lock(Globals) obj = (Binding)Globals[name];
-    if(obj==null) Globals[name] = obj = new Binding(name);
-    return obj;
-  }
-
-  public IProcedure GetMacro(string name) { lock(Macros) return (IProcedure)Macros[name]; }
+  public object Get(string name) { return Globals.Get(name); }
+  public bool Get(string name, out object value) { return Globals.Get(name, out value); }
+  public Binding GetBinding(string name) { return Globals.GetBinding(name, this); }
+  public IProcedure GetMacro(string name) { return (IProcedure)Macros.Get(name); }
 
   public Module GetModule(string name)
   { if(Modules==null) return null;
     else lock(Modules) return (Module)Modules[name];
   }
 
-  public void Set(string name, object value)
-  { Binding obj;
-    lock(Globals) obj = (Binding)Globals[name];
-    if(obj==null) throw new NameException("no such name: "+name);
-    obj.Value = value;
-  }
+  public void Set(string name, object value) { Globals.Set(name, value); }
 
   public void SetModule(string name, Module module)
   { if(Modules==null) lock(this) Modules = new ListDictionary();
     lock(Modules) Modules[name] = module;
   }
 
-  public Hashtable Globals=new Hashtable(), Macros=new Hashtable();
+  public BindingSpace Globals=new BindingSpace(), Macros=new BindingSpace();
   public ListDictionary Modules;
-  
+
   [ThreadStatic] public static TopLevel Current;
 }
 #endregion
@@ -386,8 +412,8 @@ public class Module
 
   public void ImportAll(TopLevel top)
   { foreach(Export e in Exports)
-      if(e.NS==TopLevel.NS.Main) top.Bind(e.AsName, TopLevel.Get(e.Name));
-      else top.Macros[e.AsName] = TopLevel.Macros[e.Name];
+      if(e.NS==TopLevel.NS.Main) top.Globals.Bind(e.AsName, TopLevel.Globals.Get(e.Name), TopLevel);
+      else top.Macros.Bind(e.AsName, TopLevel.Macros.Get(e.Name), TopLevel);
   }
 
   public readonly TopLevel TopLevel;
@@ -398,7 +424,8 @@ public class Module
 }
 
 public abstract class BuiltinModule : Module
-{ // TODO: calling TopLevel.AddBuiltins() is slow. we want module loading to be fast!
+{ // TODO: calling TopLevel.AddBuiltins() is slow. we want module loading to be fast, as it's the principal
+  // determinant of startup time
   public BuiltinModule(Type type, TopLevel top) : base(type.FullName, top) { TopLevel.AddBuiltins(type); }
 }
 #endregion
@@ -1167,7 +1194,7 @@ public sealed class Ops
   { TypeCode tc = Convert.GetTypeCode(o);
     if(tc==TypeCode.Object) return Repr(o);
     else if(tc==TypeCode.Empty) return "[NULL]";
-    else return tc.ToString();
+    else return o.ToString();
   }
 
   public static object Subtract(object a, object b)

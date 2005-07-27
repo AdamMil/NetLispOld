@@ -33,6 +33,9 @@ public sealed class Importer
   { builtins["srfi/srfi-1"] = typeof(Mods.Srfi1);
   }
 
+  // TODO: this is only a temporary solution. replace it with a better one
+  public static string LibPath = "lib/";
+
   public static Module GetModule(object obj)
   { Module module;
     try
@@ -110,7 +113,7 @@ public sealed class Importer
             { string name = mp.Collection+"/"+mp.Name;
               Type type = (Type)builtins[name];
               // TODO: get the library path from elsewhere
-              module = type==null ? LoadFromFile("lib/"+name) : ModuleGenerator.Generate(type);
+              module = type==null ? LoadFromFile(LibPath+name) : ModuleGenerator.Generate(type);
               break;
             }
           }

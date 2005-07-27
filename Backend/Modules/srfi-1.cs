@@ -28,6 +28,7 @@ namespace NetLisp.Mods
 // TODO: optimize filter, member, etc. to share the longest common tails
 // TODO: optimize methods that cons new lists so they don't do the if(head==null) ... thing inside the loop
 // TODO: list sets
+// FIXME: the srfi-1 module should also export srfi-1 names that are defined in Builtins
 
 [LispCode(@"
 (define first  car)
