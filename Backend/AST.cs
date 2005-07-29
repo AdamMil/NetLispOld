@@ -105,22 +105,26 @@ public sealed class AST
           return new IfNode(Parse(pair.Car), Parse(next.Car), next.Cdr==null ? null : Parse(Ops.FastCadr(next)));
         }
         case "let":
-        { if(Builtins.length.core(pair)<3) throw Ops.SyntaxError("let: must be of the form (let ([var | (var init)] ...) forms ...)");
+        { if(Builtins.length.core(pair)<3) goto error;
           pair = (Pair)pair.Cdr;
 
-          Pair bindings = (Pair)pair.Car;
+          Pair bindings = pair.Car as Pair;
+          if(bindings==null) goto error;
           string[] names = new string[Builtins.length.core(bindings)];
           Node[]   inits = new Node[names.Length];
           for(int i=0; i<names.Length; bindings=(Pair)bindings.Cdr,i++)
           { if(bindings.Car is Pair)
             { Pair binding = (Pair)bindings.Car;
-              names[i] = ((Symbol)binding.Car).Name;
+              sym = binding.Car as Symbol;
               inits[i] = Parse(Ops.FastCadr(binding));
             }
-            else names[i] = ((Symbol)bindings.Car).Name;
+            else sym = bindings.Car as Symbol;
+            if(sym==null) goto error;
+            names[i] = sym.Name;
           }
 
           return new LetNode(names, inits, ParseBody((Pair)pair.Cdr));
+          error: throw Ops.SyntaxError("let: must be of the form (let ([symbol | (symbol form)] ...) forms ...)");
         }
         case "begin":
         { if(Builtins.length.core(pair)<2) throw Ops.SyntaxError("begin: no forms given");
@@ -133,12 +137,20 @@ public sealed class AST
           return new LambdaNode(ParseLambaList(pair.Car, out hasList), hasList, ParseBody((Pair)pair.Cdr));
         }
         case "set!":
-        { if(Builtins.length.core(pair)!=3) goto error;
+        { if(Builtins.length.core(pair)<3) goto error;
+          ArrayList names=new ArrayList(), values=new ArrayList();
           pair = (Pair)pair.Cdr;
-          sym = pair.Car as Symbol;
-          if(sym==null) goto error;
-          return new SetNode(sym.Name, Parse(Ops.FastCadr(pair)));
-          error: throw Ops.SyntaxError("set!: must be of form (set! symbol form)");
+          do
+          { sym = pair.Car as Symbol;
+            if(sym==null) goto error;
+            names.Add(new Name(sym.Name));
+            pair = pair.Cdr as Pair;
+            if(pair==null) goto error;
+            values.Add(Parse(pair.Car));
+            pair = pair.Cdr as Pair;
+          } while(pair!=null);
+          return new SetNode((Name[])names.ToArray(typeof(Name)), (Node[])values.ToArray(typeof(Node)));
+          error: throw Ops.SyntaxError("set!: must be of form (set! symbol form [symbol form] ...)");
         }
         case "define":
         { int length = Builtins.length.core(pair);
@@ -1400,7 +1412,7 @@ public class LambdaNode : Node
       else if(node is VariableNode) HandleLocalReference(ref ((VariableNode)node).Name, null);
       else if(node is SetNode)
       { SetNode set = (SetNode)node;
-        HandleLocalReference(ref set.Name, set.Value);
+        for(int i=0; i<set.Names.Length; i++) HandleLocalReference(ref set.Names[i], set.Values[i]);
       }
       else if(!inCatch && node is ThrowNode && ((ThrowNode)node).Type==null)
         throw Ops.SyntaxError(node, "type-less throw form is only allowed within a catch statement");
@@ -1887,44 +1899,46 @@ public sealed class ModuleNode : LambdaNode
 
 #region SetNode
 public sealed class SetNode : Node
-{ public SetNode(string name, Node value) { Name=new Name(name); Value=value; }
+{ public SetNode(Name[] names, Node[] values) { Names=names; Values=values; }
 
   public override void Emit(CodeGenerator cg, ref Type etype)
   { cg.MarkPosition(this);
-    Value.Emit(cg);
-    if(etype!=typeof(void))
-    { cg.ILG.Emit(OpCodes.Dup);
-      etype = typeof(object);
+    for(int i=0; i<Names.Length; i++)
+    { Values[i].Emit(cg);
+      if(i==Names.Length-1 && etype!=typeof(void))
+      { cg.ILG.Emit(OpCodes.Dup);
+        etype = typeof(object);
+      }
+      cg.EmitSet(Names[i]);
     }
-    cg.EmitSet(Name);
     TailReturn(cg);
   }
 
   public override object Evaluate()
-  { object value = Value.Evaluate();
-    if(Name.Depth==Name.Global) TopLevel.Current.Set(Name.String, value);
-    else
-    { InterpreterEnvironment cur = InterpreterEnvironment.Current;
-      if(cur==null) TopLevel.Current.Set(Name.String, value);
-      else cur.Set(Name.String, value);
+  { InterpreterEnvironment cur = InterpreterEnvironment.Current;
+    object value=null;
+    for(int i=0; i<Names.Length; i++)
+    { value = Values[i].Evaluate();
+      if(Names[i].Depth==Name.Global || cur==null) TopLevel.Current.Set(Names[i].String, value);
+      else cur.Set(Names[i].String, value);
     }
     return value;
   }
 
-  public override Type GetNodeType() { return Value.GetNodeType(); }
+  public override Type GetNodeType() { return Values[Values.Length-1].GetNodeType(); }
 
   public override void MarkTail(bool tail)
   { Tail=tail;
-    Value.MarkTail(false);
+    foreach(Node n in Values) n.MarkTail(false);
   }
 
   public override void Walk(IWalker w)
-  { if(w.Walk(this)) Value.Walk(w);
+  { if(w.Walk(this)) foreach(Node n in Values) n.Walk(w);
     w.PostWalk(this);
   }
 
-  public Name Name;
-  public readonly Node Value;
+  public Name[] Names;
+  public readonly Node[] Values;
 }
 #endregion
 

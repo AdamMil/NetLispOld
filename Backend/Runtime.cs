@@ -272,7 +272,11 @@ public sealed class TopLevel
       bind.Value = value;
     }
 
-    public bool Contains(string name) { return Dict.Contains(name); }
+    public bool Contains(string name)
+    { Binding obj;
+      lock(Dict) obj = (Binding)Dict[name];
+      return obj!=null && obj.Value!=Binding.Unbound;
+    }
 
     public object Get(string name)
     { Binding obj;

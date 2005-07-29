@@ -25,6 +25,8 @@ using System.Collections.Specialized;
 using System.Reflection;
 using System.Reflection.Emit;
 
+// TODO: unify :get/ and :getf/ (so the user doesn't have to know whether something's a field or a property)
+
 namespace NetLisp.Backend
 {
 

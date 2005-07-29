@@ -341,6 +341,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
 
   // TODO: add support for operators (.+ .- .*, etc)
+  // TODO: unify .get and .getf (so the user doesn't have to know whether something's a field or a property)
   #region .NET functions
   #region MemberKey
   struct MemberKey
@@ -499,6 +500,49 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
         lock(dotFields) dotFields[key] = fi;
       }
       return fi;
+    }
+  }
+  #endregion
+
+  #region .make-dictionary
+  public sealed class dotMakeDictionary : Primitive
+  { public dotMakeDictionary() : base(".make-dictionary", 0, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      int length = args.Length;
+      if(length==1)
+      { Pair pair = Ops.ExpectList(args[0]);
+        length = Builtins.length.core(pair);
+      }
+
+      return core(name, length<=10 ? new System.Collections.Specialized.ListDictionary()
+                                   : (IDictionary)new Hashtable(length), args);
+    }
+    
+    internal static IDictionary core(string name, IDictionary dict, object[] args)
+    { if(args.Length==1)
+      { Pair list = Ops.ExpectList(args[0]);
+        while(list!=null)
+        { Pair pair = list.Car as Pair;
+          if(pair!=null) goto error;
+          dict[pair.Car] = pair.Cdr;
+          list = list.Cdr as Pair;
+        }
+      }
+      else if((args.Length&1)!=0) goto error;
+      else for(int i=0; i<args.Length; i+=2) dict[args[i]] = args[i+1];
+      return dict;
+      error: throw new TargetParameterCountException(name+": expects an alist or a non-odd number of parameters");
+    }
+  }
+  #endregion
+
+  #region .make-hash-table
+  public sealed class dotMakeHashTable : Primitive
+  { public dotMakeHashTable() : base(".make-hash-table", 0, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return dotMakeDictionary.core(name, new Hashtable(), args);
     }
   }
   #endregion
