@@ -176,7 +176,7 @@ public sealed class RG
       catch { }
 
     AssemblyGenerator ag = new AssemblyGenerator("NetLisp.Backend.LowLevel",
-                                                 ModuleGenerator.CachePath+"NetLisp.Backend.LowLevel.dll");
+                                                 ModuleGenerator.CachePath+"NetLisp.Backend.LowLevel.dll", false);
     TypeGenerator tg;
     CodeGenerator cg;
 
