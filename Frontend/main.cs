@@ -31,7 +31,7 @@ namespace NetLisp.Frontend
 public class App
 { static void DoInteractive() // TODO: provide this functionality in the standard library as a repl() function or something
   { TopLevel.Current = new TopLevel();
-    Builtins.Instance.ImportAll(TopLevel.Current);
+    Builtins.Instance.Import(TopLevel.Current);
     AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(UnhandledException);
 
     while(true)
@@ -142,7 +142,7 @@ public class App
         else
           try
           { TopLevel.Current = new TopLevel();
-            Builtins.Instance.ImportAll(TopLevel.Current);
+            Builtins.Instance.Import(TopLevel.Current);
             SnippetMaker.Generate(AST.Create(parser.Parse()), basename).Run(null);
           }
           finally { if(WriteSnippets) SnippetMaker.DumpAssembly(); }

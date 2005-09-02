@@ -85,7 +85,13 @@ public sealed class AST
 
   static Node Parse(object obj)
   { Symbol sym = obj as Symbol;
-    if(sym!=null) return new VariableNode(sym.Name);
+    if(sym!=null)
+    { string name = sym.Name;
+      if(name==".last") return new dotLastNode();
+      int pos = name.IndexOf('.', 1);
+      Node var = new VariableNode(pos==-1 ? name : name.Substring(0, pos));
+      return pos==-1 ? var : new AccessNode(var, new LiteralNode(name.Substring(pos+1)));
+    }
 
     Pair pair = obj as Pair;
     if(pair==null) return new LiteralNode(obj);
@@ -302,17 +308,12 @@ public sealed class AST
         { pair = (Pair)pair.Cdr;
           return new MarkSourceNode((string)pair.Car, (string)Ops.FastCadr(pair));
         }
-        // (module name-symbol (provides ...) body...)
-        case "#%module":
-        { if(Builtins.length.core(pair)<4) goto moduleError;
+        // (.member object member-names)
+        case ".member":
+        { int length = Builtins.length.core(pair);
+          if(length!=3) throw Ops.SyntaxError(".member: must be of form (.member obj-form names-form)");
           pair = (Pair)pair.Cdr;
-          string name=((Symbol)pair.Car).Name;
-          pair = (Pair)pair.Cdr;
-          CallNode provide=(CallNode)Parse(pair.Car);
-          pair = (Pair)pair.Cdr;
-          return new ModuleNode(name, provide, ParseBody(pair));
-          moduleError: throw Ops.SyntaxError("module definition should be of this form: "+
-                                             "(module name-symbol (provide ...) body ...)");
+          return new AccessNode(Parse(pair.Car), Parse(Ops.FastCadr(pair)));
         }
       }
 
@@ -531,6 +532,79 @@ public abstract class Node
   { public bool Walk(Node node) { return true; }
     public void PostWalk(Node node) { node.Optimize(); }
   }
+}
+#endregion
+
+#region dotLastNode
+public sealed class dotLastNode : Node
+{ public override void Emit(CodeGenerator cg, ref Type etype)
+  { if(etype!=typeof(void))
+    { cg.EmitFieldGet(typeof(Ops), "LastPtr");
+      etype = typeof(object);
+      TailReturn(cg);
+    }
+  }
+
+  public override object Evaluate() { return Ops.LastPtr; }
+  public override Type GetNodeType() { return typeof(object); }
+  public override void Walk(IWalker w) { if(w.Walk(this)) w.PostWalk(this); }
+}
+#endregion
+
+#region AccessNode
+public sealed class AccessNode : Node
+{ public AccessNode(Node value, Node members) { Value=value; Members=members; }
+
+  public override void Emit(CodeGenerator cg, ref Type etype)
+  { Value.Emit(cg);
+    if(Members.IsConstant)
+    { object obj = Members.Evaluate();
+      if(!(obj is string)) throw new SyntaxErrorException("(.member) expects a string value as the second argument");
+      string[] bits = ((string)obj).Split('.');
+
+      if(bits.Length==1)
+      { if(etype==typeof(IProcedure))
+        { cg.ILG.Emit(OpCodes.Dup);
+          cg.EmitFieldSet(typeof(Ops), "LastPtr");
+        }
+        cg.EmitCall(typeof(MemberContainer), "FromObject");
+        cg.EmitString(bits[0]);
+        cg.EmitCall(typeof(MemberContainer), "GetMember", new Type[] { typeof(string) });
+      }
+      else
+      { cg.EmitConstantObject(bits);
+        cg.EmitCall(typeof(Ops), "GetDottedMember");
+      }
+    }
+    else
+    { cg.EmitTypedNode(Members, typeof(string));
+      cg.EmitNewArray(typeof(char), 1);
+      cg.ILG.Emit(OpCodes.Dup);
+      cg.EmitInt(0);
+      cg.EmitChar('.');
+      cg.EmitArrayStore(typeof(char));
+      cg.EmitCall(typeof(string), "Split", new Type[] { typeof(char[]) });
+      cg.EmitCall(typeof(Ops), "GetDottedMember");
+    }
+    etype = typeof(object);
+    TailReturn(cg);
+  }
+
+  public override object Evaluate()
+  { return Ops.GetDottedMember(Value.Evaluate(), Ops.ExpectString(Members.Evaluate()).Split('.'));
+  }
+
+  public override Type GetNodeType() { return typeof(object); }
+
+  public override void Walk(IWalker w)
+  { if(w.Walk(this))
+    { Value.Walk(w);
+      Members.Walk(w);
+    }
+    w.PostWalk(this);
+  }
+
+  public readonly Node Value, Members;
 }
 #endregion
 
@@ -881,7 +955,7 @@ public sealed class CallNode : Node
         return;
       }
     }
-    
+
     normal:
     cg.EmitTypedNode(Function, typeof(IProcedure));
     cg.EmitObjectArray(Args);
@@ -1361,7 +1435,7 @@ public class LambdaNode : Node
         { Name name = (Name)free[i];
           int index = IndexOf(name.String, bound, oldBound, boundStart);
           if(index==-1)
-          { if(oldFunc==top || oldFunc is ModuleNode) name.Depth=Backend.Name.Global;
+          { if(oldFunc==top/* || oldFunc is ModuleNode*/) name.Depth=Backend.Name.Global; // TODO: uncomment later?
             else
             { if(func.MaxNames!=0) name.Depth++;
               free[freeStart++] = name;
@@ -1470,7 +1544,7 @@ public class LambdaNode : Node
       }
       else if(node is DefineNode)
       { DefineNode def = (DefineNode)node;
-        if(def.InFunc==top || def.InFunc is ModuleNode) def.InFunc=null;
+        if(def.InFunc==top/* || def.InFunc is ModuleNode*/) def.InFunc=null; // TODO: uncomment later?
         else if(def.InFunc!=null) throw Ops.SyntaxError(node, "define: only allowed at toplevel scope");
       }
     }
@@ -1807,99 +1881,13 @@ public sealed class MarkSourceNode : DebugNode
 }
 #endregion
 
-#region ModuleNode
-public sealed class ModuleNode : LambdaNode
-{ public ModuleNode(string moduleName, CallNode provide, Node body) : base(body)
-  { if(!(provide.Function is VariableNode) || ((VariableNode)provide.Function).Name.String != "provides")
-      goto badProvides;
-
-    Name=moduleName;
-    
-    ModuleWalker mw = new ModuleWalker(); // FIXME: the macro walking will be wrong because (expand) removes macros
-    Walk(mw);
-
-    ArrayList exports = new ArrayList();
-
-    try
-    { foreach(Node n in provide.Args)
-        if(n is VariableNode) exports.Add(new Module.Export(((VariableNode)n).Name.String));
-        else if(n is CallNode)
-        { CallNode cn = (CallNode)n;
-          switch(((VariableNode)cn.Function).Name.String)
-          { case "rename":
-            { if(cn.Args.Length!=2) goto badProvides;
-              string name = ((VariableNode)cn.Args[0]).Name.String;
-              exports.Add(new Module.Export(name, ((VariableNode)cn.Args[1]).Name.String,
-                                            mw.Macros.Contains(name) ? TopLevel.NS.Macro : TopLevel.NS.Main));
-              break;
-            }
-            case "all-defined":
-              foreach(string name in mw.Defines) exports.Add(new Module.Export(name));
-              foreach(string name in mw.Macros) exports.Add(new Module.Export(name, TopLevel.NS.Macro));
-              break;
-            case "all-defined-except":
-              foreach(string name in mw.Defines) if(!Except(name, cn.Args)) exports.Add(new Module.Export(name));
-              foreach(string name in mw.Macros)
-                if(!Except(name, cn.Args)) exports.Add(new Module.Export(name, TopLevel.NS.Macro));
-              break;
-          }
-        }
-        else goto badProvides;
-     }
-     catch { goto badProvides; }
-     
-    Exports = (Module.Export[])exports.ToArray(typeof(Module.Export));
-
-    return;
-    badProvides: throw Ops.SyntaxError(this, "Invalid 'provides' declaration"); // TODO: move this check outside (or do whatever so we can get good error diagnostics)
-  }
-
-  public override void Emit(CodeGenerator cg, ref Type etype)
-  { TopLevel.Current.SetModule(Name, ModuleGenerator.Generate(this));
-    if(etype!=typeof(void))
-    { cg.EmitConstantObject(Symbol.Get(Name));
-      etype = typeof(Symbol);
-    }
-    TailReturn(cg);
-  }
-
-  public override void Walk(IWalker w)
-  { if(w.Walk(this)) Body.Walk(w);
-    w.PostWalk(this);
-  }
-
-  public readonly Module.Export[] Exports;
-  
-  sealed class ModuleWalker : IWalker
-  { public bool Walk(Node node)
-    { if(node is DefineNode) Defines.Add(((DefineNode)node).Name.String);
-      else if(node is CallNode)
-      { CallNode cn = (CallNode)node;
-        VariableNode vn = cn.Function as VariableNode;
-        if(vn!=null && vn.Name.String=="install-expander")
-        { LiteralNode lit = cn.Args.Length==0 ? null : cn.Args[0] as LiteralNode;
-          Symbol sym = lit==null ? null : lit.Value as Symbol;
-          if(sym!=null) Macros.Add(sym.Name);
-        }
-      }
-      return false;
-    }
-
-    public void PostWalk(Node node) { }
-
-    public ArrayList Defines=new ArrayList(), Macros=new ArrayList();
-  }
-  
-  static bool Except(string name, Node[] nodes)
-  { foreach(VariableNode n in nodes) if(n.Name.String==name) return true;
-    return false;
-  }
-}
-#endregion
-
 #region SetNode
 public sealed class SetNode : Node
-{ public SetNode(Name[] names, Node[] values) { Names=names; Values=values; }
+{ public SetNode(Name[] names, Node[] values)
+  { foreach(Name name in names)
+      if(name.String.IndexOf('.', 1)!=-1) throw new SyntaxErrorException("Unable to set a dotted identifier");
+    Names=names; Values=values;
+  }
 
   public override void Emit(CodeGenerator cg, ref Type etype)
   { cg.MarkPosition(this);
@@ -2175,7 +2163,7 @@ public sealed class TryNode : Node
 
 #region VariableNode
 public sealed class VariableNode : Node
-{ public VariableNode(string name) { Name=new Name(name); }
+{ public VariableNode(string name) { Name = new Name(name); }
 
   public override void Emit(CodeGenerator cg, ref Type etype)
   { if(Options.Debug)

@@ -36,10 +36,13 @@ public sealed class Importer
   // TODO: this is only a temporary solution. replace it with a better one
   public static string LibPath = "lib/";
 
-  public static Module GetModule(object obj)
-  { Module module;
+  public static MemberContainer GetModule(object obj)
+  { MemberContainer module;
     try
-    { if(obj is Symbol) module = TopLevel.Current.GetModule(((Symbol)obj).Name);
+    { if(obj is Symbol)
+      { TopLevel.Current.Get(((Symbol)obj).Name, out obj);
+        module = obj as MemberContainer;
+      }
       else if(obj is string) module = GetModule((string)obj);
       else if(obj is Pair)
       { Pair pair = (Pair)obj;
@@ -62,20 +65,22 @@ public sealed class Importer
     bad: throw new SyntaxErrorException("malformed module name");
   }
   
-  public static Module GetModule(Type type)
+  public static MemberContainer GetModule(Type type)
   { ModulePath mp = new ModulePath(type.FullName, "%_builtin");
     lock(modules)
-    { Module module = (Module)modules[mp];
+    { MemberContainer module = (MemberContainer)modules[mp];
       if(module==null) modules[mp] = module = ModuleGenerator.Generate(type);
       return module;
     }
   }
 
-  public static Module GetModule(string path)
+  public static MemberContainer GetModule(string path)
   { path = Path.GetFullPath(currentDir==null ? path : Path.Combine(currentDir, path));
     return GetModule(new ModulePath("%fs", path));
   }
-  public static Module GetModule(string name, string collection) { return GetModule(new ModulePath(collection, name)); }
+  public static MemberContainer GetModule(string name, string collection)
+  { return GetModule(new ModulePath(collection, name));
+  }
 
   struct ModulePath
   { public ModulePath(string collection, string name) { Collection=collection; Name=name; }
@@ -89,9 +94,9 @@ public sealed class Importer
     public string Collection, Name;
   }
 
-  static Module GetModule(ModulePath mp)
+  static MemberContainer GetModule(ModulePath mp)
   { lock(modules)
-    { Module module = (Module)modules[mp];
+    { MemberContainer module = (MemberContainer)modules[mp];
 
       if(module==null)
       { if(modules.Contains(mp)) throw new ModuleLoadException("circular module requirements"); // TODO: improve this message
@@ -127,18 +132,18 @@ public sealed class Importer
     }
   }
 
-  static Module LoadFromDotNet(string ns)
-  { Module mod = new Module(ns);
+  static MemberContainer LoadFromDotNet(string ns)
+  { ReflectedNamespace rns = new ReflectedNamespace(ns); // TODO: cache these
     foreach(Assembly a in AppDomain.CurrentDomain.GetAssemblies())
       foreach(Type type in a.GetTypes())
         if(type.IsPublic && type.Namespace==ns)
-          Interop.Import(mod.TopLevel, type);
-    mod.CreateExports();
-    return mod;
+          rns.AddType(type);
+    return rns;
   }
 
-  static Module LoadFromFile(string path)
-  { string old = currentDir;
+  static MemberContainer LoadFromFile(string path)
+  { throw new NotImplementedException();
+    /*string old = currentDir;
     try
     { currentDir = Path.GetDirectoryName(path);
       if(!File.Exists(path)) return null;
@@ -150,7 +155,7 @@ public sealed class Importer
         throw new SyntaxErrorException("module file must contain a single module declaration");
       return ModuleGenerator.Generate(mod);
     }
-    finally { currentDir = old; }
+    finally { currentDir = old; }*/
   }
 
   static string currentDir;

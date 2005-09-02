@@ -64,6 +64,44 @@ public sealed class CodeGenerator
     ILG.Emit(index<256 ? OpCodes.Starg_S : OpCodes.Starg, index);
   }
 
+  public void EmitArrayLoad(Type type)
+  { switch(Type.GetTypeCode(type))
+    { case TypeCode.Boolean: case TypeCode.Byte: case TypeCode.SByte: ILG.Emit(OpCodes.Ldelem_I1); break;
+      case TypeCode.Char: case TypeCode.Int16: case TypeCode.UInt16: ILG.Emit(OpCodes.Ldelem_I2); break;
+      case TypeCode.Int32: case TypeCode.UInt32: ILG.Emit(OpCodes.Ldelem_I4); break;
+      case TypeCode.Int64: case TypeCode.UInt64: ILG.Emit(OpCodes.Ldelem_I8); break;
+      case TypeCode.Single: ILG.Emit(OpCodes.Ldelem_R4); break;
+      case TypeCode.Double: ILG.Emit(OpCodes.Ldelem_R8); break;
+      default:
+        if(type.IsPointer || type==typeof(IntPtr)) ILG.Emit(OpCodes.Ldelem_I);
+        else if(type.IsValueType)
+        { ILG.Emit(OpCodes.Ldelema);
+          ILG.Emit(OpCodes.Ldobj, type);
+        }
+        else ILG.Emit(OpCodes.Ldelem_Ref);
+        break;
+    }
+  }
+
+  public void EmitArrayStore(Type type)
+  { switch(Type.GetTypeCode(type))
+    { case TypeCode.Boolean: case TypeCode.Byte: case TypeCode.SByte: ILG.Emit(OpCodes.Stelem_I1); break;
+      case TypeCode.Char: case TypeCode.Int16: case TypeCode.UInt16: ILG.Emit(OpCodes.Stelem_I2); break;
+      case TypeCode.Int32: case TypeCode.UInt32: ILG.Emit(OpCodes.Stelem_I4); break;
+      case TypeCode.Int64: case TypeCode.UInt64: ILG.Emit(OpCodes.Stelem_I8); break;
+      case TypeCode.Single: ILG.Emit(OpCodes.Stelem_R4); break;
+      case TypeCode.Double: ILG.Emit(OpCodes.Stelem_R8); break;
+      default:
+        if(type.IsPointer || type==typeof(IntPtr)) ILG.Emit(OpCodes.Stelem_I);
+        else if(type.IsValueType)
+        { ILG.Emit(OpCodes.Ldelema);
+          ILG.Emit(OpCodes.Stobj, type);
+        }
+        else ILG.Emit(OpCodes.Stelem_Ref);
+        break;
+    }
+  }
+    
   public void EmitBool(bool value) { ILG.Emit(value ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); }
 
   public void EmitCall(ConstructorInfo ci) { ILG.Emit(OpCodes.Call, ci); }
@@ -73,6 +111,8 @@ public sealed class CodeGenerator
   }
   public void EmitCall(Type type, string method) { EmitCall(type.GetMethod(method, SearchAll)); }
   public void EmitCall(Type type, string method, Type[] paramTypes) { EmitCall(type.GetMethod(method, paramTypes)); }
+
+  public void EmitChar(char c) { EmitInt((int)c); }
 
   public void EmitConstant(object value)
   { switch(Convert.GetTypeCode(value))
@@ -327,7 +367,10 @@ public sealed class CodeGenerator
 
   public void Finish() { if(localTemps!=null) localTemps.Clear(); }
 
-  public void FreeLocalTemp(Slot slot) { localTemps.Add(slot); }
+  public void FreeLocalTemp(Slot slot)
+  { if(slot==null) throw new ArgumentException("Attempted to free a null temp slot.");
+    localTemps.Add(slot);
+  }
 
   public void MarkPosition(Node node)
   { MarkPosition(node.StartLine, node.StartColumn, node.EndLine, node.EndColumn);

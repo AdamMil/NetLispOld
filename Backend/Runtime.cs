@@ -164,6 +164,15 @@ public sealed class Binding
 }
 #endregion
 
+public sealed class Disambiguator
+{ public Disambiguator(Type type, object value) { Type=type; Value=value; }
+
+  public Type Type;
+  public object Value;
+  
+  public readonly static Type ClassType = typeof(Disambiguator);
+}
+
 #region RG (stuff that can't be written in C#)
 public sealed class RG
 { static RG()
@@ -311,39 +320,9 @@ public sealed class TopLevel
   }
   #endregion
 
-  public void AddBuiltins(Type type)
-  { foreach(MethodInfo mi in type.GetMethods(BindingFlags.Public|BindingFlags.Static|BindingFlags.DeclaredOnly))
-    { object[] attrs = mi.GetCustomAttributes(typeof(SymbolNameAttribute), false);
-      string name = attrs.Length==0 ? mi.Name : ((SymbolNameAttribute)attrs[0]).Name;
-      Bind(name, Interop.MakeFunctionWrapper(mi));
-    }
-
-    foreach(Type ptype in type.GetNestedTypes(BindingFlags.Public))
-      if(ptype.IsSubclassOf(typeof(Primitive)))
-      { Primitive prim = (Primitive)ptype.GetConstructor(Type.EmptyTypes).Invoke(null);
-        Bind(prim.Name, prim);
-      }
-  }
-
   public void AddMacro(string name, IProcedure value) { Macros.Bind(name, value, this); }
 
   public void Bind(string name, object value) { Globals.Bind(name, value, this); }
-  public void Bind(string name, object value, TopLevel env) { Globals.Bind(name, value, env); }
-
-  public Module.Export[] CreateExports()
-  { ArrayList exports = new ArrayList();
-    foreach(DictionaryEntry de in Globals.Dict)
-    { string name=(string)de.Key;
-      if(!name.StartsWith("#_") && ((Binding)de.Value).Environment==this)
-        exports.Add(new Module.Export(name));
-    }
-    foreach(DictionaryEntry de in Macros.Dict)
-    { string name=(string)de.Key;
-      if(!name.StartsWith("#_") && ((Binding)de.Value).Environment==this)
-        exports.Add(new Module.Export(name, TopLevel.NS.Macro));
-    }
-    return (Module.Export[])exports.ToArray(typeof(Module.Export));
-  }
 
   public bool Contains(string name) { return Globals.Contains(name); }
   public bool ContainsMacro(string name) { return Macros.Contains(name); }
@@ -353,20 +332,9 @@ public sealed class TopLevel
   public Binding GetBinding(string name) { return Globals.GetBinding(name, this); }
   public IProcedure GetMacro(string name) { return (IProcedure)Macros.Get(name); }
 
-  public Module GetModule(string name)
-  { if(Modules==null) return null;
-    else lock(Modules) return (Module)Modules[name];
-  }
-
   public void Set(string name, object value) { Globals.Set(name, value); }
 
-  public void SetModule(string name, Module module)
-  { if(Modules==null) lock(this) Modules = new ListDictionary();
-    lock(Modules) Modules[name] = module;
-  }
-
   public BindingSpace Globals=new BindingSpace(), Macros=new BindingSpace();
-  public ListDictionary Modules;
 
   [ThreadStatic] public static TopLevel Current;
 }
@@ -394,43 +362,98 @@ public sealed class LispComparer : IComparer
 }
 #endregion
 
-#region Module
-public class Module
-{ public Module(string name) { Name=name; TopLevel=new TopLevel(); }
-  public Module(string name, TopLevel top) { Name=name; TopLevel=top; }
+#region LispModule
+public class LispModule : MemberContainer
+{ public LispModule(string name) { Name=name; TopLevel=new TopLevel(); }
+  public LispModule(string name, TopLevel top) { Name=name; TopLevel=top; }
 
-  public IDictionary GetExportDict()
-  { Hashtable hash = new Hashtable();
-    foreach(Export e in Exports) hash[e.AsName] = TopLevel.Get(e.Name);
-    return hash;
+  public override object GetMember(string name) { return TopLevel.Globals.Get(name); }
+  public override bool GetMember(string name, out object ret) { return TopLevel.Globals.Get(name, out ret); }
+  public override ICollection GetMemberNames() { return TopLevel.Globals.Dict.Keys; }
+
+  public override void Import(TopLevel top, string[] names, string[] asNames)
+  { if(names==null)
+    { Import(top.Globals, TopLevel.Globals, TopLevel);
+      Import(top.Macros, TopLevel.Macros, TopLevel);
+    }
+    else
+      for(int i=0; i<names.Length; i++)
+      { object ret;
+        bool found = false;
+        if(TopLevel.Globals.Get(names[i], out ret))
+        { top.Globals.Bind(asNames[i], ret, TopLevel);
+          found = true;
+        }
+        if(TopLevel.Macros.Get(names[i], out ret))
+        { top.Macros.Bind(asNames[i], ret, TopLevel);
+          found = true;
+        }
+        if(!found) throw new ArgumentException("'"+names[i]+"' not found in module "+Name);
+      }
   }
 
-  public struct Export
-  { public Export(string name) { Name=name; AsName=name; NS=TopLevel.NS.Main; }
-    public Export(string name, TopLevel.NS ns) { Name=name; AsName=name; NS=ns; }
-    public Export(string name, string asName) { Name=name; AsName=asName; NS=TopLevel.NS.Main; }
-    public Export(string name, string asName, TopLevel.NS ns) { Name=name; AsName=asName; NS=ns; }
-    public readonly string Name, AsName;
-    public readonly TopLevel.NS NS;
-  }
-
-  public void ImportAll(TopLevel top)
-  { foreach(Export e in Exports)
-      if(e.NS==TopLevel.NS.Main) top.Globals.Bind(e.AsName, TopLevel.Globals.Get(e.Name), TopLevel);
-      else top.Macros.Bind(e.AsName, TopLevel.Macros.Get(e.Name), TopLevel);
-  }
+  public override string ToString() { return "#<module '"+Name+"'>"; }
 
   public readonly TopLevel TopLevel;
   public readonly string Name;
-  public Export[] Exports;
 
-  internal void CreateExports() { Exports = TopLevel.CreateExports(); }
+  static void Import(TopLevel.BindingSpace to, TopLevel.BindingSpace from, TopLevel env)
+  { foreach(DictionaryEntry de in from.Dict)
+    { string key = (string)de.Key;
+      if(!key.StartsWith("#_"))
+      { Binding bind = (Binding)de.Value;
+        to.Bind(key, bind.Value, env);
+      }
+    }
+  }
 }
+#endregion
 
-public abstract class BuiltinModule : Module
-{ // TODO: calling TopLevel.AddBuiltins() is slow. we want module loading to be fast, as it's the principal
-  // determinant of startup time
-  public BuiltinModule(Type type, TopLevel top) : base(type.FullName, top) { TopLevel.AddBuiltins(type); }
+#region MemberContainer
+public abstract class MemberContainer
+{ public abstract object GetMember(string name);
+  public abstract bool GetMember(string name, out object ret);
+  public abstract ICollection GetMemberNames();
+
+  public static MemberContainer FromObject(object obj)
+  { MemberContainer mc = obj as MemberContainer;
+    return mc!=null ? mc : obj==null ? ReflectedType.NullType : ReflectedType.FromType(obj.GetType());
+  }
+
+  public void Import(TopLevel top) { Import(top, null, null); }
+  public void Import(TopLevel top, string[] names) { Import(top, names, names); }
+  public abstract void Import(TopLevel top, string[] names, string[] asNames);
+
+  public void Import(TopLevel top, Pair bindings)
+  { if(bindings==null)
+    { object obj;
+      if(GetMember("*BINDINGS*", out obj)) bindings = obj as Pair;
+    }
+    if(bindings==null) Import(top, null, null);
+    else
+    { ArrayList names=new ArrayList(), asNames=new ArrayList();
+      do
+      { string name = bindings.Car as string, asName;
+        if(name!=null) asName=name;
+        else
+        { Pair pair = bindings.Car as Pair;
+          if(pair!=null)
+          { name = pair.Car as string;
+            asName = pair.Cdr as string;
+          }
+          else asName=null;
+          if(name==null || asName==null)
+            throw new ArgumentException("export list should be composed of strings and (name . asName) pairs");
+        }
+        names.Add(name);
+        asNames.Add(asName);
+        
+        bindings = bindings.Cdr as Pair;
+      } while(bindings!=null);
+
+      Import(top, (string[])names.ToArray(typeof(string)), (string[])asNames.ToArray(typeof(string)));
+    }
+  }
 }
 #endregion
 
@@ -932,6 +955,37 @@ public sealed class Ops
   // TODO: check whether we can eliminate this (ie, "(eq? #t #t)" still works reliably)
   public static object FromBool(bool value) { return value ? TRUE : FALSE; }
 
+  public static object GetDottedMember(object obj, string[] names)
+  { int i=0, len=names.Length-1;  
+    object member;
+    object[] array=null;
+
+    do
+    { MemberContainer mc = MemberContainer.FromObject(obj);
+      member = mc.GetMember(names[i]);
+      if(i==len) break;
+      else
+      { mc = member as MemberContainer;
+        while(mc!=null)
+        { obj = member;
+          member = mc.GetMember(names[++i]);
+          if(i==len) goto done;
+          mc = member as MemberContainer;
+        }
+        
+        IProcedure proc = member as IProcedure;
+        if(proc==null) throw new ApplicationException("Expected member to be a method");
+        if(array==null) array = new object[1];
+        array[0] = obj;
+        obj = proc.Call(array);
+      }
+    } while(i++ != len);
+
+    done:
+    LastPtr=obj;
+    return member;
+  }
+
   public static object GetGlobal(string name) { return TopLevel.Current.Get(name); }
   public static bool GetGlobal(string name, out object value) { return TopLevel.Current.Get(name, out value); }
 
@@ -1371,6 +1425,7 @@ public sealed class Ops
   public static readonly object FALSE=false, TRUE=true;
   public static readonly object[] EmptyArray = new object[0];
   [ThreadStatic] public static Stack ExceptionStack;
+  [ThreadStatic] public static object LastPtr; // .last
 
   static bool IsIn(Type[] typeArr, Type type)
   { for(int i=0; i<typeArr.Length; i++) if(typeArr[i]==type) return true;

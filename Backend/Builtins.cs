@@ -296,9 +296,10 @@ namespace NetLisp.Backend
 (defmacro .foreach ((name in) . body)
   (let ((e (gensym ""enum""))
         (loop (gensym ""loop"")))
-    `(let ((,e (.call ""GetEnumerator"" ,in)))
-       (while (.call ""MoveNext"" ,e)
-         (let ((,name (.get ""Current"" ,e)))
+    `(let ((,e ,in))
+       (set! ,e ((.member ,e ""GetEnumerator"") .last))
+       (while ((.member ,e ""MoveNext"") .last)
+         (let ((,name ((.member ,e ""Current"") .last)))
            ,@body)))))
 
 (defmacro delay (form)
@@ -333,123 +334,23 @@ public static void loadByName(string name) { Interop.LoadAssemblyByName(name); }
 public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name); }
 public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
-  public static Module Instance
+  public static BuiltinModule Instance
   { get
-    { if(instance==null) instance = ModuleGenerator.Generate(typeof(Builtins), true);
+    { if(instance==null) instance = ModuleGenerator.Generate(typeof(Builtins));
       return instance;
     }
   }
 
-  // TODO: add support for operators (.+ .- .*, etc)
-  // TODO: unify .get and .getf (so the user doesn't have to know whether something's a field or a property)
   #region .NET functions
-  #region MemberKey
-  struct MemberKey
-  { public MemberKey(Type type, string name) { Type=type; Name=name; }
-
-    public override bool Equals(object obj)
-    { MemberKey other = (MemberKey)obj;
-      return other.Type==Type && other.Name==Name;
-    }
-
-    public override int GetHashCode()
-    { return Type==null ? Name.GetHashCode() : Name.GetHashCode() ^ Type.GetHashCode();
-    }
-
-    public Type Type;
-    public string Name;
-  }
-  #endregion
-
-  #region .add-event
-  public sealed class dotAddEvent : Primitive
-  { public dotAddEvent() : base(".add-event", 2, 3) { }
-
-    public override object Call(object[] args)
-    { CheckArity(args);
-      object instance;
-      IProcedure handler;
-      Interop.MakeFunctionWrapper(core(name, args, out instance, out handler).GetAddMethod())
-        .Call(instance==null ? new object[1] { handler } : new object[2] { instance, handler });
-      return null;
-    }
-
-    internal static EventInfo core(string name, object[] args, out object instance, out IProcedure handler)
-    { string eventName = Ops.ExpectString(args[0]);
-      if(args.Length==2) { instance=null; handler=Ops.ExpectProcedure(args[1]); }
-      else { instance=args[1]; handler=Ops.ExpectProcedure(args[2]); }
-
-      Type type;
-      if(instance==null)
-      { int pos = eventName.LastIndexOf('.');
-        type = Type.GetType(eventName.Substring(0, pos));
-        if(type==null) throw Ops.ValueError(name+": unable to find type: "+eventName.Substring(0, pos));
-        eventName = eventName.Substring(pos+1);
-      }
-      else type = instance.GetType();
-
-      EventInfo ei = type.GetEvent(eventName);
-      if(ei==null) throw new ArgumentException("type "+type.FullName+" does not have a '"+eventName+"' event");
-      return ei;
-    }
-  }
-  #endregion
-
-  #region .call
-  public sealed class dotCall : Primitive
-  { public dotCall() : base(".call", 2, -1) { }
-
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return core(name, dotFuncs, args);
-    }
-    
-    internal static object core(string name, Hashtable hash, object[] args)
-    { object instance = args[1];
-      MemberKey key = new MemberKey(instance==null ? null : instance.GetType(), Ops.ExpectString(args[0]));
-      FunctionWrapper[] funcs;
-      lock(hash) funcs = (FunctionWrapper[])hash[key];
-      if(funcs==null)
-      { Type type;
-        string funcName = key.Name;
-
-        if(instance==null)
-        { int pos = funcName.LastIndexOf('.');
-          type = Type.GetType(funcName.Substring(0, pos));
-          if(type==null) throw Ops.ValueError(name+": unable to find type: "+funcName.Substring(0, pos));
-          funcName = funcName.Substring(pos+1);
-        }
-        else type = key.Type;
-
-        if(hash==dotFuncs) funcs = Interop.GetFunctions(type, funcName, instance==null);
-        else if(hash==dotPgets) funcs = Interop.GetPropertyGetters(type, funcName, instance==null);
-        else if(hash==dotPsets) funcs = Interop.GetPropertySetters(type, funcName, instance==null);
-        else throw new NotImplementedException("unhandled hash");
-
-        lock(hash) hash[key] = funcs;
-      }
-
-      object[] nargs;
-      { int offset = instance==null ? 2 : 1;
-        if(args.Length==offset) nargs = Ops.EmptyArray;
-        else
-        { nargs = new object[args.Length-offset];
-          Array.Copy(args, offset, nargs, 0, nargs.Length);
-        }
-      }
-
-      return Interop.Call(funcs, nargs);
-    }
-  }
-  #endregion
-
   #region .collect
   public sealed class dotCollect : Primitive
   { public dotCollect() : base(".collect", 1, 1) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      IEnumerator e = Ops.ExpectEnumerator(args[0]);
-      if(!e.MoveNext()) return null;
+      return core(Ops.ExpectEnumerator(args[0]));
+    }
+    internal static Pair core(IEnumerator e)
+    { if(!e.MoveNext()) return null;
       Pair head=new Pair(e.Current, null), tail=head;
       while(e.MoveNext())
       { Pair next = new Pair(e.Current, null);
@@ -461,45 +362,12 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
   
-  #region .get
-  public sealed class dotGet : Primitive
-  { public dotGet() : base(".get", 2, -1) { }
-
+  #region .disambiguate
+  public sealed class dotDisambiguate : Primitive
+  { public dotDisambiguate() : base(".disambiguate", 2, 2) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      return dotCall.core(name, dotPgets, args);
-    }
-  }
-  #endregion
-
-  #region .getf
-  public sealed class dotGetf : Primitive
-  { public dotGetf() : base(".getf", 1, 2) { }
-
-    public override object Call(object[] args)
-    { CheckArity(args);
-      object instance = args.Length==2 ? args[1] : null;
-      return core(name, instance, Ops.ExpectString(args[0])).GetValue(instance);
-    }
-    
-    internal static FieldInfo core(string name, object instance, string fieldName)
-    { MemberKey key = new MemberKey(instance==null ? null : instance.GetType(), fieldName);
-      FieldInfo fi;
-      lock(dotFields) fi = (FieldInfo)dotFields[key];
-      if(fi==null)
-      { Type type;
-        if(instance==null)
-        { int pos = fieldName.LastIndexOf('.');
-          type = Type.GetType(fieldName.Substring(0, pos));
-          if(type==null) throw Ops.ValueError(name+": unable to find type: "+fieldName.Substring(0, pos));
-          fieldName = fieldName.Substring(pos+1);
-        }
-        else type = key.Type;
-        fi = type.GetField(fieldName);
-        if(fi==null) throw new ArgumentException("type "+type.FullName+" does not have a '"+fieldName+"' field");
-        lock(dotFields) dotFields[key] = fi;
-      }
-      return fi;
+      return new Disambiguator(Ops.ExpectType(args[0]), args[1]);
     }
   }
   #endregion
@@ -547,72 +415,39 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  #region .new
-  public sealed class dotNew : Primitive
-  { public dotNew() : base(".new", 1, -1) { }
-
+  #region .member
+  public sealed class dotMember : Primitive
+  { public dotMember() : base(".member", 2, 2) { }
     public override object Call(object[] args)
     { CheckArity(args);
-
-      string name = Ops.ExpectString(args[0]);
-      FunctionWrapper[] funcs;
-      lock(dotNews) funcs = (FunctionWrapper[])dotNews[name];
-      if(funcs==null)
-      { Type type = Type.GetType(name);
-        if(type==null) throw Ops.ValueError(this.name+": unable to find type: "+name);
-        funcs = Interop.GetConstructors(type);
-        lock(funcs) dotNews[name] = funcs;
-      }
-
-      object[] nargs;
-      if(args.Length==1) nargs = Ops.EmptyArray;
-      else
-      { nargs = new object[args.Length-1];
-        Array.Copy(args, 1, nargs, 0, nargs.Length);
-      }
-
-      return Interop.Call(funcs, nargs);
+      string name = Ops.ExpectString(args[1]);
+      int pos = name.IndexOf('.');
+      return pos==-1 ? ReflectedType.FromObject(args[0]).GetMember(name)
+                     : Ops.GetDottedMember(args[0], name.Split('.'));
     }
   }
   #endregion
 
-  #region .remove-event
-  public sealed class dotRemoveEvent : Primitive
-  { public dotRemoveEvent() : base(".remove-event", 2, 3) { }
-
+  #region .members
+  public sealed class dotMembers : Primitive
+  { public dotMembers() : base(".members", 1, 1) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      object instance;
-      IProcedure handler;
-      Interop.MakeFunctionWrapper(dotAddEvent.core(name, args, out instance, out handler).GetRemoveMethod())
-        .Call(instance==null ? new object[1] { handler } : new object[2] { instance, handler });
-      return null;
+      return dotCollect.core(dotTypeOf.core(args[0]).GetMemberNames().GetEnumerator());
     }
   }
   #endregion
 
-  #region .set
-  public sealed class dotSet : Primitive
-  { public dotSet() : base(".set", 2, -1) { }
-
+  #region .type-of
+  public sealed class dotTypeOf : Primitive
+  { public dotTypeOf() : base(".type-of", 1, 1) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      return dotCall.core(name, dotPsets, args);
+      return core(args[0]);
     }
-  }
-  #endregion
 
-  #region .setf
-  public sealed class dotSetf : Primitive
-  { public dotSetf() : base(".setf", 2, 3) { }
-
-    public override object Call(object[] args)
-    { CheckArity(args);
-      object instance, value;
-      if(args.Length==2) { instance=null; value=args[1]; }
-      else { instance=args[1]; value=args[2]; }
-      dotGetf.core(name, instance, Ops.ExpectString(args[0])).SetValue(instance, value);
-      return value;
+    internal static ReflectedType core(object obj)
+    { return obj==null ? ReflectedType.NullType : ReflectedType.FromType(obj.GetType());
     }
   }
   #endregion
@@ -3891,7 +3726,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   
   [SymbolName("#%import-module")]
   public static void _importModule(object module)
-  { Importer.GetModule(module).ImportAll(TopLevel.Current);
+  { Importer.GetModule(module).Import(TopLevel.Current);
   }
 
   #region not
@@ -3930,7 +3765,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   static Hashtable dotFuncs=new Hashtable(), dotPgets=new Hashtable(), dotPsets=new Hashtable(),
                    dotFields=new Hashtable(), dotNews=new Hashtable();
   static Index gensyms = new Index();
-  static Module instance;
+  static BuiltinModule instance;
 }
 
 } // namespace NetLisp.Backend

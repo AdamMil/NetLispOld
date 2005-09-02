@@ -28,12 +28,20 @@ using System.Reflection.Emit;
 namespace NetLisp.Backend
 {
 
+public abstract class BuiltinModule : LispModule
+{ public BuiltinModule(Type type, bool importBuiltins) : base(type.FullName)
+  { if(importBuiltins) Builtins.Instance.Import(TopLevel);
+    ReflectedType.FromType(type).Import(TopLevel);
+  }
+}
+
 public sealed class ModuleGenerator
 { ModuleGenerator() { }
 
   // TODO: this is only a temporary solution. replace it with a better one
-  public static string CachePath = "dllcache/";
+  public static string CachePath = "c:/dllcache/";
 
+  /*
   #region Generate from a ModuleNode
   public static Module Generate(ModuleNode mod)
   { TypeGenerator tg = SnippetMaker.Assembly.DefineType("module"+index.Next+"$"+mod.Name, typeof(Module));
@@ -77,11 +85,13 @@ public sealed class ModuleGenerator
     return (Module)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
   }
   #endregion
+  */
 
   #region Generate from builtin type
-  public static BuiltinModule Generate(Type type) { return Generate(type, false); }
+  public static BuiltinModule Generate(Type type) { return Generate(type, type==typeof(Builtins)); }
   public static BuiltinModule Generate(Type type, bool parseOneByOne)
-  { string filename = CachePath+type.FullName.Replace('+', '.')+".dll";
+  { // TODO: come up with a better naming scheme (replacing '+' with '.' can create collisions)
+    string filename = CachePath+type.FullName.Replace('+', '.')+".dll";
     #if !DEBUG
     if(File.Exists(filename))
       try
@@ -93,56 +103,42 @@ public sealed class ModuleGenerator
       catch { }
     #endif
 
-    // TODO: come up with a better naming scheme (replacing '+' with '.' can create collisions)
     AssemblyGenerator ag = new AssemblyGenerator(type.FullName, filename);
     TopLevel oldTL = TopLevel.Current;
     bool debug=Options.Debug, optimize=Options.Optimize;
     try
     { TopLevel.Current = new TopLevel();
       Options.Debug=false; Options.Optimize=true;
-      if(type!=typeof(Builtins)) Builtins.Instance.ImportAll(TopLevel.Current);
-      TopLevel.Current.AddBuiltins(type);
+      if(type!=typeof(Builtins)) Builtins.Instance.Import(TopLevel.Current);
+      ReflectedType.FromType(type).Import(TopLevel.Current);
 
       TypeGenerator tg = ag.DefineType("module", typeof(BuiltinModule));
-      Slot topslot = tg.DefineStaticField(FieldAttributes.Private, "topLevel", typeof(TopLevel));
-
-      CodeGenerator cg = tg.GetInitializer();
-      cg.Namespace = new TopLevelNamespace(cg, topslot);
-      if(type==typeof(Builtins))
-      { cg.EmitNew(typeof(TopLevel));
-        topslot.EmitSet(cg);
-      }
-      else
-      { cg.EmitPropGet(typeof(Builtins), "Instance");
-        cg.EmitNew(typeof(TopLevel));
-        cg.ILG.Emit(OpCodes.Dup);
-        topslot.EmitSet(cg);
-        cg.EmitCall(typeof(Module), "ImportAll");
-      }
+      CodeGenerator cg;
 
       MethodInfo run;
       object[] attrs = type.GetCustomAttributes(typeof(LispCodeAttribute), false);
       if(attrs.Length==0) run=null;
       else
       { cg = tg.DefineStaticMethod(MethodAttributes.Private, "Run", typeof(void),
-                                   new Type[] { typeof(LocalEnvironment) });
-        Slot tmp = cg.AllocLocalTemp(typeof(TopLevel));
+                                   new Type[] { typeof(LocalEnvironment), typeof(TopLevel) });
+        Slot tmp=cg.AllocLocalTemp(typeof(TopLevel));
+        Slot topSlot=new ArgSlot((MethodBuilder)cg.MethodBase, 1, "topLevel", typeof(TopLevel));
         cg.EmitFieldGet(typeof(TopLevel), "Current");
         tmp.EmitSet(cg);
         cg.ILG.BeginExceptionBlock();
-        topslot.EmitGet(cg);
+        topSlot.EmitGet(cg);
         cg.EmitFieldSet(typeof(TopLevel), "Current");
 
         Parser parser = Parser.FromString(((LispCodeAttribute)attrs[0]).Code);
         if(!parseOneByOne)
         { LambdaNode node = AST.Create(Ops.Call("expand", parser.Parse()));
-          cg.SetupNamespace(node.MaxNames, topslot);
+          cg.SetupNamespace(node.MaxNames, topSlot);
           SnippetMaker.Generate(node).Run(null);
           node.Body.MarkTail(false);
           node.Body.EmitVoid(cg);
         }
         else
-        { cg.Namespace = new LocalNamespace(new TopLevelNamespace(cg, topslot), cg);
+        { cg.Namespace = new LocalNamespace(new TopLevelNamespace(cg, topSlot), cg);
           int lastMax = 0;
           while(true)
           { object obj = Ops.Call("expand", parser.ParseOne());
@@ -177,15 +173,14 @@ public sealed class ModuleGenerator
       cg = tg.DefineConstructor(Type.EmptyTypes);
       cg.EmitThis();
       cg.EmitTypeOf(type);
-      topslot.EmitGet(cg);
-      cg.EmitCall(typeof(BuiltinModule).GetConstructor(new Type[] { typeof(Type), typeof(TopLevel) }));
+      cg.EmitBool(run!=null && type!=typeof(Builtins));
+      cg.EmitCall(typeof(BuiltinModule).GetConstructor(new Type[] { typeof(Type), typeof(bool) }));
       if(run!=null)
       { cg.ILG.Emit(OpCodes.Ldnull);
+        cg.EmitThis();
+        cg.EmitFieldGet(typeof(LispModule), "TopLevel");
         cg.EmitCall(run);
       }
-      cg.EmitThis();
-      EmitExports(cg, TopLevel.Current.CreateExports());
-      cg.EmitFieldSet(typeof(Module), "Exports");
       cg.EmitReturn();
       cg.Finish();
 
@@ -206,7 +201,7 @@ public sealed class ModuleGenerator
     SnippetMaker.Assembly = ag;
 
     TopLevel.Current = new TopLevel();
-    Builtins.Instance.ImportAll(TopLevel.Current);
+    Builtins.Instance.Import(TopLevel.Current);
 
     TypeGenerator tg = ag.DefineType(TypeAttributes.Public|TypeAttributes.Sealed, name);
 
@@ -240,30 +235,6 @@ public sealed class ModuleGenerator
   }
   #endregion
   
-  #region EmitExports
-  static void EmitExports(CodeGenerator cg, Module.Export[] exports)
-  { ConstructorInfo sci=typeof(Module.Export).GetConstructor(new Type[] { typeof(string) }),
-                   ssci=typeof(Module.Export).GetConstructor(new Type[] { typeof(string), typeof(string) }),
-                   snci=typeof(Module.Export).GetConstructor(new Type[] { typeof(string), typeof(TopLevel.NS) }),
-                  ssnci=typeof(Module.Export).GetConstructor(new Type[] { typeof(string), typeof(string), typeof(TopLevel.NS) });
-    cg.EmitNewArray(typeof(Module.Export), exports.Length);
-    for(int i=0; i<exports.Length; i++)
-    { Module.Export e = exports[i];
-      cg.ILG.Emit(OpCodes.Dup);
-      cg.EmitInt(i);
-      cg.ILG.Emit(OpCodes.Ldelema, typeof(Module.Export));
-      cg.EmitString(e.Name);
-      if(e.Name!=e.AsName) cg.EmitString(e.AsName);
-      if(e.NS==TopLevel.NS.Main) cg.EmitNew(e.Name==e.AsName ? sci : ssci);
-      else
-      { cg.EmitInt((int)e.NS);
-        cg.EmitNew(e.Name==e.AsName ? snci : ssnci);
-      }
-      cg.ILG.Emit(OpCodes.Stobj, typeof(Module.Export));
-    }
-  }
-  #endregion
-
   static Index index = new Index();
 }
 
