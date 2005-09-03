@@ -39,7 +39,7 @@ public sealed class ModuleGenerator
 { ModuleGenerator() { }
 
   // TODO: this is only a temporary solution. replace it with a better one
-  public static string CachePath = "c:/dllcache/";
+  public static string CachePath = "dllcache/";
 
   /*
   #region Generate from a ModuleNode
@@ -88,9 +88,12 @@ public sealed class ModuleGenerator
   */
 
   #region Generate from builtin type
-  public static BuiltinModule Generate(Type type) { return Generate(type, type==typeof(Builtins)); }
-  public static BuiltinModule Generate(Type type, bool parseOneByOne)
-  { // TODO: come up with a better naming scheme (replacing '+' with '.' can create collisions)
+  public static MemberContainer Generate(Type type) { return Generate(type, type==typeof(Builtins)); }
+  public static MemberContainer Generate(Type type, bool parseOneByOne)
+  { object[] attrs = type.GetCustomAttributes(typeof(LispCodeAttribute), false);
+    if(attrs.Length==0) return ReflectedType.FromType(type);
+
+    // TODO: come up with a better naming scheme (replacing '+' with '.' can create collisions)
     string filename = CachePath+type.FullName.Replace('+', '.')+".dll";
     #if !DEBUG
     if(File.Exists(filename))
@@ -115,60 +118,55 @@ public sealed class ModuleGenerator
       TypeGenerator tg = ag.DefineType("module", typeof(BuiltinModule));
       CodeGenerator cg;
 
-      MethodInfo run;
-      object[] attrs = type.GetCustomAttributes(typeof(LispCodeAttribute), false);
-      if(attrs.Length==0) run=null;
-      else
-      { cg = tg.DefineStaticMethod(MethodAttributes.Private, "Run", typeof(void),
-                                   new Type[] { typeof(LocalEnvironment), typeof(TopLevel) });
-        Slot tmp=cg.AllocLocalTemp(typeof(TopLevel));
-        Slot topSlot=new ArgSlot((MethodBuilder)cg.MethodBase, 1, "topLevel", typeof(TopLevel));
-        cg.EmitFieldGet(typeof(TopLevel), "Current");
-        tmp.EmitSet(cg);
-        cg.ILG.BeginExceptionBlock();
-        topSlot.EmitGet(cg);
-        cg.EmitFieldSet(typeof(TopLevel), "Current");
+      cg = tg.DefineStaticMethod(MethodAttributes.Private, "Run", typeof(void),
+                                  new Type[] { typeof(LocalEnvironment), typeof(TopLevel) });
+      Slot tmp=cg.AllocLocalTemp(typeof(TopLevel));
+      Slot topSlot=new ArgSlot((MethodBuilder)cg.MethodBase, 1, "topLevel", typeof(TopLevel));
+      cg.EmitFieldGet(typeof(TopLevel), "Current");
+      tmp.EmitSet(cg);
+      cg.ILG.BeginExceptionBlock();
+      topSlot.EmitGet(cg);
+      cg.EmitFieldSet(typeof(TopLevel), "Current");
 
-        Parser parser = Parser.FromString(((LispCodeAttribute)attrs[0]).Code);
-        if(!parseOneByOne)
-        { LambdaNode node = AST.Create(Ops.Call("expand", parser.Parse()));
-          cg.SetupNamespace(node.MaxNames, topSlot);
+      Parser parser = Parser.FromString(((LispCodeAttribute)attrs[0]).Code);
+      if(!parseOneByOne)
+      { LambdaNode node = AST.Create(Ops.Call("expand", parser.Parse()));
+        cg.SetupNamespace(node.MaxNames, topSlot);
+        SnippetMaker.Generate(node).Run(null);
+        node.Body.MarkTail(false);
+        node.Body.EmitVoid(cg);
+      }
+      else
+      { cg.Namespace = new LocalNamespace(new TopLevelNamespace(cg, topSlot), cg);
+        int lastMax = 0;
+        while(true)
+        { object obj = Ops.Call("expand", parser.ParseOne());
+          if(obj==Parser.EOF) break;
+          LambdaNode node = AST.Create(obj);
+          if(node.MaxNames!=lastMax)
+          { if(node.MaxNames==0) cg.ILG.Emit(OpCodes.Ldnull);
+            else
+            { cg.EmitArgGet(0);
+              cg.EmitInt(node.MaxNames);
+              cg.EmitNew(typeof(LocalEnvironment), new Type[] { typeof(LocalEnvironment), typeof(int) });
+            }
+            cg.EmitArgSet(0);
+            lastMax = node.MaxNames;
+          }
           SnippetMaker.Generate(node).Run(null);
           node.Body.MarkTail(false);
           node.Body.EmitVoid(cg);
         }
-        else
-        { cg.Namespace = new LocalNamespace(new TopLevelNamespace(cg, topSlot), cg);
-          int lastMax = 0;
-          while(true)
-          { object obj = Ops.Call("expand", parser.ParseOne());
-            if(obj==Parser.EOF) break;
-            LambdaNode node = AST.Create(obj);
-            if(node.MaxNames!=lastMax)
-            { if(node.MaxNames==0) cg.ILG.Emit(OpCodes.Ldnull);
-              else
-              { cg.EmitArgGet(0);
-                cg.EmitInt(node.MaxNames);
-                cg.EmitNew(typeof(LocalEnvironment), new Type[] { typeof(LocalEnvironment), typeof(int) });
-              }
-              cg.EmitArgSet(0);
-              lastMax = node.MaxNames;
-            }
-            SnippetMaker.Generate(node).Run(null);
-            node.Body.MarkTail(false);
-            node.Body.EmitVoid(cg);
-          }
-        }
-        cg.ILG.BeginFinallyBlock();
-        tmp.EmitGet(cg);
-        cg.EmitFieldSet(typeof(TopLevel), "Current");
-        cg.ILG.EndExceptionBlock();
-        cg.EmitReturn();
-        cg.FreeLocalTemp(tmp);
-        cg.Finish();
-
-        run = (MethodInfo)cg.MethodBase;
       }
+      cg.ILG.BeginFinallyBlock();
+      tmp.EmitGet(cg);
+      cg.EmitFieldSet(typeof(TopLevel), "Current");
+      cg.ILG.EndExceptionBlock();
+      cg.EmitReturn();
+      cg.FreeLocalTemp(tmp);
+      cg.Finish();
+
+      MethodInfo run = (MethodInfo)cg.MethodBase;
 
       cg = tg.DefineConstructor(Type.EmptyTypes);
       cg.EmitThis();
@@ -187,7 +185,7 @@ public sealed class ModuleGenerator
       type = tg.FinishType();
       try { ag.Save(); } catch { }
 
-      return (BuiltinModule)type.GetConstructor(Type.EmptyTypes).Invoke(null);
+      return (MemberContainer)type.GetConstructor(Type.EmptyTypes).Invoke(null);
     }
     finally { TopLevel.Current=oldTL; Options.Debug=debug; Options.Optimize=optimize; }
   }
