@@ -955,39 +955,16 @@ public sealed class Ops
   // TODO: check whether we can eliminate this (ie, "(eq? #t #t)" still works reliably)
   public static object FromBool(bool value) { return value ? TRUE : FALSE; }
 
-  public static object GetDottedMember(object obj, string[] names)
-  { int i=0, len=names.Length-1;  
-    object member;
-    object[] array=null;
-
-    do
-    { MemberContainer mc = MemberContainer.FromObject(obj);
-      member = mc.GetMember(names[i]);
-      if(i==len) break;
-      else
-      { mc = member as MemberContainer;
-        while(mc!=null)
-        { obj = member;
-          member = mc.GetMember(names[++i]);
-          if(i==len) goto done;
-          mc = member as MemberContainer;
-        }
-        
-        IProcedure proc = member as IProcedure;
-        if(proc==null) throw new ApplicationException("Expected member to be a method");
-        if(array==null) array = new object[1];
-        array[0] = obj;
-        obj = proc.Call(array);
-      }
-    } while(i++ != len);
-
-    done:
-    LastPtr=obj;
-    return member;
-  }
-
   public static object GetGlobal(string name) { return TopLevel.Current.Get(name); }
   public static bool GetGlobal(string name, out object value) { return TopLevel.Current.Get(name, out value); }
+
+  public static object GetMember(object obj, string dottedName)
+  { foreach(string bit in dottedName.Split('.'))
+    { LastPtr = obj;
+      obj = MemberContainer.FromObject(obj).GetMember(bit);
+    }
+    return obj;
+  }
 
   public static bool IsTrue(object obj) { return obj!=null && (!(obj is bool) || (bool)obj); }
 

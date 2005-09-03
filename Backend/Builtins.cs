@@ -295,11 +295,14 @@ namespace NetLisp.Backend
 
 (defmacro .foreach ((name in) . body)
   (let ((e (gensym ""enum""))
+        (mn (gensym ""move""))
+        (cv (gensym ""cur""))
         (loop (gensym ""loop"")))
-    `(let ((,e ,in))
-       (set! ,e ((.member ,e ""GetEnumerator"") .last))
-       (while ((.member ,e ""MoveNext"") .last)
-         (let ((,name ((.member ,e ""Current"") .last)))
+    `(let* ((,e (unquote in){GetEnumerator})
+            (,mn (.member ,e ""MoveNext""))
+            (,cv (.member ,e ""Current"")))
+       (while (,mn ,e)
+         (let ((,name (,cv ,e)))
            ,@body)))))
 
 (defmacro delay (form)
@@ -334,9 +337,9 @@ public static void loadByName(string name) { Interop.LoadAssemblyByName(name); }
 public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name); }
 public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
-  public static BuiltinModule Instance
+  public static MemberContainer Instance
   { get
-    { if(instance==null) instance = ModuleGenerator.Generate(typeof(Builtins));
+    { if(instance==null) instance = Importer.GetModule(typeof(Builtins));
       return instance;
     }
   }
@@ -420,10 +423,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   { public dotMember() : base(".member", 2, 2) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      string name = Ops.ExpectString(args[1]);
-      int pos = name.IndexOf('.');
-      return pos==-1 ? ReflectedType.FromObject(args[0]).GetMember(name)
-                     : Ops.GetDottedMember(args[0], name.Split('.'));
+      return Ops.GetMember(args[0], Ops.ExpectString(args[1]));
     }
   }
   #endregion
@@ -433,7 +433,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   { public dotMembers() : base(".members", 1, 1) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      return dotCollect.core(dotTypeOf.core(args[0]).GetMemberNames().GetEnumerator());
+      return dotCollect.core(ReflectedType.FromObject(args[0]).GetMemberNames().GetEnumerator());
     }
   }
   #endregion
@@ -443,11 +443,8 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   { public dotTypeOf() : base(".type-of", 1, 1) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      return core(args[0]);
-    }
-
-    internal static ReflectedType core(object obj)
-    { return obj==null ? ReflectedType.NullType : ReflectedType.FromType(obj.GetType());
+      object obj = args[0];
+      return obj==null ? ReflectedType.NullType : ReflectedType.FromType(obj.GetType());
     }
   }
   #endregion
@@ -3765,7 +3762,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   static Hashtable dotFuncs=new Hashtable(), dotPgets=new Hashtable(), dotPsets=new Hashtable(),
                    dotFields=new Hashtable(), dotNews=new Hashtable();
   static Index gensyms = new Index();
-  static BuiltinModule instance;
+  static MemberContainer instance;
 }
 
 } // namespace NetLisp.Backend

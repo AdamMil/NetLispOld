@@ -28,7 +28,10 @@ using System.Text.RegularExpressions;
 namespace NetLisp.Backend
 {
 
-public enum Token { None, EOF, Literal, Symbol, Vector, LParen, RParen, Quote, BackQuote, Comma, Splice, Period }
+public enum Token
+{ None, EOF, Literal, Symbol, Vector, Splice,
+  LParen, RParen, LBracket, RBracket, LCurly, RCurly, Quote, BackQuote, Comma, Period
+}
 
 public sealed class Parser
 { public Parser(Stream data) : this("<unknown>", data) { }
@@ -63,9 +66,11 @@ public sealed class Parser
   }
 
   public object ParseOne()
-  { switch(token)
-    { case Token.LParen:
-        if(NextToken()==Token.RParen) { NextToken(); return null; }
+  { object ret;
+    switch(token)
+    { case Token.LParen: case Token.LBracket:
+      { Token end = token==Token.LParen ? Token.RParen : Token.RBracket;
+        if(NextToken()==end) { NextToken(); ret=null; }
         else
         { ArrayList items = new ArrayList();
           object dot = null;
@@ -73,36 +78,56 @@ public sealed class Parser
           { items.Add(ParseOne());
             if(TryEat(Token.Period)) { dot=ParseOne(); break; }
           }
-          while(token!=Token.RParen && token!=Token.EOF);
+          while(token!=end && token!=Token.EOF);
           if(items.Count==0 && dot!=null) throw SyntaxError("malformed dotted list");
-          Eat(Token.RParen);
-          return Ops.DottedList(dot, (object[])items.ToArray(typeof(object)));
+          Eat(end);
+          ret = Ops.DottedList(dot, (object[])items.ToArray(typeof(object)));
         }
+        break;
+      }
       case Token.Symbol:
       { object val=value;
         NextToken();
-        return Symbol.Get((string)val);
+        ret = Symbol.Get((string)val);
+        break;
       }
       case Token.Literal:
-      { object val=value;
+      { ret = value;
         NextToken();
-        return val;
+        break;
       }
-      case Token.BackQuote: NextToken(); return Ops.List(quasiSym, ParseOne());
-      case Token.Comma: NextToken(); return Ops.List(unquoteSym, ParseOne());
-      case Token.Quote: NextToken(); return Ops.List(quoteSym, ParseOne());
-      case Token.Splice: NextToken(); return Ops.List(spliceSym, ParseOne());
+      case Token.BackQuote: NextToken(); ret = Ops.List(quasiSym, ParseOne()); break;
+      case Token.Comma: NextToken(); ret = Ops.List(unquoteSym, ParseOne()); break;
+      case Token.Quote: NextToken(); ret = Ops.List(quoteSym, ParseOne()); break;
+      case Token.Splice: NextToken(); ret = Ops.List(spliceSym, ParseOne()); break;
       case Token.Vector:
       { ArrayList items = new ArrayList();
         NextToken();
         while(!TryEat(Token.RParen)) items.Add(ParseOne());
-        return Ops.List2(vectorSym, (object[])items.ToArray(typeof(object)));
+        ret = Ops.List2(vectorSym, (object[])items.ToArray(typeof(object)));
+        break;
       }
       case Token.EOF: return EOF;
       default: throw SyntaxError("unexpected token: "+token);
     }
+    
+    while(token==Token.LCurly) // obj{Prop a0 a1 ...} -> ((.member obj "Prop") .last a0 a1 ...)
+    { NextToken();
+      Expect(Token.Symbol);
+
+      Pair tail = new Pair(dotLastSym, null);
+      ret = new Pair(new Pair(memberSym, new Pair(ret, new Pair((string)value, null))), tail);
+
+      NextToken();
+      while(token!=Token.RCurly)
+      { Pair next = new Pair(ParseOne(), null);
+        tail.Cdr=next; tail=next;
+      }
+      NextToken();
+    }
+    return ret;
   }
-  
+
   public static object ParseNumber(string str, int radix) { return ParseNum(str, "", radix, '\0'); }
 
   public static readonly object EOF = new Singleton("<EOF>");
@@ -351,6 +376,10 @@ public sealed class Parser
         }
         case '(': return Token.LParen;
         case ')': return Token.RParen;
+        case '[': return Token.LBracket;
+        case ']': return Token.RBracket;
+        case '{': return Token.LCurly;
+        case '}': return Token.RCurly;
         case '\'': return Token.Quote;
         case '\0': return Token.EOF;
         case ';': while((c=ReadChar())!='\n' && c!=0); break;
@@ -392,7 +421,15 @@ public sealed class Parser
   int    line=1, column=1, pos;
   char   lastChar;
 
-  static bool IsDelimiter(char c) { return char.IsWhiteSpace(c) || c=='(' || c==')' || c=='#' || c=='`' || c==',' || c=='\'' || c=='\0'; }
+  static bool IsDelimiter(char c)
+  { if(char.IsWhiteSpace(c)) return true;
+    switch(c)
+    { case '(': case ')': case '[': case ']': case '{': case '}':
+      case '#': case '`': case ',': case '\'': case'\0':
+        return true;
+      default: return false;
+    }
+  }
 
   static object ParseInt(string str, int radix)
   { if(str=="") return 0;
@@ -434,7 +471,8 @@ public sealed class Parser
 
   static readonly Symbol quoteSym=Symbol.Get("quote"), unquoteSym=Symbol.Get("unquote"),
                          spliceSym=Symbol.Get("unquote-splicing"), quasiSym=Symbol.Get("quasiquote"),
-                         vectorSym=Symbol.Get("vector");
+                         vectorSym=Symbol.Get("vector"), memberSym=Symbol.Get(".member"),
+                         dotLastSym=Symbol.Get(".last");
 
   static readonly Regex binNum =
     new Regex(@"^(:?(?<num>[+-]?(?:[01]+(?:\.[01]*)?|\.[01]+))(?:e(?<exp>[+-]?(?:[01]+(?:\.[01]*)?|\.[01]+)))?

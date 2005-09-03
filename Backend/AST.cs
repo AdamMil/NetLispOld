@@ -560,38 +560,28 @@ public sealed class AccessNode : Node
     if(Members.IsConstant)
     { object obj = Members.Evaluate();
       if(!(obj is string)) throw new SyntaxErrorException("(.member) expects a string value as the second argument");
-      string[] bits = ((string)obj).Split('.');
 
-      if(bits.Length==1)
-      { if(etype==typeof(IProcedure))
+      string[] bits = ((string)obj).Split('.');
+      for(int i=0; i<bits.Length; i++)
+      { if(i==bits.Length-1)
         { cg.ILG.Emit(OpCodes.Dup);
           cg.EmitFieldSet(typeof(Ops), "LastPtr");
         }
         cg.EmitCall(typeof(MemberContainer), "FromObject");
-        cg.EmitString(bits[0]);
+        cg.EmitString(bits[i]);
         cg.EmitCall(typeof(MemberContainer), "GetMember", new Type[] { typeof(string) });
-      }
-      else
-      { cg.EmitConstantObject(bits);
-        cg.EmitCall(typeof(Ops), "GetDottedMember");
       }
     }
     else
     { cg.EmitTypedNode(Members, typeof(string));
-      cg.EmitNewArray(typeof(char), 1);
-      cg.ILG.Emit(OpCodes.Dup);
-      cg.EmitInt(0);
-      cg.EmitChar('.');
-      cg.EmitArrayStore(typeof(char));
-      cg.EmitCall(typeof(string), "Split", new Type[] { typeof(char[]) });
-      cg.EmitCall(typeof(Ops), "GetDottedMember");
+      cg.EmitCall(typeof(Ops), "GetMember");
     }
     etype = typeof(object);
     TailReturn(cg);
   }
 
   public override object Evaluate()
-  { return Ops.GetDottedMember(Value.Evaluate(), Ops.ExpectString(Members.Evaluate()).Split('.'));
+  { return Ops.GetMember(Value.Evaluate(), Ops.ExpectString(Members.Evaluate()));
   }
 
   public override Type GetNodeType() { return typeof(object); }
@@ -968,7 +958,8 @@ public sealed class CallNode : Node
   
   #region Evaluate
   public override object Evaluate()
-  { object[] a = MakeObjectArray(Args);
+  { IProcedure proc = Ops.ExpectProcedure(Function.Evaluate()); // this is up here to keep the same evaluation order
+    object[] a = MakeObjectArray(Args);
 
     if(IsConstant)
     { string name = ((VariableNode)Function).Name.String;
@@ -1103,7 +1094,6 @@ public sealed class CallNode : Node
       }
     }
     
-    IProcedure proc = Ops.ExpectProcedure(Function.Evaluate());
     return proc.Call(a);
   }
   #endregion

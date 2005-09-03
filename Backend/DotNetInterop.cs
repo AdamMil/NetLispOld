@@ -264,8 +264,8 @@ public sealed class ReflectedType : MemberContainer
 
   public static readonly ReflectedType NullType = new ReflectedType(null);
 
-  sealed class Overloads
-  { public Overloads(Type type) { List=new ArrayList(); Type=type; }
+  sealed class Methods
+  { public Methods(Type type) { List=new ArrayList(); Type=type; }
     public ArrayList List;
     public Type Type;
   }
@@ -276,6 +276,18 @@ public sealed class ReflectedType : MemberContainer
     public Type Type;
   }
 
+  struct Event
+  { public Event(EventInfo ei)
+    { DeclaringType=ei.DeclaringType; Name=GetMemberName(ei); Add=ei.GetAddMethod(); Rem=ei.GetRemoveMethod();
+    }
+    public Event(Type type, string name, MethodInfo add, MethodInfo rem)
+    { DeclaringType=type; Name=name; Add=add; Rem=rem;
+    }
+    public Type DeclaringType;
+    public string Name;
+    public MethodInfo Add, Rem;
+  }
+
   #region Initialize
   void Initialize()
   { dict = new Hashtable();
@@ -283,6 +295,8 @@ public sealed class ReflectedType : MemberContainer
 
     // TODO: handle certain types specially? eg, delegates and enums?
     // TODO: add [] for arrays
+    // TODO: add the values for the names more lazily, if possible
+    // TODO: speed this up!
 
     if(!Type.IsPrimitive) // add constructors
     { ConstructorInfo[] ci = Type.GetConstructors();
@@ -292,22 +306,35 @@ public sealed class ReflectedType : MemberContainer
                             : needDefault ? MakeStructCreator(Type) : MakeFunctionWrapper(ci[0]);
     }
 
-    // TODO: handle shadowed interface members (events[?], properties, methods)
+    Type[] interfaces = Type.GetInterfaces();
+    InterfaceMapping[] maps = new InterfaceMapping[interfaces.Length];
+    for(int i=0; i<interfaces.Length; i++) maps[i] = Type.GetInterfaceMap(interfaces[i]);
 
-    foreach(EventInfo ei in Type.GetEvents()) // add events
-    { string name=GetMemberName(ei), add="add/"+name, rem="rem/"+name;
-      if(ei.DeclaringType!=Type)
-      { IDictionary dec = FromType(ei.DeclaringType).Dict;
+    // add events
+    ArrayList events = new ArrayList();
+    foreach(EventInfo ei in Type.GetEvents()) events.Add(new Event(ei));
+    for(int i=0; i<interfaces.Length; i++)
+      foreach(EventInfo ei in interfaces[i].GetEvents())
+      { MethodInfo mi = FindMethod(maps[i], ei.GetAddMethod());
+        if(!mi.IsPublic)
+          events.Add(new Event(ei.DeclaringType, GetMemberName(ei), mi, FindMethod(maps[i], ei.GetRemoveMethod())));
+      }
+    foreach(Event e in events)
+    { string add="add/"+e.Name, rem="rem/"+e.Name;
+      if(e.DeclaringType!=Type)
+      { IDictionary dec = FromType(e.DeclaringType).Dict;
         dict[add] = dec[add];
         dict[rem] = dec[rem];
       }
       else
-      { dict[add] = MakeFunctionWrapper(ei.GetAddMethod());
-        dict[rem] = MakeFunctionWrapper(ei.GetRemoveMethod());
+      { dict[add] = MakeFunctionWrapper(e.Add);
+        dict[rem] = MakeFunctionWrapper(e.Rem);
       }
     }
+    events = null;
 
-    foreach(FieldInfo fi in Type.GetFields()) // add fields
+    // add fields
+    foreach(FieldInfo fi in Type.GetFields())
     { string name=GetMemberName(fi), get=name, set="set/"+name;
       bool readOnly = fi.IsInitOnly || fi.IsLiteral;
       if(fi.DeclaringType!=Type)
@@ -321,15 +348,16 @@ public sealed class ReflectedType : MemberContainer
       }
     }
 
+    // add properties
     ListDictionary overloads = new ListDictionary();
-    foreach(PropertyInfo pi in Type.GetProperties()) // add properties
-    { string name = GetMemberName(pi);
-      Properties ps = (Properties)overloads[name];
-      if(ps==null) overloads[name] = ps = new Properties(pi.DeclaringType);
-      else if(pi.DeclaringType.IsSubclassOf(ps.Type)) ps.Type = pi.DeclaringType;
-      if(pi.CanRead) ps.Gets.Add(pi.GetGetMethod());
-      if(pi.CanWrite) ps.Sets.Add(pi.GetSetMethod());
-    }
+    for(int i=0; i<interfaces.Length; i++)
+      foreach(PropertyInfo pi in interfaces[i].GetProperties())
+      { MethodInfo get = pi.CanRead ? FindMethod(maps[i], pi.GetGetMethod()) : null;
+        MethodInfo set = pi.CanWrite ? FindMethod(maps[i], pi.GetSetMethod()) : null;
+        if(get!=null && !get.IsPublic || set!=null && !set.IsPublic)
+          AddProperty(overloads, GetMemberName(pi), get, set);
+      }
+    foreach(PropertyInfo pi in Type.GetProperties()) AddProperty(overloads, pi);
     foreach(DictionaryEntry de in overloads)
     { string get=(string)de.Key, set="set/"+(string)de.Key;
       Properties ps = (Properties)de.Value;
@@ -348,19 +376,17 @@ public sealed class ReflectedType : MemberContainer
       }
     }
 
+    // add methods
     overloads.Clear();
-    foreach(MethodInfo mi in Type.GetMethods()) // add methods
-      if(!mi.IsSpecialName || !mi.Name.StartsWith("get_") && !mi.Name.StartsWith("set_") &&
-        mi.Name!="op_Implicit" && mi.Name!="op_Explicit") // TODO: handle these ops somehow?
-      { string realName=GetMemberName(mi), name=(string)opnames[realName];
-        if(name==null) name = realName;
-        Overloads ov = (Overloads)overloads[name];
-        if(ov==null) overloads[name] = ov = new Overloads(mi.DeclaringType);
-        else if(mi.DeclaringType.IsSubclassOf(ov.Type)) ov.Type = mi.DeclaringType;
-        ov.List.Add(mi);
-      }
+    for(int i=0; i<interfaces.Length; i++)
+      foreach(MethodInfo mi in interfaces[i].GetMethods())
+        if(!IsSpecialMethod(mi))
+        { MethodInfo tmi = FindMethod(maps[i], mi);
+          if(!tmi.IsPublic) AddMethod(overloads, tmi, GetMemberName(mi));
+        }
+    foreach(MethodInfo mi in Type.GetMethods()) if(!IsSpecialMethod(mi)) AddMethod(overloads, mi);
     foreach(DictionaryEntry de in overloads)
-    { Overloads ov = (Overloads)de.Value;
+    { Methods ov = (Methods)de.Value;
       dict[de.Key] = ov.Type!=Type ? FromType(ov.Type).Dict[de.Key]
                        : ov.List.Count==1 ? MakeFunctionWrapper((MethodInfo)ov.List[0])
                            : (object)new ReflectedFunctions((MethodInfo[])ov.List.ToArray(typeof(MethodInfo)),
@@ -387,9 +413,49 @@ public sealed class ReflectedType : MemberContainer
     return ret;
   }
 
+  static void AddMethod(IDictionary overloads, MethodInfo mi) { AddMethod(overloads, mi, GetMemberName(mi)); }
+  static void AddMethod(IDictionary overloads, MethodInfo mi, string name)
+  { string op=(string)opnames[name];
+    if(op!=null) name = op;
+    Methods ov = (Methods)overloads[name];
+    if(ov==null) overloads[name] = ov = new Methods(mi.DeclaringType);
+    else if(mi.DeclaringType.IsSubclassOf(ov.Type)) ov.Type = mi.DeclaringType;
+    ov.List.Add(mi);
+  }
+
+  static void AddProperty(IDictionary overloads, PropertyInfo pi)
+  { AddProperty(overloads, GetMemberName(pi), pi.CanRead ? pi.GetGetMethod() : null,
+                pi.CanWrite ? pi.GetSetMethod() : null);
+  }
+
+  static void AddProperty(IDictionary overloads, string name, MethodInfo get, MethodInfo set)
+  { Properties ps = (Properties)overloads[name];
+    Type declaringType = MostDerived(get, set);
+    if(ps==null) overloads[name] = ps = new Properties(declaringType);
+    else if(declaringType.IsSubclassOf(ps.Type)) ps.Type = declaringType;
+    if(get!=null) ps.Gets.Add(get);
+    if(set!=null) ps.Sets.Add(set);
+  }
+
+  static MethodInfo FindMethod(InterfaceMapping map, MethodInfo mi)
+  { int pos = Array.IndexOf(map.InterfaceMethods, mi);
+    return pos==-1 ? null : map.TargetMethods[pos];
+  }
+
   static string GetMemberName(MemberInfo mi)
   { object[] attrs = mi.GetCustomAttributes(typeof(SymbolNameAttribute), false);
     return attrs.Length==0 ? mi.Name : ((SymbolNameAttribute)attrs[0]).Name;
+  }
+
+  static bool IsSpecialMethod(MethodInfo mi)
+  { return mi.IsSpecialName && (mi.Name.StartsWith("get_") || mi.Name.StartsWith("set_") ||
+                                mi.Name!="op_Implicit" || mi.Name!="op_Explicit"); // TODO: handle these ops somehow?
+  }
+  
+  static Type MostDerived(MethodInfo f1, MethodInfo f2)
+  { if(f1==null) return f2.DeclaringType;
+    else if(f2==null || f1.DeclaringType.IsSubclassOf(f2.DeclaringType)) return f1.DeclaringType;
+    else return f2.DeclaringType;
   }
 
   #region MakeFunctionWrapper
@@ -927,6 +993,7 @@ public sealed class Interop
         if(qual>bqual || qual==bqual && (conv>best && (best&Conversion.PacksPA)!=0 ||
                                          conv<best && (conv&Conversion.PacksPA)==0))
         { best=conv; bqual=qual; besti=i;
+          if(bqual==Conversion.Identity) break; // this complements the check down below
         }
         rets[i] = conv;
       }
