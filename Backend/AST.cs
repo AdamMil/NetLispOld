@@ -96,7 +96,7 @@ public sealed class AST
       { object obj = an.Members.Evaluate();
         if(!(obj is string))
           throw new SyntaxErrorException("(.member) expects a string value as the second argument");
-        
+
         if(accessNodes==null) accessNodes = new Hashtable();
         AccessKey key = new AccessKey(((VariableNode)an.Value).Name, (string)obj);
         AccessNode.CachePromise promise = (AccessNode.CachePromise)accessNodes[key];
@@ -617,7 +617,7 @@ public sealed class AccessNode : Node
       else // TODO: optimize this so the cache is shared among others referencing the same name object
       { Slot tmp=cg.AllocLocalTemp(typeof(object));
         Label miss=cg.ILG.DefineLabel(), isNull=cg.ILG.DefineLabel();
-        cache = Cache.GetCache(cg);
+        cache = (Cache==null ? new CachePromise() : Cache).GetCache(cg);
         done = cg.ILG.DefineLabel();
 
         cg.ILG.Emit(OpCodes.Dup);
