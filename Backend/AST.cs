@@ -79,9 +79,55 @@ public sealed class AST
       // top-level closures. it's unwrapped later on by SnippetMaker.Generate()
       body = new LambdaNode(new string[0], false, body);
       body.Preprocess();
+      if(Options.Optimize) body.Walk(new Optimizer());
     }
     return body;
   }
+
+  #region Optimizer
+  sealed class Optimizer : IWalker
+  { public bool Walk(Node node) { return true; }
+
+    public void PostWalk(Node node)
+    { node.Optimize();
+
+      AccessNode an = node as AccessNode;
+      if(an!=null && an.Value is VariableNode && an.Members.IsConstant)
+      { object obj = an.Members.Evaluate();
+        if(!(obj is string))
+          throw new SyntaxErrorException("(.member) expects a string value as the second argument");
+        
+        if(accessNodes==null) accessNodes = new Hashtable();
+        AccessKey key = new AccessKey(((VariableNode)an.Value).Name, (string)obj);
+        AccessNode.CachePromise promise = (AccessNode.CachePromise)accessNodes[key];
+        if(promise==null) accessNodes[key] = promise = new AccessNode.CachePromise();
+        an.Cache = promise;
+      }
+    }
+
+    #region AccessKey
+    struct AccessKey
+    { public AccessKey(Name name, string members) { Name=name; Members=members; }
+
+      public override bool Equals(object obj)
+      { AccessKey other = (AccessKey)obj;
+        return (Name==other.Name ||
+                Name.Depth==Name.Global && other.Name.Depth==Name.Global && Name.String==other.Name.String) &&
+               Members==other.Members;
+      }
+
+      public override int GetHashCode()
+      { return Name.Depth ^ Name.Index ^ Name.String.GetHashCode() ^ Members.GetHashCode();
+      }
+
+      public Name Name;
+      public string Members;
+    }
+    #endregion
+
+    Hashtable accessNodes;
+  }
+  #endregion
 
   static Node Parse(object obj)
   { Symbol sym = obj as Symbol;
@@ -435,10 +481,7 @@ public abstract class Node
 
   public virtual void MarkTail(bool tail) { Tail=tail; }
   public virtual void Optimize() { }
-  public virtual void Preprocess()
-  { if(Options.Optimize) Walk(new Optimizer());
-    MarkTail(true);
-  }
+  public virtual void Preprocess() { MarkTail(true); }
 
   public virtual void Walk(IWalker w)
   { w.Walk(this);
@@ -510,7 +553,7 @@ public abstract class Node
   }
 
   protected struct negbool { }
-  
+
   protected void TailReturn(CodeGenerator cg)
   { if(Tail)
     { if(InTry==null) cg.EmitReturn();
@@ -526,11 +569,6 @@ public abstract class Node
     object[] ret = new object[nodes.Length];
     for(int i=0; i<ret.Length; i++) ret[i] = nodes[i].Evaluate();
     return ret;
-  }
-
-  sealed class Optimizer : IWalker
-  { public bool Walk(Node node) { return true; }
-    public void PostWalk(Node node) { node.Optimize(); }
   }
 }
 #endregion
@@ -555,11 +593,56 @@ public sealed class dotLastNode : Node
 public sealed class AccessNode : Node
 { public AccessNode(Node value, Node members) { Value=value; Members=members; }
 
+  public sealed class CachePromise
+  { public Slot GetCache(CodeGenerator cg)
+    { if(cache==null)
+        cache = cg.TypeGenerator.DefineStaticField(FieldAttributes.Private, "tc$"+cindex.Next, typeof(MemberCache));
+      return cache;
+    }
+
+    Slot cache;
+
+    static Index cindex = new Index();
+  }
+
   public override void Emit(CodeGenerator cg, ref Type etype)
   { Value.Emit(cg);
     if(Members.IsConstant)
     { object obj = Members.Evaluate();
       if(!(obj is string)) throw new SyntaxErrorException("(.member) expects a string value as the second argument");
+
+      Slot cache;
+      Label done;
+      if(!Options.Optimize) { cache=null; done=new Label(); }
+      else // TODO: optimize this so the cache is shared among others referencing the same name object
+      { Slot tmp=cg.AllocLocalTemp(typeof(object));
+        Label miss=cg.ILG.DefineLabel(), isNull=cg.ILG.DefineLabel();
+        cache = Cache.GetCache(cg);
+        done = cg.ILG.DefineLabel();
+
+        cg.ILG.Emit(OpCodes.Dup);
+        cg.ILG.Emit(OpCodes.Brfalse_S, isNull);
+        cg.ILG.Emit(OpCodes.Dup);
+        tmp.EmitSet(cg);
+        cg.EmitCall(typeof(MemberCache), "TypeFromObject"); // TODO: maybe we should inline this
+        cache.EmitGetAddr(cg);
+        cg.EmitFieldGet(typeof(MemberCache), "Type");
+        cg.ILG.Emit(OpCodes.Bne_Un_S, miss);
+        tmp.EmitGet(cg);
+        cg.EmitFieldSet(typeof(Ops), "LastPtr"); // this is not exactly the same as the way it works below...
+        cache.EmitGetAddr(cg);
+        cg.EmitFieldGet(typeof(MemberCache), "Value");
+        cg.ILG.Emit(OpCodes.Br, done);
+        cg.ILG.MarkLabel(miss);
+        cache.EmitGetAddr(cg);
+        tmp.EmitGet(cg);
+        cg.EmitCall(typeof(MemberCache), "TypeFromObject"); // TODO: maybe we should inline this
+        cg.EmitFieldSet(typeof(MemberCache), "Type");
+        tmp.EmitGet(cg);
+        cg.ILG.MarkLabel(isNull);
+
+        cg.FreeLocalTemp(tmp);
+      }
 
       string[] bits = ((string)obj).Split('.');
       for(int i=0; i<bits.Length; i++)
@@ -570,6 +653,17 @@ public sealed class AccessNode : Node
         cg.EmitCall(typeof(MemberContainer), "FromObject");
         cg.EmitString(bits[i]);
         cg.EmitCall(typeof(MemberContainer), "GetMember", new Type[] { typeof(string) });
+      }
+
+      if(Options.Optimize)
+      { Slot tmp = cg.AllocLocalTemp(typeof(object));
+        tmp.EmitSet(cg);
+        cache.EmitGetAddr(cg);
+        tmp.EmitGet(cg);
+        cg.EmitFieldSet(typeof(MemberCache), "Value");
+        tmp.EmitGet(cg);
+        cg.ILG.MarkLabel(done);
+        cg.FreeLocalTemp(tmp);
       }
     }
     else
@@ -595,6 +689,7 @@ public sealed class AccessNode : Node
   }
 
   public readonly Node Value, Members;
+  public CachePromise Cache;
 }
 #endregion
 

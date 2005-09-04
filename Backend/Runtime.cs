@@ -415,11 +415,6 @@ public abstract class MemberContainer
   public abstract bool GetMember(string name, out object ret);
   public abstract ICollection GetMemberNames();
 
-  public static MemberContainer FromObject(object obj)
-  { MemberContainer mc = obj as MemberContainer;
-    return mc!=null ? mc : obj==null ? ReflectedType.NullType : ReflectedType.FromType(obj.GetType());
-  }
-
   public void Import(TopLevel top) { Import(top, null, null); }
   public void Import(TopLevel top, string[] names) { Import(top, names, names); }
   public abstract void Import(TopLevel top, string[] names, string[] asNames);
@@ -453,6 +448,24 @@ public abstract class MemberContainer
 
       Import(top, (string[])names.ToArray(typeof(string)), (string[])asNames.ToArray(typeof(string)));
     }
+  }
+
+  public static MemberContainer FromObject(object obj)
+  { MemberContainer mc = obj as MemberContainer;
+    return mc!=null ? mc : obj==null ? ReflectedType.NullType : ReflectedType.FromType(obj.GetType());
+  }
+}
+#endregion
+
+#region MemberCache
+public struct MemberCache
+{ public object Type, Value;
+
+  public static object TypeFromObject(object obj)
+  { MemberContainer mc = obj as MemberContainer;
+    if(mc==null) return obj.GetType();
+    ReflectedType rt = obj as ReflectedType;
+    return rt==null ? mc : (object)rt.Type;
   }
 }
 #endregion
