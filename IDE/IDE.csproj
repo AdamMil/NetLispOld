@@ -183,6 +183,11 @@
                     SubType = "UserControl"
                     BuildAction = "Compile"
                 />
+                <File
+                    RelPath = "TextBox.resx"
+                    DependentUpon = "TextBox.cs"
+                    BuildAction = "EmbeddedResource"
+                />
             </Include>
         </Files>
     </CSHARP>

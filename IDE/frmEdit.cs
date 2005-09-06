@@ -32,8 +32,8 @@ namespace NetLisp.IDE
 
 public class EditForm : System.Windows.Forms.Form
 { public EditForm()
-	{ lispModule = new Module("edit_window");
-    Builtins.Instance.ImportAll(lispModule.TopLevel);
+	{ lispModule = new LispModule("edit_window");
+    Builtins.Instance.Import(lispModule.TopLevel);
 
 	  InitializeComponent();
 	  edit.Focus();
@@ -246,7 +246,7 @@ public class EditForm : System.Windows.Forms.Form
   }
 
   internal AutoCompleteBox acbox;
-  internal Module lispModule;
+  internal LispModule lispModule;
   LispBox edit;
   internal ImmediateBox immediate;
   string filename;
