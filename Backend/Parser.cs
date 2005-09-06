@@ -47,10 +47,6 @@ public sealed class Parser
     NextToken();
   }
   
-  public static Parser FromFile(string filename) { return new Parser(filename, new StreamReader(filename), true); }
-  public static Parser FromStream(Stream stream) { return new Parser("<stream>", new StreamReader(stream)); }
-  public static Parser FromString(string text) { return new Parser("<string>", text); }
-
   public object Parse()
   { Pair list=null, tail=null;
 
@@ -126,6 +122,20 @@ public sealed class Parser
       NextToken();
     }
     return ret;
+  }
+
+  public static Parser FromFile(string filename) { return new Parser(filename, new StreamReader(filename), true); }
+  public static Parser FromStream(Stream stream) { return new Parser("<stream>", new StreamReader(stream)); }
+  public static Parser FromString(string text) { return new Parser("<string>", text); }
+
+  public static bool IsDelimiter(char c)
+  { if(char.IsWhiteSpace(c)) return true;
+    switch(c)
+    { case '(': case ')': case '[': case ']': case '{': case '}':
+      case '#': case '`': case ',': case '\'': case'\0':
+        return true;
+      default: return false;
+    }
   }
 
   public static object ParseNumber(string str, int radix) { return ParseNum(str, "", radix, '\0'); }
@@ -420,16 +430,6 @@ public sealed class Parser
   object value;
   int    line=1, column=1, pos;
   char   lastChar;
-
-  static bool IsDelimiter(char c)
-  { if(char.IsWhiteSpace(c)) return true;
-    switch(c)
-    { case '(': case ')': case '[': case ']': case '{': case '}':
-      case '#': case '`': case ',': case '\'': case'\0':
-        return true;
-      default: return false;
-    }
-  }
 
   static object ParseInt(string str, int radix)
   { if(str=="") return 0;

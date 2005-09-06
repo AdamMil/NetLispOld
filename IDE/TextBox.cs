@@ -62,7 +62,7 @@ public class LispBox : TextEditorControl
   }
 
   protected AutoCompleteBox AcBox { get { return EditForm.acbox; } }
-  protected Module LispModule { get { return EditForm.lispModule; } }
+  protected LispModule LispModule { get { return EditForm.lispModule; } }
   protected EditForm EditForm { get { return (EditForm)ParentForm; } }
   protected ImmediateBox Immediate { get { return EditForm.immediate; } }
 
@@ -71,12 +71,25 @@ public class LispBox : TextEditorControl
   { bool alt=(key&Keys.Alt)!=0, control=(key&Keys.Control)!=0, shift=(key&Keys.Shift)!=0;
     Keys code=key&Keys.KeyCode;
 
-    if(code==Keys.Back)
-    { if(typed.Length==0) HideCompletionBox();
+    if(!alt && !control && (code==Keys.OemPeriod && !shift || code==Keys.OemOpenBrackets && shift)) // '.' or '{'
+    { if(!AcBox.Visible)
+      { PopulateMembers();
+        if(AcBox.Items.Count!=0) ShowCompletionBox();
+      }
       else
-      { typed = typed.Substring(0, typed.Length-1);
-        int curPos = ActiveTextAreaControl.Caret.Offset;
-        if(curPos>0)
+      { if(AcBox.SelectedIndex!=-1) SelectItem();
+        PopulateMembers();
+        if(AcBox.Items.Count==0) HideCompletionBox();
+      }
+      return false;
+    }
+    else if(code==Keys.Back)
+    { if(typed.Length!=0) typed = typed.Substring(0, typed.Length-1);
+      int curPos = ActiveTextAreaControl.Caret.Offset;
+      if(curPos>0)
+      { char c = Document.GetCharAt(curPos-1);
+        if(c=='.' || c=='{') HideCompletionBox();
+        else
         { int index = AcBox.FindString(typed);
           if(index!=ListBox.NoMatches) AcBox.SelectedIndex = index;
         }
@@ -117,14 +130,12 @@ public class LispBox : TextEditorControl
         txt.SelectionManager.ClearSelection();
         return true;
       }
-      else if(code==Keys.OemSemicolon && shift || code==Keys.Space && control && !shift && !alt) // colon or ctrl-space
-      { if(key==Keys.OemSemicolon) PopulatePartial(typed=":");
-        else typed = PopulatePartial();
-
+      else if(code==Keys.Space && control && !shift && !alt) // ctrl-space
+      { typed = PopulatePartial();
         if(AcBox.Items.Count==1) { AcBox.SelectedIndex=0; SelectItem(); typed=""; }
         else if(AcBox.Items.Count!=0) { ShowCompletionBox(); AcBox.SelectedIndex=0; }
         else typed="";
-        return code!=Keys.OemSemicolon;
+        return true;
       }
       else if(code==Keys.OemCloseBrackets && control && !shift && !alt) // ctrl-]
       { int index=ActiveTextAreaControl.Caret.Offset;
@@ -181,7 +192,7 @@ public class LispBox : TextEditorControl
       HideCompletionBox();
       return handled;
     }
-    else if(ch>32 && ch<127)
+    else if(ch>32 && ch<127 && ch!='.' && ch!='{')
     { typed += ch;
       int index = AcBox.FindString(typed);
       if(index!=ListBox.NoMatches) AcBox.SelectedIndex = index;
@@ -192,15 +203,21 @@ public class LispBox : TextEditorControl
 
   enum Get { Normal, IgnoreLast, RawSlot }
 
-  object GetObject(string ident)
+  object GetObject(string ident) { return GetObject(ident, false); }
+  object GetObject(string ident, bool ignoreLast)
   { object ret;
-    return GetObject(ident, out ret) ? ret : null;
+    return GetObject(ident, ignoreLast, out ret) ? ret : null;
   }
 
-  bool GetObject(string ident, out object ret)
-  { ret=null;
-    if(ident==null || ident=="") return false;
-    return LispModule.TopLevel.Get(ident, out ret);
+  bool GetObject(string ident, out object ret) { return GetObject(ident, false, out ret); }
+  bool GetObject(string ident, bool ignoreLast, out object ret)
+  { MatchCollection matches = identre.Matches(ident);
+    if(matches.Count==0) { ret=null; return false; }
+    if(ignoreLast && matches.Count==1) { ret=LispModule; return true; }
+    if(!LispModule.TopLevel.Get(matches[0].Groups[1].Value, out ret)) return false;
+    for(int i=1,len=matches.Count-(ignoreLast?1:0); i<len; i++)
+      if(!Ops.GetMember(ret, matches[i].Groups[1].Value, out ret)) return false;
+    return true;
   }
 
   void HideCompletionBox()
@@ -208,29 +225,39 @@ public class LispBox : TextEditorControl
     typed="";
   }
 
-  string PopulatePartial()
-  { string ident = PreviousIdentifier();
-    PopulatePartial(ident);
-    return ident;
+  void PopulateMembers()
+  { typed="";
+    object obj = GetObject(PreviousIdentifier(), false);
+
+    AutoCompleteBox acbox = AcBox;
+    acbox.Items.Clear();
+    ArrayList list = new ArrayList(Ops.GetMemberNames(obj));
+    list.Sort();
+    foreach(string name in list) acbox.Items.Add(new AutoCompleteItem(Ops.GetMember(obj, name), name));
   }
 
-  void PopulatePartial(string ident)
-  { AutoCompleteBox acbox = AcBox;
+  string PopulatePartial()
+  { string ident = PreviousIdentifier();
+    object obj = GetObject(ident, true);
+
+    AutoCompleteBox acbox = AcBox;
     acbox.Items.Clear();
-    string[] keys = new string[LispModule.TopLevel.Globals.Count];
-    LispModule.TopLevel.Globals.Keys.CopyTo(keys, 0);
-    Array.Sort(keys);
-    foreach(string name in keys)
-    { Backend.Binding bind = (Backend.Binding)LispModule.TopLevel.Globals[name];
-      if(bind!=Backend.Binding.Unbound && string.Compare(name, 0, ident, 0, ident.Length, true)==0)
-        acbox.Items.Add(new AutoCompleteItem(bind.Value, name));
-    }
+    ArrayList list = new ArrayList(Ops.GetMemberNames(obj));
+    list.Sort();
+    foreach(string name in list)
+      if(string.Compare(name, 0, ident, 0, ident.Length, true)==0)
+        acbox.Items.Add(new AutoCompleteItem(Ops.GetMember(obj, name), name));
+    return ident;
   }
 
   string PreviousIdentifier()
   { int pos=ActiveTextAreaControl.Caret.Offset, end=pos;
     char c;
-    while(--pos>=0 && !char.IsWhiteSpace(c=Document.GetCharAt(pos)) && c!='(' && c!=')');
+    while(--pos>=0)
+    { c = Document.GetCharAt(pos);
+      if(c=='}') while(--pos>=0 && (c=Document.GetCharAt(pos))!='{');
+      else if(Backend.Parser.IsDelimiter(c)) break;
+    }
     return end<=0 ? "" : Document.GetText(pos+1, end-pos-1);
   }
 
@@ -263,6 +290,8 @@ public class LispBox : TextEditorControl
   }
 
   string typed="";
+  
+  static Regex identre = new Regex(@"(?:^|\.|{)([^()[\]#`,@'.{\s]+)", RegexOptions.Compiled|RegexOptions.Singleline);
 }
 #endregion
 

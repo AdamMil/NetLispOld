@@ -668,7 +668,7 @@ public sealed class AccessNode : Node
     }
     else
     { cg.EmitTypedNode(Members, typeof(string));
-      cg.EmitCall(typeof(Ops), "GetMember");
+      cg.EmitCall(typeof(Ops), "GetMember", new Type[] { typeof(object), typeof(string) });
     }
     etype = typeof(object);
     TailReturn(cg);

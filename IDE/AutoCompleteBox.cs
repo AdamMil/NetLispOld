@@ -33,10 +33,11 @@ public class AutoCompleteItem
 { public AutoCompleteItem(object obj, string name)
   { this.name=name;
 
-    if(obj is IProcedure) type=AcType.Method;
-    else if(obj is ReflectedProperty) type=AcType.Property;
-    else if(obj is Type) type=AcType.Class;
-    else type=AcType.Field;
+    if(obj is FieldWrapper) type=AcType.Field;
+    else if(obj is IProcedure || obj is ReflectedFunctions) type=AcType.Method;
+    else if(obj is Type || obj is ReflectedType) type=AcType.Class;
+    else if(obj is ReflectedNamespace) type=AcType.Namespace;
+    else type=AcType.Method;
   }
 
   public override string ToString() { return name; }

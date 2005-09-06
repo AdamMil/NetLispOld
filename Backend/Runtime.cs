@@ -971,13 +971,16 @@ public sealed class Ops
   public static object GetGlobal(string name) { return TopLevel.Current.Get(name); }
   public static bool GetGlobal(string name, out object value) { return TopLevel.Current.Get(name, out value); }
 
-  public static object GetMember(object obj, string dottedName)
-  { foreach(string bit in dottedName.Split('.'))
-    { LastPtr = obj;
-      obj = MemberContainer.FromObject(obj).GetMember(bit);
-    }
-    return obj;
+  public static object GetMember(object obj, string name)
+  { LastPtr = obj;
+    return MemberContainer.FromObject(obj).GetMember(name);
   }
+
+  public static bool GetMember(object obj, string name, out object member)
+  { return MemberContainer.FromObject(obj).GetMember(name, out member);
+  }
+
+  public static ICollection GetMemberNames(object obj) { return MemberContainer.FromObject(obj).GetMemberNames(); }
 
   public static bool IsTrue(object obj) { return obj!=null && (!(obj is bool) || (bool)obj); }
 
