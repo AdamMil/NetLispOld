@@ -298,7 +298,7 @@ namespace NetLisp.Backend
         (mn (gensym ""move""))
         (cv (gensym ""cur""))
         (loop (gensym ""loop"")))
-    `(let* ((,e (unquote in){GetEnumerator})
+    `(let* ((,e (.get-enumerator ,in))
             (,mn (.member ,e ""MoveNext""))
             (,cv (.member ,e ""Current"")))
        (while (,mn ,e)
@@ -308,13 +308,25 @@ namespace NetLisp.Backend
 (defmacro delay (form)
   `(#%delay (lambda () ,form)))
 
-(install-expander 'require
-  (lambda (x e)
-    (e `(#%import-module ',(cadr x)) e)))
+(define (#_quoteList lst)
+  (map (lambda (v) (cons 'quote (cons v nil))) lst))
 
-(install-expander 'require-for-syntax
+(install-expander 'import
   (lambda (x e)
-    (#%import-module (cadr x))
+    `(#%import ,@(#_quoteList (cdr x)))))
+
+(install-expander 'import-syntax
+  (lambda (x e)
+    (apply #%import (#_quoteList (cdr x)))
+    nil))
+
+(install-expander 'import*
+  (lambda (x e)
+    `(#%import* ,@(#_quoteList (cdr x)))))
+
+(install-expander 'import-syntax*
+  (lambda (x e)
+    (apply #%import* (#_quoteList (cdr x)))
     nil))
 
 (install-expander 'module
@@ -339,12 +351,22 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
   public static MemberContainer Instance
   { get
-    { if(instance==null) instance = Importer.GetModule(typeof(Builtins));
+    { if(instance==null) instance = Importer.Load(typeof(Builtins));
       return instance;
     }
   }
 
   #region .NET functions
+  #region .cast
+  public sealed class dotCast : Primitive
+  { public dotCast() : base(".cast", 2, 2) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return new Cast(Ops.ExpectType(args[0]), args[1]);
+    }
+  }
+  #endregion
+
   #region .collect
   public sealed class dotCollect : Primitive
   { public dotCollect() : base(".collect", 1, 1) { }
@@ -364,13 +386,23 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     }
   }
   #endregion
-  
-  #region .disambiguate
-  public sealed class dotDisambiguate : Primitive
-  { public dotDisambiguate() : base(".disambiguate", 2, 2) { }
+
+  #region .get-enumerator
+  public sealed class dotGetEnumerator : Primitive
+  { public dotGetEnumerator() : base(".get-enumerator", 1, 1) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      return new Disambiguator(Ops.ExpectType(args[0]), args[1]);
+      return Ops.ExpectEnumerator(args[0]);
+    }
+  }
+  #endregion
+  
+  #region .get-type
+  public sealed class dotGetType : Primitive
+  { public dotGetType() : base(".get-type", 1, 1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return ReflectedType.FromType(Interop.GetType(Ops.ExpectString(args[0]), true));
     }
   }
   #endregion
@@ -1403,7 +1435,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   { TopLevel.Current.AddMacro(sym.Name, func);
     return sym;
   }
-  
+
   public sealed class _nullExpander : Primitive
   { public _nullExpander() : base("#_null-expander", 3, 3) { }
     public override object Call(object[] args)
@@ -3720,11 +3752,74 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
     foreach(object o in objs) sb.Append(Ops.Str(o));
     throw new RuntimeException(sb.ToString());
   }
-  
-  [SymbolName("#%import-module")]
-  public static void _importModule(object module)
-  { Importer.GetModule(module).Import(TopLevel.Current);
+
+  #region #%import
+  public sealed class _import : Primitive
+  { public _import() : base("#%import", 1, -1) { }
+    public override object Call(object[] args)
+    { CheckArity(args);
+      foreach(object mod in args)
+      { Symbol name, asName;
+        Pair pair = mod as Pair;
+        if(pair==null) asName=name=mod as Symbol;
+        else
+        { name = pair.Car as Symbol;
+          asName = pair.Cdr as Symbol;
+        }
+
+        if(name==null || asName==null)
+          throw new ArgumentException("(import module [module ...]) expects 'module' to be: symbol or (symbol . symbol)");
+
+        bool loadTop = name.Name==asName.Name;
+        string binding = asName.Name;
+        if(loadTop)
+        { int pos = binding.IndexOf('.');
+          if(pos!=-1) binding = binding.Substring(0, pos);
+        }
+        TopLevel.Current.Bind(binding, Importer.Load(name.Name, true, loadTop));
+      }
+      return null;
+    }
   }
+  #endregion
+
+  #region #%import*
+  public sealed class _importStar : Primitive
+  { public _importStar() : base("#%import*", 1, -1) { }
+
+    public override object Call(object[] args)
+    { CheckArity(args);
+      Symbol name = args[0] as Symbol;
+      if(name==null) goto syntaxError;
+      string modName = name.Name;
+      MemberContainer module = Importer.Load(modName);
+
+      if(args.Length==1) module.Import(TopLevel.Current);
+      else
+        for(int i=1; i<args.Length; i++)
+        { Pair pair = args[i] as Pair;
+          Symbol asName;
+          if(pair==null) asName=name=args[i] as Symbol;
+          else
+          { name = pair.Car as Symbol;
+            asName = pair.Cdr as Symbol;
+          }
+          if(name==null || asName==null) goto syntaxError;
+
+          object value;
+          if(!module.GetMember(name.Name, out value))
+            throw new ArgumentException("Module "+modName+" does not contain a member named '"+name.Name+"'");
+          TopLevel.Current.Bind(asName.Name, value);
+        }
+      
+      return null;
+
+      syntaxError:
+      throw new ArgumentException("(import* module [name ...]) expects 'module' to be a symbol and 'name' to be: "+
+                                  "symbol or (symbol . symbol)");
+    }
+  }
+  #endregion
 
   #region not
   public sealed class not : Primitive

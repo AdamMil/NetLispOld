@@ -41,7 +41,7 @@ public class App
       { Console.Write(code==null ? ">>> " : "... ");
         string line = Console.ReadLine();
         if(line==null) return;
-        for(int i=0; i<line.Length; i++)
+        for(int i=0; i<line.Length; i++) // FIXME: this doesn't handle {} or parentheses inside string/character defs
           if(line[i]=='(') parens++;
           else if(line[i]==')') parens--;
         code += line + "\n";

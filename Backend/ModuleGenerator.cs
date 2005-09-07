@@ -31,7 +31,7 @@ namespace NetLisp.Backend
 public abstract class BuiltinModule : LispModule
 { public BuiltinModule(Type type, bool importBuiltins) : base(type.FullName)
   { if(importBuiltins) Builtins.Instance.Import(TopLevel);
-    ReflectedType.FromType(type).Import(TopLevel);
+    ReflectedType.FromType(type, false).Import(TopLevel, true);
   }
 }
 

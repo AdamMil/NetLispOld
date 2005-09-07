@@ -182,6 +182,7 @@ namespace NetLisp.Mods
 
 (define (zip list1 . more-lists) (apply map list list1 more-lists))
 ")]
+[SymbolName("srfi-1")]
 public sealed class Srfi1
 { 
   #region alist-copy

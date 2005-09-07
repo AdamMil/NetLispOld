@@ -596,7 +596,7 @@ public sealed class AccessNode : Node
   public sealed class CachePromise
   { public Slot GetCache(CodeGenerator cg)
     { if(cache==null)
-        cache = cg.TypeGenerator.DefineStaticField(FieldAttributes.Private, "tc$"+cindex.Next, typeof(MemberCache));
+        cache = cg.TypeGenerator.DefineStaticField("tc$"+cindex.Next, typeof(MemberCache));
       return cache;
     }
 
@@ -750,7 +750,7 @@ public sealed class CallNode : Node
     { "-", "Subtract", "bitnot", "BitwiseNegate", "+", "Add", "*", "Multiply", "/", "Divide", "//", "FloorDivide",
       "%", "Modulus",  "bitand", "BitwiseAnd", "bitor", "BitwiseOr", "bitxor", "BitwiseXor", "=", "AreEqual",
       "!=", "NotEqual", "<", "Less", ">", "More", "<=", "LessEqual", ">=", "MoreEqual", "expt", "Power",
-      "lshift", "LeftShift", "rshift", "RightShift", "exptmod", "PowerMod", "->tostring", "Str"
+      "lshift", "LeftShift", "rshift", "RightShift", "exptmod", "PowerMod", "->string", "Str"
     };
     for(int i=0; i<arr.Length; i+=2)
     { ops[arr[i]] = arr[i+1];
@@ -2041,7 +2041,7 @@ public sealed class ThrowNode : Node
   
   public override object Evaluate()
   { if(Type==null) throw (Exception)Ops.ExceptionStack.Peek();
-    throw Ops.MakeException(Ops.ExpectType(Type.Evaluate()), Objects==null ? null : MakeObjectArray(Objects));
+    throw Ops.MakeException(Ops.ExpectType(Type.Evaluate()).Type, Objects==null ? null : MakeObjectArray(Objects));
   }
 
   public override void MarkTail(bool tail)
@@ -2183,7 +2183,7 @@ public sealed class TryNode : Node
         { if(ex.Types!=null)
           { bool isMatch=false;  
             foreach(VariableNode name in ex.Types)
-            { Type type = Ops.ExpectType(name.Evaluate());
+            { Type type = Ops.ExpectType(name.Evaluate()).Type;
               if(type.IsInstanceOfType(e)) { isMatch=true; break; }
             }
             if(!isMatch) continue;
