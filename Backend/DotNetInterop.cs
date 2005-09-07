@@ -158,7 +158,13 @@ public sealed class ReflectedFunctions : SimpleProcedure
 
 #region ReflectedNamespace
 public sealed class ReflectedNamespace : MemberContainer
-{ public ReflectedNamespace(string name) { this.name=name; dict=new Hashtable(); }
+{ ReflectedNamespace(string name) { this.name=name; dict=new Hashtable(); }
+
+  public void AddType(Type type)
+  { Debug.Assert(type!=null && type.Namespace==name);
+    object[] attrs = type.GetCustomAttributes(typeof(SymbolNameAttribute), true);
+    dict[attrs.Length==0 ? type.Name : ((SymbolNameAttribute)attrs[0]).Name] = ReflectedType.FromType(type);
+  }
 
   public override object GetMember(string name)
   { object ret = dict[name];
@@ -175,29 +181,54 @@ public sealed class ReflectedNamespace : MemberContainer
   public override ICollection GetMemberNames() { return dict.Keys; }
 
   public override void Import(TopLevel top, string[] names, string[] asNames)
-  { Interop.Import(top, dict, names, asNames, "namespace '"+name+"'");
+  { Importer.Import(top, dict, null, names, asNames, "namespace '"+name+"'");
   }
 
-  public override string ToString() { return "#<namespace '"+name+">"; }
+  public override string ToString() { return "#<namespace '"+name+"'>"; }
 
-  public void AddNamespace(ReflectedNamespace ns)
-  { Debug.Assert(ns.name.StartsWith(name+'.'));
-    dict[ns.name.Substring(ns.name.LastIndexOf('.')+1)] = ns;
+  public static ReflectedNamespace FromName(string name) { return FromName(name, false); }
+  public static ReflectedNamespace FromName(string name, bool returnTop)
+  { return FromName(name.Split('.'), returnTop);
   }
+  public static ReflectedNamespace FromName(string[] bits, bool returnTop)
+  { Interop.LoadStandardAssemblies();
 
-  public void AddType(Type type)
-  { Debug.Assert(type.Namespace==name);
-    dict[type.Name] = ReflectedType.FromType(type);
+    ReflectedNamespace rns, top;
+    lock(cache) top = (ReflectedNamespace)cache[bits[0]];
+
+    if(top==null)
+    { top = new ReflectedNamespace(bits[0]);
+      lock(cache) cache[bits[0]] = top;
+    }
+    rns = top;
+    
+    string ns=bits[0];
+    for(int i=1; i<bits.Length; i++)
+    { ns = ns+"."+bits[i];
+      object member = rns.dict[bits[i]];
+      ReflectedNamespace sub = member as ReflectedNamespace;
+      if(sub==null)
+      { if(member!=null) throw new ArgumentException("Attempted to load namespace "+string.Join(".", bits)+
+                                                     ", but "+ns+" is already used to mean something else");
+        rns.dict[bits[i]] = sub = new ReflectedNamespace(ns);
+      }
+      rns = sub;
+    }
+
+    return returnTop ? top : rns;
   }
 
   string name;
   Hashtable dict;
+  
+  static Hashtable cache = new Hashtable();
 }
 #endregion
 
 #region ReflectedType
 public sealed class ReflectedType : MemberContainer
 { internal ReflectedType(Type type) { Type=type; }
+  internal ReflectedType(Type type, bool includeInherited) { Type=type; this.includeInherited=includeInherited; }
 
   #region Static constructor
   static ReflectedType()
@@ -248,8 +279,10 @@ public sealed class ReflectedType : MemberContainer
 
   public override ICollection GetMemberNames() { return Dict.Keys; }
 
-  public override void Import(TopLevel top, string[] names, string[] asNames)
-  { Interop.Import(top, Dict, names, asNames, "type '"+Ops.TypeName(Type)+"'");
+  public void Import(TopLevel top, bool impersonateLocal) { Import(top, null, null, impersonateLocal); }
+  public override void Import(TopLevel top, string[] names, string[] asNames) { Import(top, names, asNames, false); }
+  public void Import(TopLevel top, string[] names, string[] asNames, bool impersonateLocal)
+  { Importer.Import(top, Dict, impersonateLocal ? top : null, names, asNames, "type '"+Ops.TypeName(Type)+"'");
   }
 
   public override string ToString() { return "#<type '"+Ops.TypeName(Type)+"'>"; }
@@ -259,6 +292,12 @@ public sealed class ReflectedType : MemberContainer
   public static ReflectedType FromType(Type type)
   { ReflectedType rt = (ReflectedType)types[type];
     if(rt==null) types[type] = rt = new ReflectedType(type);
+    return rt;
+  }
+
+  public static ReflectedType FromType(Type type, bool includeInherited)
+  { ReflectedType rt = (ReflectedType)types[type];
+    if(rt==null) types[type] = rt = new ReflectedType(type, includeInherited);
     return rt;
   }
 
@@ -292,6 +331,9 @@ public sealed class ReflectedType : MemberContainer
   void Initialize()
   { dict = new Hashtable();
     if(Type==null) return;
+    
+    BindingFlags flags = BindingFlags.Public|BindingFlags.Instance|BindingFlags.Static;
+    if(!includeInherited) flags |= BindingFlags.DeclaredOnly;
 
     // TODO: handle certain types specially? eg, delegates and enums?
     // TODO: add [] for arrays
@@ -306,35 +348,22 @@ public sealed class ReflectedType : MemberContainer
                             : needDefault ? MakeStructCreator(Type) : MakeFunctionWrapper(ci[0]);
     }
 
-    Type[] interfaces = Type.GetInterfaces();
-    InterfaceMapping[] maps = new InterfaceMapping[interfaces.Length];
-    for(int i=0; i<interfaces.Length; i++) maps[i] = Type.GetInterfaceMap(interfaces[i]);
-
     // add events
-    ArrayList events = new ArrayList();
-    foreach(EventInfo ei in Type.GetEvents()) events.Add(new Event(ei));
-    for(int i=0; i<interfaces.Length; i++)
-      foreach(EventInfo ei in interfaces[i].GetEvents())
-      { MethodInfo mi = FindMethod(maps[i], ei.GetAddMethod());
-        if(!mi.IsPublic)
-          events.Add(new Event(ei.DeclaringType, GetMemberName(ei), mi, FindMethod(maps[i], ei.GetRemoveMethod())));
-      }
-    foreach(Event e in events)
-    { string add="add/"+e.Name, rem="rem/"+e.Name;
-      if(e.DeclaringType!=Type)
-      { IDictionary dec = FromType(e.DeclaringType).Dict;
+    foreach(EventInfo ei in Type.GetEvents(flags))
+    { string name=GetMemberName(ei), add="add/"+name, rem="rem/"+name;
+      if(ei.DeclaringType!=Type)
+      { IDictionary dec = FromType(ei.DeclaringType).Dict;
         dict[add] = dec[add];
         dict[rem] = dec[rem];
       }
       else
-      { dict[add] = MakeFunctionWrapper(e.Add);
-        dict[rem] = MakeFunctionWrapper(e.Rem);
+      { dict[add] = MakeFunctionWrapper(ei.GetAddMethod());
+        dict[rem] = MakeFunctionWrapper(ei.GetRemoveMethod());
       }
     }
-    events = null;
 
     // add fields
-    foreach(FieldInfo fi in Type.GetFields())
+    foreach(FieldInfo fi in Type.GetFields(flags))
     { string name=GetMemberName(fi), get=name, set="set/"+name;
       bool readOnly = fi.IsInitOnly || fi.IsLiteral;
       if(fi.DeclaringType!=Type)
@@ -350,14 +379,18 @@ public sealed class ReflectedType : MemberContainer
 
     // add properties
     ListDictionary overloads = new ListDictionary();
-    for(int i=0; i<interfaces.Length; i++)
-      foreach(PropertyInfo pi in interfaces[i].GetProperties())
-      { MethodInfo get = pi.CanRead ? FindMethod(maps[i], pi.GetGetMethod()) : null;
-        MethodInfo set = pi.CanWrite ? FindMethod(maps[i], pi.GetSetMethod()) : null;
-        if(get!=null && !get.IsPublic || set!=null && !set.IsPublic)
-          AddProperty(overloads, GetMemberName(pi), get, set);
-      }
-    foreach(PropertyInfo pi in Type.GetProperties()) AddProperty(overloads, pi);
+    foreach(PropertyInfo pi in Type.GetProperties(flags))
+    { string name = GetMemberName(pi);
+      MethodInfo get = pi.CanRead ? pi.GetGetMethod() : null;
+      MethodInfo set = pi.CanWrite ? pi.GetSetMethod() : null;
+
+      Properties ps = (Properties)overloads[name];
+      Type declaringType = MostDerived(get, set);
+      if(ps==null) overloads[name] = ps = new Properties(declaringType);
+      else if(declaringType.IsSubclassOf(ps.Type)) ps.Type = declaringType;
+      if(get!=null) ps.Gets.Add(get);
+      if(set!=null) ps.Sets.Add(set);
+    }
     foreach(DictionaryEntry de in overloads)
     { string get=(string)de.Key, set="set/"+(string)de.Key;
       Properties ps = (Properties)de.Value;
@@ -378,13 +411,15 @@ public sealed class ReflectedType : MemberContainer
 
     // add methods
     overloads.Clear();
-    for(int i=0; i<interfaces.Length; i++)
-      foreach(MethodInfo mi in interfaces[i].GetMethods())
-        if(!IsSpecialMethod(mi))
-        { MethodInfo tmi = FindMethod(maps[i], mi);
-          if(!tmi.IsPublic) AddMethod(overloads, tmi, GetMemberName(mi));
-        }
-    foreach(MethodInfo mi in Type.GetMethods()) if(!IsSpecialMethod(mi)) AddMethod(overloads, mi);
+    foreach(MethodInfo mi in Type.GetMethods(flags))
+      if(!IsSpecialMethod(mi))
+      { string name=GetMemberName(mi), op=(string)opnames[name];
+        if(op!=null) name = op;
+        Methods ov = (Methods)overloads[name];
+        if(ov==null) overloads[name] = ov = new Methods(mi.DeclaringType);
+        else if(mi.DeclaringType.IsSubclassOf(ov.Type)) ov.Type = mi.DeclaringType;
+        ov.List.Add(mi);
+      }
     foreach(DictionaryEntry de in overloads)
     { Methods ov = (Methods)de.Value;
       dict[de.Key] = ov.Type!=Type ? FromType(ov.Type).Dict[de.Key]
@@ -393,7 +428,8 @@ public sealed class ReflectedType : MemberContainer
                                                             (string)de.Key);
     }
 
-    foreach(Type subtype in Type.GetNestedTypes(BindingFlags.Public))
+    flags = BindingFlags.Public | (includeInherited ? 0 : BindingFlags.DeclaredOnly);
+    foreach(Type subtype in Type.GetNestedTypes(flags))
       if(subtype.IsSubclassOf(typeof(Primitive)))
       { Primitive prim = (Primitive)subtype.GetConstructor(Type.EmptyTypes).Invoke(null);
         dict[prim.Name] = prim;
@@ -403,6 +439,7 @@ public sealed class ReflectedType : MemberContainer
   #endregion
 
   Hashtable dict;
+  bool includeInherited;
 
   internal static FunctionWrapper[] GetConstructors(Type type)
   { ConstructorInfo[] ci = type.GetConstructors();
@@ -411,35 +448,6 @@ public sealed class ReflectedType : MemberContainer
     for(int i=0; i<ci.Length; i++) ret[i] = MakeFunctionWrapper(ci[i]);
     if(needDefault) ret[ci.Length] = MakeStructCreator(type);
     return ret;
-  }
-
-  static void AddMethod(IDictionary overloads, MethodInfo mi) { AddMethod(overloads, mi, GetMemberName(mi)); }
-  static void AddMethod(IDictionary overloads, MethodInfo mi, string name)
-  { string op=(string)opnames[name];
-    if(op!=null) name = op;
-    Methods ov = (Methods)overloads[name];
-    if(ov==null) overloads[name] = ov = new Methods(mi.DeclaringType);
-    else if(mi.DeclaringType.IsSubclassOf(ov.Type)) ov.Type = mi.DeclaringType;
-    ov.List.Add(mi);
-  }
-
-  static void AddProperty(IDictionary overloads, PropertyInfo pi)
-  { AddProperty(overloads, GetMemberName(pi), pi.CanRead ? pi.GetGetMethod() : null,
-                pi.CanWrite ? pi.GetSetMethod() : null);
-  }
-
-  static void AddProperty(IDictionary overloads, string name, MethodInfo get, MethodInfo set)
-  { Properties ps = (Properties)overloads[name];
-    Type declaringType = MostDerived(get, set);
-    if(ps==null) overloads[name] = ps = new Properties(declaringType);
-    else if(declaringType.IsSubclassOf(ps.Type)) ps.Type = declaringType;
-    if(get!=null) ps.Gets.Add(get);
-    if(set!=null) ps.Sets.Add(set);
-  }
-
-  static MethodInfo FindMethod(InterfaceMapping map, MethodInfo mi)
-  { int pos = Array.IndexOf(map.InterfaceMethods, mi);
-    return pos==-1 ? null : map.TargetMethods[pos];
   }
 
   static string GetMemberName(MemberInfo mi)
@@ -962,7 +970,8 @@ public sealed class ReflectedType : MemberContainer
 
 #region Interop
 public sealed class Interop
-{ 
+{ Interop() { }
+
   #region Call
   public static object Call(FunctionWrapper[] funcs, object[] args)
   { if(funcs.Length==1) return funcs[0].Call(args);
@@ -976,10 +985,10 @@ public sealed class Interop
       if(o==null) types[i] = null;
       else
       { Type type = o.GetType();
-        if(type==Disambiguator.ClassType)
-        { Disambiguator dis = o as Disambiguator;
-          args[i]  = dis.Value;
-          types[i] = dis.Type;
+        if(type==Cast.ClassType)
+        { Cast cast = (Cast)o;
+          args[i]  = cast.Value;
+          types[i] = cast.Type;
         }
         else types[i] = type;
       }
@@ -1021,9 +1030,11 @@ public sealed class Interop
   }
 
   public static void LoadAssemblyByName(string name)
-  { if(Assembly.LoadWithPartialName(name)==null) throw new ArgumentException("Assembly "+name+" could not be loaded");
+  { Assembly ass = Assembly.LoadWithPartialName(name);
+    if(ass==null) throw new ArgumentException("Assembly "+name+" could not be loaded");
+    InitAssembly(ass);
   }
-  public static void LoadAssemblyFromFile(string name) { Assembly.LoadFrom(name); }
+  public static void LoadAssemblyFromFile(string name) { InitAssembly(Assembly.LoadFrom(name)); }
 
   #region MakeDelegateWrapper
   public static object MakeDelegateWrapper(IProcedure proc, Type delegateType)
@@ -1088,18 +1099,6 @@ public sealed class Interop
   }
   #endregion
 
-  internal static void Import(TopLevel top, IDictionary dict, string[] names, string[] asNames, string myName)
-  { if(names==null)
-      foreach(DictionaryEntry de in dict) top.Globals.Bind((string)de.Key, de.Value, null);
-    else
-      for(int i=0; i<names.Length; i++)
-      { object obj = dict[names[i]];
-        if(obj==null && !dict.Contains(names[i]))
-          throw new ArgumentException(myName+" does not contain a member called '"+names[i]+"'");
-        top.Globals.Bind(asNames[i], obj, null);
-      }
-  }
-
   internal static void EmitConvertTo(CodeGenerator cg, Type type) { EmitConvertTo(cg, type, false); }
   internal static void EmitConvertTo(CodeGenerator cg, Type type, bool useIndirect)
   { if(type==typeof(void)) throw new ArgumentException("Can't convert to void!");
@@ -1140,10 +1139,33 @@ public sealed class Interop
     else if(type!=typeof(object)) cg.ILG.Emit(OpCodes.Castclass, type);
   }
 
+  internal static void LoadStandardAssemblies()
+  { if(!loadedStandard)
+    { loadedStandard = true;
+      LoadAssemblyByName("mscorlib");
+      LoadAssemblyByName("System");
+    }
+  }
+
   delegate object Create(IProcedure proc);
+
+  static void InitAssembly(Assembly a)
+  { Hashtable namespaces = new Hashtable();
+    foreach(Type type in a.GetTypes())
+    { if(!type.IsPublic || type.Namespace==null) continue;
+      ArrayList list = (ArrayList)namespaces[type.Namespace];
+      if(list==null) namespaces[type.Namespace] = list = new ArrayList();
+      list.Add(type);
+    }
+    foreach(DictionaryEntry de in namespaces)
+    { ReflectedNamespace ns = ReflectedNamespace.FromName((string)de.Key);
+      foreach(Type type in (ArrayList)de.Value) ns.AddType(type);
+    }
+  }
 
   static readonly Hashtable handlers=new Hashtable(), dsigs=new Hashtable();
   static readonly Index dwi=new Index();
+  static bool loadedStandard;
 }
 #endregion
 

@@ -164,14 +164,30 @@ public sealed class Binding
 }
 #endregion
 
-public sealed class Disambiguator
-{ public Disambiguator(Type type, object value) { Type=type; Value=value; }
+#region Cast
+public sealed class Cast : MemberContainer
+{ public Cast(ReflectedType type, object value)
+  { ReflectedType=type; Type=type.Type; Value=value;
+    if(value!=null && !Type.IsAssignableFrom(value.GetType()))
+      throw new InvalidCastException("Attempted to cast "+Ops.TypeName(value)+" to "+Ops.TypeName(Type));
+  }
 
+  public override object GetMember(string name) { return ReflectedType.GetMember(name); }
+  public override bool GetMember(string name, out object ret) { return ReflectedType.GetMember(name, out ret); }
+  public override ICollection GetMemberNames() { return ReflectedType.GetMemberNames(); }
+  public override void Import(TopLevel top, string[] names, string[] asNames)
+  { ReflectedType.Import(top, names, asNames);
+  }
+
+  public override string ToString() { return "#<cast '"+Ops.Str(Value)+"' to "+Ops.TypeName(Type)+">"; }
+
+  public ReflectedType ReflectedType;
   public Type Type;
   public object Value;
-  
-  public readonly static Type ClassType = typeof(Disambiguator);
+
+  public readonly static Type ClassType = typeof(Cast);
 }
+#endregion
 
 #region RG (stuff that can't be written in C#)
 public sealed class RG
@@ -369,7 +385,15 @@ public class LispModule : MemberContainer
 
   public override object GetMember(string name) { return TopLevel.Globals.Get(name); }
   public override bool GetMember(string name, out object ret) { return TopLevel.Globals.Get(name, out ret); }
-  public override ICollection GetMemberNames() { return TopLevel.Globals.Dict.Keys; }
+
+  public override ICollection GetMemberNames()
+  { ArrayList ret = new ArrayList(Math.Max(TopLevel.Globals.Dict.Count/2, 16));
+    foreach(DictionaryEntry de in TopLevel.Globals.Dict)
+    { Binding bind = (Binding)de.Value;
+      if(bind.Environment==TopLevel) ret.Add(de.Key);
+    }
+    return ret;
+  }
 
   public override void Import(TopLevel top, string[] names, string[] asNames)
   { if(names==null)
@@ -402,7 +426,7 @@ public class LispModule : MemberContainer
     { string key = (string)de.Key;
       if(!key.StartsWith("#_"))
       { Binding bind = (Binding)de.Value;
-        to.Bind(key, bind.Value, env);
+        if(bind.Environment==env) to.Bind(key, bind.Value, env);
       }
     }
   }
@@ -422,7 +446,7 @@ public abstract class MemberContainer
   public void Import(TopLevel top, Pair bindings)
   { if(bindings==null)
     { object obj;
-      if(GetMember("*BINDINGS*", out obj)) bindings = obj as Pair;
+      if(GetMember("*EXPORTS*", out obj)) bindings = obj as Pair;
     }
     if(bindings==null) Import(top, null, null);
     else
@@ -911,10 +935,12 @@ public sealed class Ops
     return ret;
   }
 
-  public static Type ExpectType(object obj)
-  { Type ret = obj as Type;
-    if(ret==null) throw new ArgumentException("expected type but received "+TypeName(obj));
-    return ret;
+  public static ReflectedType ExpectType(object obj)
+  { ReflectedType rt = obj as ReflectedType;
+    if(rt!=null) return rt;
+    Type type = obj as Type;
+    if(type!=null) return ReflectedType.FromType(type);
+    throw new ArgumentException("expected type but received "+TypeName(obj));
   }
 
   public static MultipleValues ExpectValues(object obj)
@@ -1378,6 +1404,7 @@ public sealed class Ops
   }
 
   public static string TypeName(object o) { return TypeName(o==null ? null : o.GetType()); }
+  public static string TypeName(ReflectedType type) { return TypeName(type.Type); }
   public static string TypeName(Type type)
   { if(type==null) return "nil";
     switch(Type.GetTypeCode(type))

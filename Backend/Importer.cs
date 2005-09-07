@@ -23,144 +23,90 @@ using System;
 using System.Collections;
 using System.IO;
 using System.Reflection;
+using sys=NetLisp.Mods.sys;
 
 namespace NetLisp.Backend
 {
 
 public sealed class Importer
 { Importer() { }
-  static Importer()
-  { builtins["srfi/srfi-1"] = typeof(Mods.Srfi1);
-  }
-
-  // TODO: this is only a temporary solution. replace it with a better one
-  public static string LibPath = "lib/";
-
-  public static MemberContainer GetModule(object obj)
-  { MemberContainer module;
-    try
-    { if(obj is Symbol)
-      { TopLevel.Current.Get(((Symbol)obj).Name, out obj);
-        module = obj as MemberContainer;
-      }
-      else if(obj is string) module = GetModule((string)obj);
-      else if(obj is Pair)
-      { Pair pair = (Pair)obj;
-        switch(((Symbol)pair.Car).Name)
-        { case "lib":
-            if(Builtins.length.core(pair)!=3) goto bad;
-            pair = (Pair)pair.Cdr;
-            module = GetModule((string)pair.Car, (string)Ops.FastCadr(pair));
-            break;
-          default: goto bad;
-        }
-      }
-      else goto bad;
-    }
-    catch { goto bad; }
-
-    if(module==null) throw new ModuleLoadException("module not found");
-    return module;
-
-    bad: throw new SyntaxErrorException("malformed module name");
-  }
   
-  public static MemberContainer GetModule(Type type)
-  { ModulePath mp = new ModulePath(type.FullName, "%_builtin");
-    lock(modules)
-    { MemberContainer module = (MemberContainer)modules[mp];
-      if(module==null) modules[mp] = module = ModuleGenerator.Generate(type);
-      return module;
-    }
-  }
-
-  public static MemberContainer GetModule(string path)
-  { path = Path.GetFullPath(currentDir==null ? path : Path.Combine(currentDir, path));
-    return GetModule(new ModulePath("%fs", path));
-  }
-  public static MemberContainer GetModule(string name, string collection)
-  { return GetModule(new ModulePath(collection, name));
-  }
-
-  struct ModulePath
-  { public ModulePath(string collection, string name) { Collection=collection; Name=name; }
-
-    public override bool Equals(object obj)
-    { ModulePath mp = (ModulePath)obj;
-      return mp.Name==Name && mp.Collection==Collection;
-    }
-    public override int GetHashCode() { return Collection.GetHashCode() ^ Name.GetHashCode(); }
-
-    public string Collection, Name;
-  }
-
-  static MemberContainer GetModule(ModulePath mp)
-  { lock(modules)
-    { MemberContainer module = (MemberContainer)modules[mp];
-
-      if(module==null)
-      { if(modules.Contains(mp)) throw new ModuleLoadException("circular module requirements"); // TODO: improve this message
-        modules[mp] = null;
-
-        try
-        { switch(mp.Collection)
-          { case "%fs": module = LoadFromFile(mp.Name); break;
-            case "%builtin":
-            { if(mp.Name=="Builtins") module = Builtins.Instance;
-              else
-              { Type type = Type.GetType("NetLisp.Mods."+mp.Name);
-                if(type!=null) module = ModuleGenerator.Generate(type);
-              }
-              break;
-            }
-            case ".net": module = LoadFromDotNet(mp.Name); break;
-            default:
-            { string name = mp.Collection+"/"+mp.Name;
-              Type type = (Type)builtins[name];
-              // TODO: get the library path from elsewhere
-              module = type==null ? LoadFromFile(LibPath+name) : ModuleGenerator.Generate(type);
-              break;
-            }
-          }
-        }
-        finally
-        { if(module!=null) modules[mp] = module;
-          else modules.Remove(mp);
-        }
+  public static void Import(TopLevel top, IDictionary dict, TopLevel env,
+                            string[] names, string[] asNames, string myName)
+  { if(names==null)
+      foreach(DictionaryEntry de in dict) top.Globals.Bind((string)de.Key, de.Value, env);
+    else
+      for(int i=0; i<names.Length; i++)
+      { object obj = dict[names[i]];
+        if(obj==null && !dict.Contains(names[i]))
+          throw new ArgumentException(myName+" does not contain a member called '"+names[i]+"'");
+        top.Globals.Bind(asNames[i], obj, env);
       }
-      return module;
+  }
+
+  public static MemberContainer Load(string name) { return Load(name, true, false); }
+  public static MemberContainer Load(string name, bool throwOnError) { return Load(name, throwOnError, false); }
+  public static MemberContainer Load(string name, bool throwOnError, bool returnTop)
+  { MemberContainer module, top;
+    bool returnNow = false;
+
+    lock(sys.modules) module = (MemberContainer)sys.modules[name];
+    if(module!=null) return module;
+
+    // TODO: optimize this so loading a dotted name from a file doesn't compile the file multiple times
+    string[] bits = name.Split('.');
+    top = LoadFromPath(bits[0]);
+    if(top==null) top = LoadBuiltin(bits[0]);
+    if(top==null)
+    { top = LoadFromDotNet(bits, returnTop);
+      returnNow = true;
+    }
+
+    if(top!=null) lock(sys.modules) sys.modules[bits[0]] = top;
+    if(returnNow) return top;
+
+    module = top;
+    for(int i=1; i<bits.Length && module!=null; i++)
+    { object obj;
+      if(!module.GetMember(bits[i], out obj)) goto error;
+      module = obj as MemberContainer;
+    }
+    if(returnTop) module = top;
+    if(module!=null || !throwOnError) return module;
+
+    error: throw new ModuleLoadException("Unable to load module: "+name);
+  }
+
+  public static MemberContainer Load(Type type)
+  { MemberContainer module = (MemberContainer)builtinTypes[type];
+    if(module==null) builtinTypes[type] = module = ModuleGenerator.Generate(type);
+    return module;
+  }
+
+  static MemberContainer LoadBuiltin(string name)
+  { if(builtinNames==null)
+    { builtinNames = new Hashtable();
+      foreach(Type type in Assembly.GetExecutingAssembly().GetTypes())
+        if(type.IsPublic && type.Namespace=="NetLisp.Mods")
+        { object[] attrs = type.GetCustomAttributes(typeof(SymbolNameAttribute), false);
+          if(attrs.Length!=0) builtinNames[((SymbolNameAttribute)attrs[0]).Name] = type;
+        }
+    }
+
+    { Type type = (Type)builtinNames[name];
+      if(type==null) type = Type.GetType("NetLisp.Mods."+name);
+      return type==null ? null : Load(type);
     }
   }
 
-  static MemberContainer LoadFromDotNet(string ns)
-  { ReflectedNamespace rns = new ReflectedNamespace(ns); // TODO: cache these
-    foreach(Assembly a in AppDomain.CurrentDomain.GetAssemblies())
-      foreach(Type type in a.GetTypes())
-        if(type.IsPublic && type.Namespace==ns)
-          rns.AddType(type);
-    return rns;
+  static MemberContainer LoadFromDotNet(string[] bits, bool returnTop)
+  { return ReflectedNamespace.FromName(bits, returnTop);
   }
 
-  static MemberContainer LoadFromFile(string path)
-  { throw new NotImplementedException();
-    /*string old = currentDir;
-    try
-    { currentDir = Path.GetDirectoryName(path);
-      if(!File.Exists(path)) return null;
-      Parser p = Parser.FromFile(path);
-      object obj;
-      ModuleNode mod;
-      if((obj=p.ParseOne())==Parser.EOF || (mod=AST.Create(obj).Body as ModuleNode)==null ||
-         (obj=p.ParseOne())!=Parser.EOF)
-        throw new SyntaxErrorException("module file must contain a single module declaration");
-      return ModuleGenerator.Generate(mod);
-    }
-    finally { currentDir = old; }*/
-  }
+  static MemberContainer LoadFromPath(string name) { return null; } // TODO: implement this
 
-  static string currentDir;
-  static Hashtable modules = new Hashtable();
-  static System.Collections.Specialized.ListDictionary builtins = new System.Collections.Specialized.ListDictionary();
+  static readonly Hashtable builtinTypes=new Hashtable();
+  static Hashtable builtinNames;
 }
 
 } // namespace NetLisp.Backend
