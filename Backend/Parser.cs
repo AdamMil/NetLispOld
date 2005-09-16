@@ -28,6 +28,20 @@ using System.Text.RegularExpressions;
 namespace NetLisp.Backend
 {
 
+public struct Position
+{ public Position(int line, int column) { Line=line; Column=column; }
+  public int Line, Column;
+}
+
+public sealed class SyntaxObject
+{ public SyntaxObject(string file, string code, object sexp, Position start, Position end)
+  { File=file; Code=code; Sexp=sexp; Start=start; End=end;
+  }
+  public object Sexp;
+  public string File, Code;
+  public Position Start, End;
+}
+
 public enum Token
 { None, EOF, Literal, Symbol, Vector, Splice,
   LParen, RParen, LBracket, RBracket, LCurly, RCurly, Quote, BackQuote, Comma, Period
@@ -47,22 +61,34 @@ public sealed class Parser
     NextToken();
   }
   
-  public object Parse()
-  { Pair list=null, tail=null;
+  public string SourceCode { get { return data; } }
+  public string SourceFile { get { return sourceFile; } }
 
+  public object Parse() { return Parse(true); }
+  public object Parse(bool returnSyntax)
+  { Pair list=null, tail=null;
+returnSyntax = false; // TODO: remove this
+
+    Position start = currentPos;
+    object obj;
     while(token!=Token.EOF)
-    { object item = ParseOne();
-      Pair next = new Pair(item, null);
+    { obj = ParseOne(returnSyntax);
+      Pair next = new Pair(obj, null);
       if(list==null) list=tail=next;
       else { tail.Cdr=next; tail=next; }
     }
-    if(list==null) return null;
-    if(list.Cdr==null) return list.Car;
-    else return new Pair(Symbol.Get("begin"), list);
+
+    if(list!=null && list.Cdr==null) return list.Car;
+
+    obj = list==null ? null : (object)new Pair(Symbol.Get("begin"), list);
+    return returnSyntax ? new SyntaxObject(sourceFile, data, obj, start, currentPos) : obj;
   }
 
-  public object ParseOne()
+  public object ParseOne() { return ParseOne(true); }
+  public object ParseOne(bool returnSyntax)
   { object ret;
+returnSyntax = false; // TODO: remove this
+    Position start = currentPos;
     switch(token)
     { case Token.LParen: case Token.LBracket:
       { Token end = token==Token.LParen ? Token.RParen : Token.RBracket;
@@ -71,8 +97,8 @@ public sealed class Parser
         { ArrayList items = new ArrayList();
           object dot = null;
           do
-          { items.Add(ParseOne());
-            if(TryEat(Token.Period)) { dot=ParseOne(); break; }
+          { items.Add(ParseOne(returnSyntax));
+            if(TryEat(Token.Period)) { dot=ParseOne(returnSyntax); break; }
           }
           while(token!=end && token!=Token.EOF);
           if(items.Count==0 && dot!=null) throw SyntaxError("malformed dotted list");
@@ -92,14 +118,14 @@ public sealed class Parser
         NextToken();
         break;
       }
-      case Token.BackQuote: NextToken(); ret = Ops.List(quasiSym, ParseOne()); break;
-      case Token.Comma: NextToken(); ret = Ops.List(unquoteSym, ParseOne()); break;
-      case Token.Quote: NextToken(); ret = Ops.List(quoteSym, ParseOne()); break;
-      case Token.Splice: NextToken(); ret = Ops.List(spliceSym, ParseOne()); break;
+      case Token.BackQuote: NextToken(); ret = Ops.List(quasiSym, ParseOne(returnSyntax)); break;
+      case Token.Comma: NextToken(); ret = Ops.List(unquoteSym, ParseOne(returnSyntax)); break;
+      case Token.Quote: NextToken(); ret = Ops.List(quoteSym, ParseOne(returnSyntax)); break;
+      case Token.Splice: NextToken(); ret = Ops.List(spliceSym, ParseOne(returnSyntax)); break;
       case Token.Vector:
       { ArrayList items = new ArrayList();
         NextToken();
-        while(!TryEat(Token.RParen)) items.Add(ParseOne());
+        while(!TryEat(Token.RParen)) items.Add(ParseOne(returnSyntax));
         ret = Ops.List2(vectorSym, (object[])items.ToArray(typeof(object)));
         break;
       }
@@ -113,20 +139,21 @@ public sealed class Parser
 
       Pair tail = new Pair(dotLastSym, null);
       ret = new Pair(new Pair(memberSym, new Pair(ret, new Pair((string)value, null))), tail);
-
       NextToken();
       while(token!=Token.RCurly)
-      { Pair next = new Pair(ParseOne(), null);
+      { Pair next = new Pair(ParseOne(returnSyntax), null);
         tail.Cdr=next; tail=next;
       }
       NextToken();
     }
-    return ret;
+
+    return returnSyntax ? new SyntaxObject(sourceFile, data, ret, start, endPos) : ret;
   }
 
   public static Parser FromFile(string filename) { return new Parser(filename, new StreamReader(filename), true); }
   public static Parser FromStream(Stream stream) { return new Parser("<stream>", new StreamReader(stream)); }
   public static Parser FromString(string text) { return new Parser("<string>", text); }
+  public static Parser FromString(string source, string text) { return new Parser(source, text); }
 
   public static bool IsDelimiter(char c)
   { if(char.IsWhiteSpace(c)) return true;
@@ -141,11 +168,6 @@ public sealed class Parser
   public static object ParseNumber(string str, int radix) { return ParseNum(str, "", radix, '\0'); }
 
   public static readonly object EOF = new Singleton("<EOF>");
-
-  struct Position
-  { public Position(int startLine, int startCol) { StartLine=startLine; StartCol=startCol; }
-    public int StartLine, StartCol;
-  }
 
   void Eat(Token type) { if(token!=type) Unexpected(token, type); NextToken(); }
   void Expect(Token type) { if(token!=type) Unexpected(token); }
@@ -228,10 +250,10 @@ public sealed class Parser
     if(lastChar!=0) { c=lastChar; lastChar='\0'; return c; }
     else if(pos>=data.Length) return '\0';
     c = data[pos++]; column++;
-    if(c=='\n') { line++; column=1; }
+    if(c=='\n') { line++; column=0; }
     else if(c=='\r')
     { if(pos<data.Length && data[pos]=='\n') pos++;
-      c='\n'; line++; column=1;
+      c='\n'; line++; column=0;
     }
     else if(c==0) c = ' ';
     return c;
@@ -297,7 +319,9 @@ public sealed class Parser
   { char c;
 
     while(true)
-    { do c=ReadChar(); while(c!=0 && char.IsWhiteSpace(c));
+    { endPos = new Position(line, column);
+      do c=ReadChar(); while(c!=0 && char.IsWhiteSpace(c));
+      currentPos = new Position(line, column);
 
       if(char.IsDigit(c) || c=='.' || c=='-' || c=='+')
       { value = ReadNumber(c);
@@ -343,7 +367,8 @@ public sealed class Parser
               { c = ReadChar();
                 if(c!=delim) { lastChar=c; break; }
               }
-              sb.Append(c);
+              else if(c==0) throw SyntaxError("unterminated string literal");
+              else sb.Append(c);
             }
             value = sb.ToString();
             return Token.Literal;
@@ -428,7 +453,8 @@ public sealed class Parser
   string sourceFile, data;
   Token  token=Token.None, nextToken=Token.None;
   object value;
-  int    line=1, column=1, pos;
+  Position currentPos=new Position(1,0), endPos=new Position(1,0);
+  int    line=1, column=0, pos;
   char   lastChar;
 
   static object ParseInt(string str, int radix)

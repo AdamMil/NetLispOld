@@ -185,7 +185,7 @@ public class LispBox : TextEditorControl
 
   bool TextArea_KeyEventHandler(char ch)
   { if(!AcBox.Visible || ch=='\b') return false;
-    else if(ch<=32 || ch=='(' || ch==')')
+    else if(ch<=32 || ch=='(' || ch==')' || ch=='}')
     { bool handled=false;
       if(AcBox.SelectedIndex!=-1) SelectItem();
       if(ch=='\n' || ch=='\r' || ch=='\t') handled=true;
@@ -242,7 +242,7 @@ public class LispBox : TextEditorControl
 
     AutoCompleteBox acbox = AcBox;
     acbox.Items.Clear();
-    ArrayList list = new ArrayList(Ops.GetMemberNames(obj));
+    ArrayList list = new ArrayList(Ops.GetMemberNames(obj, true));
     list.Sort();
     foreach(string name in list)
       if(string.Compare(name, 0, ident, 0, ident.Length, true)==0)

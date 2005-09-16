@@ -24,6 +24,8 @@ using System.Collections;
 using System.IO;
 using System.Reflection;
 
+// TODO: read http://citeseer.ist.psu.edu/88826.html
+
 namespace NetLisp.Backend
 {
 
@@ -342,14 +344,7 @@ namespace NetLisp.Backend
 #endregion
 
 public sealed class Builtins
-{ 
-[SymbolName("load-assembly-by-name")]
-public static void loadByName(string name) { Interop.LoadAssemblyByName(name); }
-[SymbolName("load-assembly-from-file")]
-public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name); }
-public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
-
-  public static MemberContainer Instance
+{ public static MemberContainer Instance
   { get
     { if(instance==null) instance = Importer.Load(typeof(Builtins));
       return instance;
@@ -462,10 +457,44 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
 
   #region .members
   public sealed class dotMembers : Primitive
-  { public dotMembers() : base(".members", 1, 1) { }
+  { public dotMembers() : base(".members", 1, 2) { }
     public override object Call(object[] args)
     { CheckArity(args);
-      return dotCollect.core(ReflectedType.FromObject(args[0]).GetMemberNames().GetEnumerator());
+      bool includeImports = args.Length==2 && Ops.IsTrue(args[1]);
+      return dotCollect.core(ReflectedType.FromObject(args[0]).GetMemberNames(includeImports).GetEnumerator());
+    }
+  }
+  #endregion
+
+  #region .ref
+  public sealed class dotRef : Primitive
+  { public dotRef() : base(".ref", 0, 1) { }
+    
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return new Reference(args.Length==0 ? null : args[0]);
+    }
+  }
+  #endregion
+
+  #region .ref-value
+  public sealed class dotRefValue : Primitive
+  { public dotRefValue() : base(".ref-value", 1, 1) { }
+    
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectRef(args[0]).Value;
+    }
+  }
+  #endregion
+
+  #region .ref-set-value!
+  public sealed class dotRefSetValueN : Primitive
+  { public dotRefSetValueN() : base(".ref-set-value!", 2, 2) { }
+    
+    public override object Call(object[] args)
+    { CheckArity(args);
+      return Ops.ExpectRef(args[0]).Value=args[1];
     }
   }
   #endregion
@@ -481,16 +510,10 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   }
   #endregion
 
-  #region make-ref
-  public sealed class makeRef : Primitive
-  { public makeRef() : base("make-ref", 0, 1) { }
-    
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return new Reference(args.Length==0 ? null : args[0]);
-    }
-  }
-  #endregion
+  [SymbolName("load-assembly-by-name")]
+  public static void loadByName(string name) { Interop.LoadAssemblyByName(name); }
+  [SymbolName("load-assembly-from-file")]
+  public static void loadFromFile(string name) { Interop.LoadAssemblyFromFile(name); }
 
   #region ref
   public sealed class @ref : Primitive
@@ -506,28 +529,6 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
       Pair pair = args[0] as Pair;
       if(pair!=null) return listRef.core(name, pair, Ops.ExpectInt(args[1]));
       throw Ops.TypeError(name+": expected container type, but received "+Ops.TypeName(args[0]));
-    }
-  }
-  #endregion
-
-  #region ref-value
-  public sealed class refValue : Primitive
-  { public refValue() : base("ref-value", 1, 1) { }
-    
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return Ops.ExpectRef(args[0]).Value;
-    }
-  }
-  #endregion
-
-  #region ref-set-value!
-  public sealed class refSetValueN : Primitive
-  { public refSetValueN() : base("ref-set-value!", 2, 2) { }
-    
-    public override object Call(object[] args)
-    { CheckArity(args);
-      return Ops.ExpectRef(args[0]).Value=args[1];
     }
   }
   #endregion
@@ -1431,7 +1432,7 @@ public static void println(object obj) { Console.WriteLine(Ops.Repr(obj)); }
   public static IProcedure expanderFunction(Symbol sym) { return TopLevel.Current.GetMacro(sym.Name); }
 
   [SymbolName("install-expander")]
-  public static object installExpander(Symbol sym, Closure func)
+  public static object installExpander(Symbol sym, IProcedure func)
   { TopLevel.Current.AddMacro(sym.Name, func);
     return sym;
   }

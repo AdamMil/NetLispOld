@@ -88,8 +88,7 @@ public sealed class ModuleGenerator
   */
 
   #region Generate from builtin type
-  public static MemberContainer Generate(Type type) { return Generate(type, type==typeof(Builtins)); }
-  public static MemberContainer Generate(Type type, bool parseOneByOne)
+  public static MemberContainer Generate(Type type)
   { object[] attrs = type.GetCustomAttributes(typeof(LispCodeAttribute), false);
     if(attrs.Length==0) return ReflectedType.FromType(type);
 
@@ -99,7 +98,7 @@ public sealed class ModuleGenerator
     if(File.Exists(filename))
       try
       { Assembly ass = Assembly.LoadFrom(filename);
-        Type mtype = ass.GetType("module");
+        Type mtype = ass.GetType(type.Name);
         if(mtype!=null && mtype.IsSubclassOf(typeof(BuiltinModule)))
           return (BuiltinModule)mtype.GetConstructor(Type.EmptyTypes).Invoke(null);
       }
@@ -108,18 +107,22 @@ public sealed class ModuleGenerator
 
     AssemblyGenerator ag = new AssemblyGenerator(type.FullName, filename);
     TopLevel oldTL = TopLevel.Current;
-    bool debug=Options.Debug, optimize=Options.Optimize;
+    bool debug=Options.Debug, optimize=Options.Optimize, inBuiltins=AST.IsCompilingBuiltins,
+         isBuiltins = type==typeof(Builtins);
     try
     { TopLevel.Current = new TopLevel();
-      Options.Debug=false; Options.Optimize=true;
-      if(type!=typeof(Builtins)) Builtins.Instance.Import(TopLevel.Current);
-      ReflectedType.FromType(type).Import(TopLevel.Current);
+      Options.Debug = Options.DebugModules;
+      Options.Optimize = true;
+      AST.IsCompilingBuiltins = false;
 
-      TypeGenerator tg = ag.DefineType("module", typeof(BuiltinModule));
+      if(!isBuiltins) Builtins.Instance.Import(TopLevel.Current);
+      ReflectedType.FromType(type, false).Import(TopLevel.Current);
+
+      TypeGenerator tg = ag.DefineType(type.Name, typeof(BuiltinModule));
       CodeGenerator cg;
 
       cg = tg.DefineStaticMethod(MethodAttributes.Private, "Run", typeof(void),
-                                  new Type[] { typeof(LocalEnvironment), typeof(TopLevel) });
+                                 new Type[] { typeof(LocalEnvironment), typeof(TopLevel) });
       Slot tmp=cg.AllocLocalTemp(typeof(TopLevel));
       Slot topSlot=new ArgSlot((MethodBuilder)cg.MethodBase, 1, "topLevel", typeof(TopLevel));
       cg.EmitFieldGet(typeof(TopLevel), "Current");
@@ -128,16 +131,17 @@ public sealed class ModuleGenerator
       topSlot.EmitGet(cg);
       cg.EmitFieldSet(typeof(TopLevel), "Current");
 
-      Parser parser = Parser.FromString(((LispCodeAttribute)attrs[0]).Code);
-      if(!parseOneByOne)
-      { LambdaNode node = AST.Create(Ops.Call("expand", parser.Parse()));
+      Parser parser = Parser.FromString("<"+type.Name+" module>", ((LispCodeAttribute)attrs[0]).Code);
+      if(!isBuiltins)
+      { LambdaNode node = AST.Create(Ops.Call("expand", parser.Parse(true)));
         cg.SetupNamespace(node.MaxNames, topSlot);
-        SnippetMaker.Generate(node).Run(null);
         node.Body.MarkTail(false);
         node.Body.EmitVoid(cg);
       }
       else
       { cg.Namespace = new LocalNamespace(new TopLevelNamespace(cg, topSlot), cg);
+        new MarkSourceNode(parser.SourceFile, parser.SourceCode, null).EmitVoid(cg);
+
         int lastMax = 0;
         while(true)
         { object obj = Ops.Call("expand", parser.ParseOne());
@@ -153,7 +157,9 @@ public sealed class ModuleGenerator
             cg.EmitArgSet(0);
             lastMax = node.MaxNames;
           }
-          SnippetMaker.Generate(node).Run(null);
+          AST.IsCompilingBuiltins = true;
+          SnippetMaker.Generate(node).Run(null); // this is done so the macros can be installed as they're defined
+          AST.IsCompilingBuiltins = false;
           node.Body.MarkTail(false);
           node.Body.EmitVoid(cg);
         }
@@ -171,7 +177,7 @@ public sealed class ModuleGenerator
       cg = tg.DefineConstructor(Type.EmptyTypes);
       cg.EmitThis();
       cg.EmitTypeOf(type);
-      cg.EmitBool(run!=null && type!=typeof(Builtins));
+      cg.EmitBool(run!=null && !isBuiltins);
       cg.EmitCall(typeof(BuiltinModule).GetConstructor(new Type[] { typeof(Type), typeof(bool) }));
       if(run!=null)
       { cg.ILG.Emit(OpCodes.Ldnull);
@@ -187,7 +193,9 @@ public sealed class ModuleGenerator
 
       return (MemberContainer)type.GetConstructor(Type.EmptyTypes).Invoke(null);
     }
-    finally { TopLevel.Current=oldTL; Options.Debug=debug; Options.Optimize=optimize; }
+    finally
+    { TopLevel.Current=oldTL; Options.Debug=debug; Options.Optimize=optimize; AST.IsCompilingBuiltins=inBuiltins;
+    }
   }
   #endregion
   
