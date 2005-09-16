@@ -373,7 +373,7 @@ public sealed class CodeGenerator
   }
 
   public void MarkPosition(Node node)
-  { MarkPosition(node.StartLine, node.StartColumn, node.EndLine, node.EndColumn);
+  { MarkPosition(node.Start.Line, node.Start.Column, node.End.Line, node.End.Column);
   }
   public void MarkPosition(int startLine, int startCol, int endLine, int endCol)
   { if(TypeGenerator.Assembly.Symbols!=null && startLine!=0 && endLine!=0)

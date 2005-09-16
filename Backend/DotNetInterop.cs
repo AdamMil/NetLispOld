@@ -178,7 +178,7 @@ public sealed class ReflectedNamespace : MemberContainer
     return ret!=null || dict.Contains(name);
   }
 
-  public override ICollection GetMemberNames() { return dict.Keys; }
+  public override ICollection GetMemberNames(bool includeImports) { return dict.Keys; }
 
   public override void Import(TopLevel top, string[] names, string[] asNames)
   { Importer.Import(top, dict, null, names, asNames, "namespace '"+name+"'");
@@ -227,7 +227,7 @@ public sealed class ReflectedNamespace : MemberContainer
 
 #region ReflectedType
 public sealed class ReflectedType : MemberContainer
-{ internal ReflectedType(Type type) { Type=type; }
+{ internal ReflectedType(Type type) { Type=type; includeInherited=true; }
   internal ReflectedType(Type type, bool includeInherited) { Type=type; this.includeInherited=includeInherited; }
 
   #region Static constructor
@@ -277,7 +277,7 @@ public sealed class ReflectedType : MemberContainer
     return ret!=null || dict.Contains(name);
   }
 
-  public override ICollection GetMemberNames() { return Dict.Keys; }
+  public override ICollection GetMemberNames(bool includeImports) { return Dict.Keys; }
 
   public void Import(TopLevel top, bool impersonateLocal) { Import(top, null, null, impersonateLocal); }
   public override void Import(TopLevel top, string[] names, string[] asNames) { Import(top, names, asNames, false); }
@@ -582,9 +582,24 @@ public sealed class ReflectedType : MemberContainer
 
     if(type==null)
     { bool isCons = mi is ConstructorInfo;
+
+      string name = "sw$"+swi.Next.ToString();
+      #if DEBUG
+      for(int i=0; i<sig.Params.Length; i++)
+      { Type t = sig.Params[i];
+        string suf=null;
+        while(true)
+        { if(t.IsPointer) suf += "Ptr";
+          else if(t.IsArray) suf += "Arr";
+          else if(t.GetElementType()==null) break;
+          t = t.GetElementType();
+        }
+        name += "_"+t.Name+suf;
+      }
+      #endif
       TypeGenerator tg = SnippetMaker.Assembly.DefineType(TypeAttributes.Public|TypeAttributes.Sealed,
-                                                          "sw$"+swi.Next, isCons ? typeof(FunctionWrapper)
-                                                                                 : typeof(FunctionWrapperI));
+                                                          name, isCons ? typeof(FunctionWrapper)
+                                                                       : typeof(FunctionWrapperI));
       int numnp = sig.ParamArray ? sig.Params.Length-1 : sig.Params.Length;
       int min = sig.Params.Length - (sig.Defaults==null ? 0 : sig.Defaults.Length) - (sig.ParamArray ? 1 : 0);
       int max = sig.ParamArray ? -1 : sig.Params.Length;
@@ -1029,12 +1044,27 @@ public sealed class Interop
     return type;
   }
 
+  static void LoadAssembly(Assembly ass)
+  { Hashtable namespaces = new Hashtable();
+    foreach(Type type in ass.GetTypes())
+    { if(!type.IsPublic || type.DeclaringType!=null || type.Namespace==null) continue;
+      ArrayList list = (ArrayList)namespaces[type.Namespace];
+      if(list==null) namespaces[type.Namespace] = list = new ArrayList();
+      list.Add(type);
+    }
+    foreach(DictionaryEntry de in namespaces)
+    { ReflectedNamespace ns = ReflectedNamespace.FromName((string)de.Key);
+      foreach(Type type in (ArrayList)de.Value) ns.AddType(type);
+    }
+  }
+
   public static void LoadAssemblyByName(string name)
   { Assembly ass = Assembly.LoadWithPartialName(name);
     if(ass==null) throw new ArgumentException("Assembly "+name+" could not be loaded");
-    InitAssembly(ass);
+    LoadAssembly(ass);
   }
-  public static void LoadAssemblyFromFile(string name) { InitAssembly(Assembly.LoadFrom(name)); }
+
+  public static void LoadAssemblyFromFile(string name) { LoadAssembly(Assembly.LoadFrom(name)); }
 
   #region MakeDelegateWrapper
   public static object MakeDelegateWrapper(IProcedure proc, Type delegateType)
@@ -1148,20 +1178,6 @@ public sealed class Interop
   }
 
   delegate object Create(IProcedure proc);
-
-  static void InitAssembly(Assembly a)
-  { Hashtable namespaces = new Hashtable();
-    foreach(Type type in a.GetTypes())
-    { if(!type.IsPublic || type.Namespace==null) continue;
-      ArrayList list = (ArrayList)namespaces[type.Namespace];
-      if(list==null) namespaces[type.Namespace] = list = new ArrayList();
-      list.Add(type);
-    }
-    foreach(DictionaryEntry de in namespaces)
-    { ReflectedNamespace ns = ReflectedNamespace.FromName((string)de.Key);
-      foreach(Type type in (ArrayList)de.Value) ns.AddType(type);
-    }
-  }
 
   static readonly Hashtable handlers=new Hashtable(), dsigs=new Hashtable();
   static readonly Index dwi=new Index();

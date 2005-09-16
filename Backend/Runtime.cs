@@ -152,6 +152,7 @@ public enum Conversion
 #region Binding
 public sealed class Binding
 { public Binding(string name, TopLevel env) { Value=Unbound; Name=name; Environment=env; }
+  public Binding(string name, object value, TopLevel env) { Value=value; Name=name; Environment=env; }
 
   public override bool Equals(object obj) { return this==obj; }
   public override int GetHashCode() { return Name.GetHashCode(); }
@@ -174,7 +175,11 @@ public sealed class Cast : MemberContainer
 
   public override object GetMember(string name) { return ReflectedType.GetMember(name); }
   public override bool GetMember(string name, out object ret) { return ReflectedType.GetMember(name, out ret); }
-  public override ICollection GetMemberNames() { return ReflectedType.GetMemberNames(); }
+
+  public override ICollection GetMemberNames(bool includeImports)
+  { return ReflectedType.GetMemberNames(includeImports);
+  }
+
   public override void Import(TopLevel top, string[] names, string[] asNames)
   { ReflectedType.Import(top, names, asNames);
   }
@@ -247,6 +252,62 @@ public sealed class RG
 #endregion
 
 #region Environments
+#region BindingSpace
+public sealed class BindingSpace
+{ public void Alter(string name, object value)
+  { Binding bind;
+    lock(Dict) bind = (Binding)Dict[name];
+    if(bind==null) throw new NameException("no such name: "+name);
+    bind.Value = value;
+  }
+
+  public void Bind(string name, object value, TopLevel env)
+  { Binding bind = new Binding(name, value, env);
+    lock(Dict) Dict[name] = bind;
+  }
+
+  public bool Contains(string name)
+  { Binding bind;
+    lock(Dict) bind = (Binding)Dict[name];
+    return bind!=null && bind.Value!=Binding.Unbound;
+  }
+
+  public object Get(string name)
+  { Binding bind;
+    lock(Dict) bind = (Binding)Dict[name];
+    if(bind==null || bind.Value==Binding.Unbound) throw new NameException("no such name: "+name);
+    return bind.Value;
+  }
+
+  public bool Get(string name, out object value)
+  { Binding bind;
+    lock(Dict) bind = (Binding)Dict[name];
+    if(bind==null || bind.Value==Binding.Unbound) { value=null; return false; }
+    value = bind.Value;
+    return true;
+  }
+
+  public Binding GetBinding(string name, TopLevel env)
+  { Binding bind;
+    lock(Dict) bind = (Binding)Dict[name];
+    if(bind==null) Dict[name] = bind = new Binding(name, env);
+    return bind;
+  }
+
+  public void Set(string name, object value, TopLevel env)
+  { Binding bind;
+    lock(Dict)
+    { bind = (Binding)Dict[name];
+      if(bind==null) Dict[name] = bind = new Binding(name, env);
+      else bind.Environment = env;
+    }
+    bind.Value = value;
+  }
+  
+  public readonly Hashtable Dict = new Hashtable();
+}
+#endregion
+
 public sealed class InterpreterEnvironment
 { public InterpreterEnvironment(InterpreterEnvironment parent) { this.parent=parent; dict=new ListDictionary(); }
 
@@ -283,61 +344,9 @@ public sealed class LocalEnvironment
 }
 
 public sealed class TopLevel
-{ public enum NS { Main, Macro }
+{ public void AddMacro(string name, IProcedure value) { Macros.Set(name, value, this); }
 
-  #region BindingSpace
-  public sealed class BindingSpace
-  { public void Bind(string name, object value, TopLevel env)
-    { Binding bind;
-      lock(Dict)
-      { bind = (Binding)Dict[name];
-        if(bind==null) Dict[name] = bind = new Binding(name, env);
-        else bind.Environment = env;
-      }
-      bind.Value = value;
-    }
-
-    public bool Contains(string name)
-    { Binding obj;
-      lock(Dict) obj = (Binding)Dict[name];
-      return obj!=null && obj.Value!=Binding.Unbound;
-    }
-
-    public object Get(string name)
-    { Binding obj;
-      lock(Dict) obj = (Binding)Dict[name];
-      if(obj==null || obj.Value==Binding.Unbound) throw new NameException("no such name: "+name);
-      return obj.Value;
-    }
-
-    public bool Get(string name, out object value)
-    { Binding obj;
-      lock(Dict) obj = (Binding)Dict[name];
-      if(obj==null || obj.Value==Binding.Unbound) { value=null; return false; }
-      value = obj.Value;
-      return true;
-    }
-
-    public Binding GetBinding(string name, TopLevel env)
-    { Binding obj;
-      lock(Dict) obj = (Binding)Dict[name];
-      if(obj==null) Dict[name] = obj = new Binding(name, env);
-      return obj;
-    }
-
-    public void Set(string name, object value)
-    { Binding obj;
-      lock(Dict) obj = (Binding)Dict[name];
-      if(obj==null) throw new NameException("no such name: "+name);
-      obj.Value = value;
-    }
-    
-    public readonly Hashtable Dict = new Hashtable();
-  }
-  #endregion
-
-  public void AddMacro(string name, IProcedure value) { Macros.Bind(name, value, this); }
-
+  public void Alter(string name, object value) { Globals.Alter(name, value); }
   public void Bind(string name, object value) { Globals.Bind(name, value, this); }
 
   public bool Contains(string name) { return Globals.Contains(name); }
@@ -348,7 +357,7 @@ public sealed class TopLevel
   public Binding GetBinding(string name) { return Globals.GetBinding(name, this); }
   public IProcedure GetMacro(string name) { return (IProcedure)Macros.Get(name); }
 
-  public void Set(string name, object value) { Globals.Set(name, value); }
+  public void Set(string name, object value) { Globals.Set(name, value, this); }
 
   public BindingSpace Globals=new BindingSpace(), Macros=new BindingSpace();
 
@@ -386,8 +395,10 @@ public class LispModule : MemberContainer
   public override object GetMember(string name) { return TopLevel.Globals.Get(name); }
   public override bool GetMember(string name, out object ret) { return TopLevel.Globals.Get(name, out ret); }
 
-  public override ICollection GetMemberNames()
-  { ArrayList ret = new ArrayList(Math.Max(TopLevel.Globals.Dict.Count/2, 16));
+  public override ICollection GetMemberNames(bool includeImports)
+  { if(includeImports) return TopLevel.Globals.Dict.Keys;
+
+    ArrayList ret = new ArrayList(Math.Max(TopLevel.Globals.Dict.Count/2, 16));
     foreach(DictionaryEntry de in TopLevel.Globals.Dict)
     { Binding bind = (Binding)de.Value;
       if(bind.Environment==TopLevel) ret.Add(de.Key);
@@ -421,7 +432,7 @@ public class LispModule : MemberContainer
   public readonly TopLevel TopLevel;
   public readonly string Name;
 
-  static void Import(TopLevel.BindingSpace to, TopLevel.BindingSpace from, TopLevel env)
+  static void Import(BindingSpace to, BindingSpace from, TopLevel env)
   { foreach(DictionaryEntry de in from.Dict)
     { string key = (string)de.Key;
       if(!key.StartsWith("#_"))
@@ -437,7 +448,8 @@ public class LispModule : MemberContainer
 public abstract class MemberContainer
 { public abstract object GetMember(string name);
   public abstract bool GetMember(string name, out object ret);
-  public abstract ICollection GetMemberNames();
+  public ICollection GetMemberNames() { return GetMemberNames(false); }
+  public abstract ICollection GetMemberNames(bool includeImports);
 
   public void Import(TopLevel top) { Import(top, null, null); }
   public void Import(TopLevel top, string[] names) { Import(top, names, names); }
@@ -760,12 +772,12 @@ public sealed class Ops
         else
           switch(Type.GetTypeCode(from))
           { case TypeCode.Int32:  return IsIn(typeConv[4], to) ? Conversion.Safe : Conversion.Unsafe;
-            case TypeCode.Double: return Conversion.None;
+            case TypeCode.Double: return Conversion.Unsafe;
             case TypeCode.Int64:  return IsIn(typeConv[6], to) ? Conversion.Safe : Conversion.Unsafe;
             case TypeCode.Char:   return IsIn(typeConv[8], to) ? Conversion.Safe : Conversion.Unsafe;
             case TypeCode.Byte:   return IsIn(typeConv[1], to) ? Conversion.Safe : Conversion.Unsafe;
             case TypeCode.UInt32: return IsIn(typeConv[5], to) ? Conversion.Safe : Conversion.Unsafe;
-            case TypeCode.Single: return to==typeof(double) ? Conversion.Safe : Conversion.None;
+            case TypeCode.Single: return to==typeof(double) ? Conversion.Safe : Conversion.Unsafe;
             case TypeCode.Int16:  return IsIn(typeConv[2], to) ? Conversion.Safe : Conversion.Unsafe;
             case TypeCode.UInt16: return IsIn(typeConv[3], to) ? Conversion.Safe : Conversion.Unsafe;
             case TypeCode.SByte:  return IsIn(typeConv[0], to) ? Conversion.Safe : Conversion.Unsafe;
@@ -1006,7 +1018,10 @@ public sealed class Ops
   { return MemberContainer.FromObject(obj).GetMember(name, out member);
   }
 
-  public static ICollection GetMemberNames(object obj) { return MemberContainer.FromObject(obj).GetMemberNames(); }
+  public static ICollection GetMemberNames(object obj) { return GetMemberNames(obj, false); }
+  public static ICollection GetMemberNames(object obj, bool includeImports)
+  { return MemberContainer.FromObject(obj).GetMemberNames(includeImports);
+  }
 
   public static bool IsTrue(object obj) { return obj!=null && (!(obj is bool) || (bool)obj); }
 
