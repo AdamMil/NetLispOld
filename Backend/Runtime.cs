@@ -1071,18 +1071,20 @@ public sealed class Ops
     return Delegate.CreateDelegate(delegateType, Interop.MakeDelegateWrapper(proc, delegateType), "Handle");
   }
 
-  public static Exception MakeException(Type type, object[] args)
-  { ConstructorInfo ci = type.GetConstructor(new Type[] { typeof(string) });
-    if(ci!=null)
+  public static Exception MakeException(ReflectedType type, object[] args)
+  { IProcedure cons = type.Constructor;
+    if(cons==null) throw new ArgumentException("Cannot create an exception from "+Ops.TypeName(type)+
+                                               " because it has no constructor");
+    Exception ex; // TODO: make less assumptions about the types of constructors it has
+    if(args==null || args.Length==0) ex = cons.Call(EmptyArray) as Exception;
+    else
     { System.Text.StringBuilder sb = new System.Text.StringBuilder();
-      if(args!=null) foreach(object o in args) sb.Append(Str(o));
-      return (Exception)ci.Invoke(new object[1] { sb.ToString() });
+      foreach(object o in args) sb.Append(Str(o));
+      ex = cons.Call(sb.ToString()) as Exception;
     }
-    
-    ci = type.GetConstructor(Type.EmptyTypes);
-    if(ci!=null) return (Exception)ci.Invoke(EmptyArray);
-    
-    throw new NotSupportedException("unable to construct exception type: "+type.FullName);
+    if(ex==null) throw new ArgumentException("Cannot create an exception from "+Ops.TypeName(type)+
+                                             " because it is not derived from System.Exception");
+    return ex;
   }
 
   public static object Modulus(object a, object b)

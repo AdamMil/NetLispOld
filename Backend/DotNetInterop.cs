@@ -285,9 +285,19 @@ public sealed class ReflectedType : MemberContainer
   { Importer.Import(top, Dict, impersonateLocal ? top : null, names, asNames, "type '"+Ops.TypeName(Type)+"'");
   }
 
+  public bool IsInstance(object obj)
+  { return obj==null ? Type==null : Type==null ? false : Type.IsAssignableFrom(obj.GetType());
+  }
+
+  public bool IsSubtype(ReflectedType type)
+  { Type ot = type.Type;
+    return ot==null ? Type==null : Type==null ? false : Type.IsAssignableFrom(ot);
+  }
+
   public override string ToString() { return "#<type '"+Ops.TypeName(Type)+"'>"; }
 
   public readonly Type Type;
+  public IProcedure Constructor;
 
   public static ReflectedType FromType(Type type)
   { ReflectedType rt = (ReflectedType)types[type];
@@ -335,17 +345,18 @@ public sealed class ReflectedType : MemberContainer
     BindingFlags flags = BindingFlags.Public|BindingFlags.Instance|BindingFlags.Static;
     if(!includeInherited) flags |= BindingFlags.DeclaredOnly;
 
-    // TODO: handle certain types specially? eg, delegates and enums?
+    // TODO: handle certain types specially. eg, delegates, arrays, enums, ...?
     // TODO: add [] for arrays
-    // TODO: add the values for the names more lazily, if possible
+    // TODO: add the values for the names more lazily, if possible (don't do any compilation until necessary)
     // TODO: speed this up!
 
     if(!Type.IsPrimitive) // add constructors
     { ConstructorInfo[] ci = Type.GetConstructors();
       bool needDefault = Type.IsValueType && !Type.IsPrimitive;
       if(ci.Length!=0 || needDefault)
-        dict[Type.Name] = ci.Length+(needDefault ? 1 : 0) != 1 ? (object)new ReflectedConstructors(Type)
-                            : needDefault ? MakeStructCreator(Type) : MakeFunctionWrapper(ci[0]);
+        dict[Type.Name] = Constructor =
+          ci.Length+(needDefault ? 1 : 0) != 1 ? (IProcedure)new ReflectedConstructors(Type)
+                                               : needDefault ? MakeStructCreator(Type) : MakeFunctionWrapper(ci[0]);
     }
 
     // add events
@@ -438,6 +449,7 @@ public sealed class ReflectedType : MemberContainer
   }
   #endregion
 
+  
   Hashtable dict;
   bool includeInherited;
 

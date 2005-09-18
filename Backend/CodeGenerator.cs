@@ -45,6 +45,28 @@ public sealed class CodeGenerator
     return new LocalSlot(ILG.DeclareLocal(type));
   }
 
+  public Slot AllocObjectArrayWithTryNode(Node[] exprs)
+  { Slot arr = AllocLocalTemp(typeof(object[]));
+    if(exprs.Length==0)
+    { EmitFieldGet(typeof(Ops), "EmptyArray");
+      arr.EmitSet(this);
+    }
+    else
+    { EmitNewArray(typeof(object), exprs.Length);
+      arr.EmitSet(this);
+      Slot obj = AllocLocalTemp(typeof(object));
+      for(int i=0; i<exprs.Length; i++)
+      { exprs[i].Emit(this);
+        obj.EmitSet(this);
+        arr.EmitGet(this);
+        EmitInt(i);
+        obj.EmitGet(this);
+        ILG.Emit(OpCodes.Stelem_Ref);
+      }
+    }
+    return arr;
+  }
+
   public void EmitArgGet(int index)
   { if(!MethodBase.IsStatic) index++;
     switch(index)
@@ -55,10 +77,12 @@ public sealed class CodeGenerator
       default: ILG.Emit(index<256 ? OpCodes.Ldarg_S : OpCodes.Ldarg, index); break;
     }
   }
+
   public void EmitArgGetAddr(int index)
   { if(!MethodBase.IsStatic) index++;
     ILG.Emit(index<256 ? OpCodes.Ldarga_S : OpCodes.Ldarga, index);
   }
+
   public void EmitArgSet(int index)
   { if(!MethodBase.IsStatic) index++;
     ILG.Emit(index<256 ? OpCodes.Starg_S : OpCodes.Starg, index);
@@ -259,12 +283,64 @@ public sealed class CodeGenerator
   public void EmitList(Node[] items, Node dot) { EmitList(items, dot, 0); }
   public void EmitList(Node[] items, int start) { EmitList(items, null, start); }
   public void EmitList(Node[] items, Node dot, int start)
-  { if(start==items.Length) ILG.Emit(OpCodes.Ldnull);
-    else
-    { ConstructorInfo cons = typeof(Pair).GetConstructor(new Type[] { typeof(object), typeof(object) });
-      for(int i=start; i<items.Length; i++) items[i].Emit(this);
+  { bool hasTryNode = false;
+    for(int i=start; i<items.Length; i++) if(items[i] is TryNode) { hasTryNode=true; break; }
+    if(!hasTryNode) hasTryNode = dot is TryNode;
+
+    ConstructorInfo cons = typeof(Pair).GetConstructor(new Type[] { typeof(object), typeof(object) });
+    if(start==items.Length) ILG.Emit(OpCodes.Ldnull);
+    else if(!hasTryNode)
+    { for(int i=start; i<items.Length; i++) items[i].Emit(this);
       EmitExpression(dot);
       for(int i=start; i<items.Length; i++) EmitNew(cons);
+    }
+    else if(start==items.Length-1)
+    { if(dot==null)
+      { items[start].Emit(this);
+        ILG.Emit(OpCodes.Ldnull);
+        EmitNew(cons);
+      }
+      else
+      { Slot tmp=AllocLocalTemp(typeof(object)), dtmp=AllocLocalTemp(typeof(object));
+        items[start].Emit(this);
+        tmp.EmitSet(this);
+        dot.Emit(this);
+        dtmp.EmitSet(this);
+        tmp.EmitGet(this);
+        dtmp.EmitGet(this);
+        EmitNew(cons);
+        FreeLocalTemp(tmp);
+        FreeLocalTemp(dtmp);
+      }
+    }
+    else
+    { Slot head=AllocLocalTemp(typeof(Pair)), tail=AllocLocalTemp(typeof(Pair)), next=AllocLocalTemp(typeof(Pair));
+      FieldInfo cdr = typeof(Pair).GetField("Cdr");
+
+      items[start].Emit(this);
+      ILG.Emit(OpCodes.Ldnull);
+      EmitNew(cons);
+      ILG.Emit(OpCodes.Dup);
+      head.EmitSet(this);
+      tail.EmitSet(this);
+
+      for(int i=start+1; i<items.Length; i++)
+      { items[i].Emit(this);
+        ILG.Emit(OpCodes.Ldnull);
+        EmitNew(cons);
+        next.EmitSet(this);
+        tail.EmitGet(this);
+        next.EmitGet(this);
+        EmitFieldSet(cdr);
+        next.EmitGet(this);
+        tail.EmitSet(this);
+      }
+      
+      head.EmitGet(this);
+
+      FreeLocalTemp(head);
+      FreeLocalTemp(tail);
+      FreeLocalTemp(next);
     }
   }
 
@@ -282,7 +358,11 @@ public sealed class CodeGenerator
   public void EmitObjectArray(Node[] exprs)
   { if(exprs.Length==0) EmitFieldGet(typeof(Ops), "EmptyArray");
     else
-    { EmitNewArray(typeof(object), exprs.Length);
+    { 
+      #if DEBUG
+      CheckForTryNode(exprs);
+      #endif
+      EmitNewArray(typeof(object), exprs.Length);
       for(int i=0; i<exprs.Length; i++)
       { ILG.Emit(OpCodes.Dup);
         EmitInt(i);
@@ -402,6 +482,12 @@ public sealed class CodeGenerator
   const BindingFlags SearchAll = BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance|BindingFlags.Static;
 
   ArrayList localTemps;
+  
+  #if DEBUG
+  static void CheckForTryNode(Node[] nodes)
+  { foreach(Node n in nodes) if(n is TryNode) throw new ArgumentException("Node array contains a TryNode");
+  }
+  #endif
 }
 
 } // namespace NetLisp.Backend
