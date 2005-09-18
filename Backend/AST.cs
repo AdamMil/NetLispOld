@@ -269,11 +269,11 @@ public sealed class AST
           bindingError: throw Ops.SyntaxError("let-value: bindings must be of form (((symbol ...) form) ...)");
         }
         /* (try
-            (begin forms ...)
-            (catch (e exn:syntaxerror exn:othererror)
-              forms ...)
-            (catch () forms ...)
-            (finally forms ...))
+            (begin form...)
+            (catch (e type...)
+              form...)
+            (catch () form...)
+            (finally form...))
         */
         case "try":
         { if(Builtins.length.core(pair)<3) goto error;
@@ -300,16 +300,12 @@ public sealed class AST
                 epair = (Pair)epair.Cdr;
                 if(epair!=null)
                 { if(etypes==null) etypes = new ArrayList();
-                  do
-                  { sym = epair.Car as Symbol;
-                    if(sym==null) goto catchError;
-                    etypes.Add(sym.Name);
-                  } while((epair=(Pair)epair.Cdr) != null);
+                  do etypes.Add(Parse(epair.Car)); while((epair=(Pair)epair.Cdr) != null);
                 }
               }
               else if(form.Car!=null) goto catchError;
               else evar = null;
-              excepts.Add(new TryNode.Except(evar, etypes==null ? null : (string[])etypes.ToArray(typeof(string)),
+              excepts.Add(new TryNode.Except(evar, etypes==null ? null : (Node[])etypes.ToArray(typeof(Node)),
                                              ParseBody((Pair)form.Cdr)));
               if(etypes!=null) etypes.Clear();
             }
@@ -328,15 +324,12 @@ public sealed class AST
         }
         // (throw [type [objects ...]]) ; type-less throw only allowed within catch form
         case "throw":
-        { string type=null;
+        { Node type=null;
           ArrayList objs=null;
 
           pair = pair.Cdr as Pair;
           if(pair!=null)
-          { sym = pair.Car as Symbol;
-            if(sym==null) throw Ops.SyntaxError("throw must be of form (throw [type [forms ...]])");
-            type = sym.Name;
-
+          { type = Parse(pair.Car);
             pair = pair.Cdr as Pair;
             if(pair!=null)
             { objs = new ArrayList();
@@ -671,7 +664,22 @@ public sealed class AccessNode : Node
       }
     }
     else
-    { cg.EmitTypedNode(Members, typeof(string));
+    { Slot tmp1, tmp2;
+      if(Members is TryNode)
+      { tmp1=cg.AllocLocalTemp(typeof(object));
+        tmp2=cg.AllocLocalTemp(typeof(string));
+        tmp1.EmitSet(cg);
+      }
+      else { tmp1=tmp2=null; }
+      cg.EmitTypedNode(Members, typeof(string));
+      if(tmp2!=null)
+      { tmp2.EmitSet(cg);
+        tmp1.EmitGet(cg);
+        tmp2.EmitGet(cg);
+
+        cg.FreeLocalTemp(tmp1);
+        cg.FreeLocalTemp(tmp2);
+      }
       cg.EmitCall(typeof(Ops), "GetMember", new Type[] { typeof(object), typeof(string) });
     }
     etype = typeof(object);
@@ -742,7 +750,6 @@ public sealed class BodyNode : Node
 }
 #endregion
 
-// TODO: inline "list"
 #region CallNode
 public sealed class CallNode : Node
 { public CallNode(Node func, params Node[] args) { Function=func; Args=args; }
@@ -764,7 +771,7 @@ public sealed class CallNode : Node
     cfunc.AddRange(new string[] {
       "eq?", "eqv?", "equal?", "null?", "pair?", "char?", "symbol?", "string?", "procedure?", "vector?", "values",
       "not", "string-null?", "string-length", "string-ref", "vector-length", "vector-ref", "car", "cdr", "promise?",
-      "char-upcase", "char-downcase", "->string"});
+      "char-upcase", "char-downcase", "->string", "list"});
 
     cfunc.Sort();
     constant = (string[])cfunc.ToArray(typeof(string));
@@ -782,6 +789,11 @@ public sealed class CallNode : Node
     }
 
     cg.MarkPosition(this);
+
+    bool hasTryArg;
+    foreach(Node n in Args) if(n is TryNode) { hasTryArg=true; goto normal; }
+    hasTryArg = false;
+
     if(Options.Optimize && Function is VariableNode)
     { VariableNode vn = (VariableNode)Function;
       if(Tail && FuncNameMatch(vn.Name, InFunc)) // see if we can tailcall ourselves with a branch
@@ -1023,6 +1035,13 @@ public sealed class CallNode : Node
             Args[1].Emit(cg);
             Args[2].Emit(cg);
             break;
+          case "list":
+            if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
+            else
+            { cg.EmitList(Args);
+              etype = typeof(Pair);
+              goto ret;
+            }
           case "values":
             CheckArity(1, -1);
             if(etype==typeof(void)) { EmitVoids(cg); goto ret; }
@@ -1048,14 +1067,26 @@ public sealed class CallNode : Node
 
     normal:
     cg.EmitTypedNode(Function, typeof(IProcedure));
-    cg.EmitObjectArray(Args);
+    if(!hasTryArg) cg.EmitObjectArray(Args);
+    else
+    { Slot ftmp = cg.AllocLocalTemp(typeof(IProcedure));
+      ftmp.EmitSet(cg);
+      Slot atmp = cg.AllocObjectArrayWithTryNode(Args);
+
+      ftmp.EmitGet(cg);
+      atmp.EmitGet(cg);
+
+      cg.FreeLocalTemp(ftmp);
+      cg.FreeLocalTemp(atmp);
+    }
+
     if(Tail && InTry==null) cg.ILG.Emit(OpCodes.Tailcall);
     cg.EmitCall(typeof(IProcedure), "Call");
     etype = typeof(object);
     TailReturn(cg);
   }
   #endregion
-  
+
   #region Evaluate
   public override object Evaluate()
   { IProcedure proc = Ops.ExpectProcedure(Function.Evaluate()); // this is up here to keep the same evaluation order
@@ -1168,6 +1199,7 @@ public sealed class CallNode : Node
         case "eq?": CheckArity(2); return a[0]==a[1];
         case "eqv?": CheckArity(2); return Ops.EqvP(a[0], a[1]);
         case "equal?": CheckArity(2); return Ops.EqualP(a[0], a[1]);
+        case "list": return Ops.List(a);
         case "not": CheckArity(1); return !Ops.IsTrue(a[0]);
         case "null?": CheckArity(1); return a[0]==null;
         case "pair?": CheckArity(1); return a[0] is Pair;
@@ -1291,9 +1323,20 @@ public sealed class DefineNode : Node
   public override void Emit(CodeGenerator cg, ref Type etype)
   { Debug.Assert(InFunc==null);
     cg.MarkPosition(this);
+    Slot tmp;
+    if(Value is TryNode)
+    { tmp = cg.AllocLocalTemp(typeof(object));
+      Value.Emit(cg);
+      tmp.EmitSet(cg);
+    }
+    else tmp = null;
     cg.EmitTopLevel();
     cg.EmitString(Name.String);
-    Value.Emit(cg);
+    if(tmp==null) Value.Emit(cg);
+    else
+    { tmp.EmitGet(cg);
+      cg.FreeLocalTemp(tmp);
+    }
     cg.EmitCall(typeof(TopLevel), "Set", new Type[] { typeof(string), typeof(object) });
     cg.Namespace.GetSlot(Name); // side effect of creating the slot
     if(etype!=typeof(void))
@@ -1590,8 +1633,7 @@ public class LambdaNode : Node
 
         if(tn.Excepts!=null)
           foreach(TryNode.Except ex in tn.Excepts)
-          { if(ex.Types!=null)
-              for(int i=0; i<ex.Types.Length; i++) HandleLocalReference(ref ex.Types[i].Name, null);
+          { if(ex.Types!=null) foreach(Node n in ex.Types) n.Walk(this);
             if(ex.Var!=null)
             { bound.Add(ex.Var);
               values.Add(null);
@@ -1604,7 +1646,7 @@ public class LambdaNode : Node
               values.RemoveAt(values.Count-1);
             }
           }
-        
+
         if(tn.Finally!=null) tn.Finally.Walk(this);
 
         inTry = oldTry;
@@ -2033,17 +2075,34 @@ public sealed class SetNode : Node
 
 #region ThrowNode
 public sealed class ThrowNode : Node
-{ public ThrowNode(string type, Node[] objects) { Type = type==null ? null : new VariableNode(type); Objects=objects; }
+{ public ThrowNode(Node type, Node[] objects) { Type=type; Objects=objects; }
 
   public override void Emit(CodeGenerator cg, ref Type etype)
   { cg.MarkPosition(this);
     if(Type==null) cg.ILG.Emit(OpCodes.Rethrow);
     else
-    { Type ttype = typeof(Type);
+    { Type ttype = typeof(ReflectedType);
       Type.Emit(cg, ref ttype);
-      if(ttype!=typeof(Type)) cg.EmitCall(typeof(Ops), "ExpectType");
-      if(Objects==null) cg.ILG.Emit(OpCodes.Ldnull);
-      else cg.EmitObjectArray(Objects);
+      if(ttype!=typeof(ReflectedType)) cg.EmitCall(typeof(Ops), "ExpectType");
+
+      if(Objects==null || Objects.Length==0) cg.ILG.Emit(OpCodes.Ldnull);
+      else
+      { bool hasTryNode = false;
+        foreach(Node n in Objects) if(n is TryNode) { hasTryNode=true; break; }
+        
+        if(!hasTryNode) cg.EmitObjectArray(Objects);
+        else
+        { Slot tmp = cg.AllocLocalTemp(typeof(ReflectedType));
+          tmp.EmitSet(cg);
+          Slot arr = cg.AllocObjectArrayWithTryNode(Objects);
+          tmp.EmitGet(cg);
+          arr.EmitGet(cg);
+          
+          cg.FreeLocalTemp(tmp);
+          cg.FreeLocalTemp(arr);
+        }
+      }
+
       cg.EmitCall(typeof(Ops), "MakeException");
       cg.ILG.Emit(OpCodes.Throw);
       if(etype!=typeof(void))
@@ -2057,7 +2116,7 @@ public sealed class ThrowNode : Node
   
   public override object Evaluate()
   { if(Type==null) throw (Exception)Ops.ExceptionStack.Peek();
-    throw Ops.MakeException(Ops.ExpectType(Type.Evaluate()).Type, Objects==null ? null : MakeObjectArray(Objects));
+    throw Ops.MakeException(Ops.ExpectType(Type.Evaluate()), Objects==null ? null : MakeObjectArray(Objects));
   }
 
   public override void MarkTail(bool tail)
@@ -2078,7 +2137,7 @@ public sealed class ThrowNode : Node
     w.PostWalk(this);
   }
 
-  public readonly VariableNode Type;
+  public readonly Node Type;
   public readonly Node[] Objects;
 }
 #endregion
@@ -2088,17 +2147,13 @@ public sealed class TryNode : Node
 { public TryNode(Node body, Except[] excepts, Node final) { Body=body; Excepts=excepts; Finally=final; }
 
   public struct Except
-  { public Except(string var, string[] types, Node body)
-    { Var  = var==null ? null : new Name(var);
-      Body = body;
-      if(types==null || types.Length==0) Types=null;
-      else
-      { Types = new VariableNode[types.Length];
-        for(int i=0; i<types.Length; i++) Types[i] = new VariableNode(types[i]);
-      }
+  { public Except(string var, Node[] types, Node body)
+    { Var   = var==null ? null : new Name(var);
+      Body  = body;
+      Types = types==null || types.Length==0 ? null : types;
     }
     public Name Var;
-    public readonly VariableNode[] Types;
+    public readonly Node[] Types;
     public readonly Node Body;
   }
 
@@ -2106,7 +2161,15 @@ public sealed class TryNode : Node
   public Slot  ReturnSlot { get { return InTry==null ? returnSlot : InTry.ReturnSlot; } }
 
   public override void Emit(CodeGenerator cg, ref Type etype)
-  { returnSlot = etype==typeof(void) ? null : cg.AllocLocalTemp(typeof(object));
+  { if(IsConstant)
+    { if(etype!=typeof(void))
+      { cg.EmitConstantObject(Body.Evaluate());
+        etype = typeof(object);
+      }
+      return;
+    }
+
+    returnSlot = etype==typeof(void) ? null : cg.AllocLocalTemp(typeof(object));
     Debug.Assert(returnSlot!=null || !Tail);
 
     cg.MarkPosition(this);
@@ -2128,6 +2191,9 @@ public sealed class TryNode : Node
     { cg.ILG.BeginCatchBlock(typeof(Exception));
       Slot eslot=null;
       bool needRethrow=true;
+      
+      MethodInfo expectType=typeof(Ops).GetMethod("ExpectType"), isInst=typeof(Type).GetMethod("IsInstanceOfType");
+      FieldInfo rtType = typeof(ReflectedType).GetField("Type");
 
       foreach(Except ex in Excepts)
       { Label next;
@@ -2143,11 +2209,12 @@ public sealed class TryNode : Node
             eslot.EmitSet(cg);
           }
           for(int i=0; i<ex.Types.Length; i++)
-          { Type ttype = typeof(Type);
+          { Type ttype = typeof(ReflectedType);
             ex.Types[i].Emit(cg, ref ttype);
-            if(ttype!=typeof(Type)) cg.EmitCall(typeof(Ops), "ExpectType");
+            if(ttype!=typeof(ReflectedType)) cg.EmitCall(expectType);
+            cg.EmitFieldGet(rtType);
             eslot.EmitGet(cg);
-            cg.EmitCall(typeof(Type), "IsInstanceOfType");
+            cg.EmitCall(isInst);
             if(i<ex.Types.Length-1) cg.ILG.Emit(OpCodes.Brtrue, body);
             else cg.ILG.Emit(OpCodes.Brfalse, next);
           }
@@ -2241,6 +2308,8 @@ public sealed class TryNode : Node
     if(Finally!=null) Finally.MarkTail(false);
   }
   
+  public override void Optimize() { IsConstant = Body.IsConstant; }
+
   public override void Walk(IWalker w)
   { if(w.Walk(this))
     { Body.Walk(w);
@@ -2307,7 +2376,14 @@ public sealed class VectorNode : Node
     { if(IsConstant) cg.EmitConstantObject(Evaluate());
       else
       { cg.MarkPosition(this);
-        cg.EmitObjectArray(Items);
+        bool hasTryNode = false;
+        foreach(Node n in Items) if(n is TryNode) { hasTryNode=true; break; }
+
+        if(!hasTryNode) cg.EmitObjectArray(Items);
+        { Slot arr = cg.AllocObjectArrayWithTryNode(Items);
+          arr.EmitGet(cg);
+          cg.FreeLocalTemp(arr);
+        }
       }
       etype = typeof(object[]);
     }

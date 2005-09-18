@@ -90,7 +90,7 @@ public sealed class ModuleGenerator
   #region Generate from builtin type
   public static MemberContainer Generate(Type type)
   { object[] attrs = type.GetCustomAttributes(typeof(LispCodeAttribute), false);
-    if(attrs.Length==0) return ReflectedType.FromType(type);
+    if(attrs.Length==0) return ReflectedType.FromType(type, false);
 
     // TODO: come up with a better naming scheme (replacing '+' with '.' can create collisions)
     string filename = CachePath+type.FullName.Replace('+', '.')+".dll";

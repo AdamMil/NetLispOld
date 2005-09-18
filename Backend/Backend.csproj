@@ -189,12 +189,22 @@
                     BuildAction = "Compile"
                 />
                 <File
+                    RelPath = "Modules\math.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
                     RelPath = "Modules\srfi-1.cs"
                     SubType = "Code"
                     BuildAction = "Compile"
                 />
                 <File
                     RelPath = "Modules\sys.cs"
+                    SubType = "Code"
+                    BuildAction = "Compile"
+                />
+                <File
+                    RelPath = "Modules\types.cs"
                     SubType = "Code"
                     BuildAction = "Compile"
                 />
