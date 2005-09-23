@@ -39,6 +39,7 @@ public sealed class AssemblyGenerator
 
     AssemblyName an = new AssemblyName();
     an.Name  = moduleName;
+    IsDebug  = debug;
     Assembly = AppDomain.CurrentDomain
                  .DefineDynamicAssembly(an, AssemblyBuilderAccess.RunAndSave, dir, null, null, null, null, true);
     Module   = Assembly.DefineDynamicModule(outFileName, outFileName, debug);
@@ -67,10 +68,11 @@ public sealed class AssemblyGenerator
 
   public void Save() { Assembly.Save(OutFileName); }
 
-  public AssemblyBuilder Assembly;
-  public ModuleBuilder   Module;
+  public readonly AssemblyBuilder Assembly;
+  public readonly ModuleBuilder   Module;
   public ISymbolDocumentWriter Symbols;
-  public string OutFileName;
+  public readonly string OutFileName;
+  public readonly bool IsDebug;
   
   static Index index = new Index();
 }

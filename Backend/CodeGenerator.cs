@@ -456,7 +456,7 @@ public sealed class CodeGenerator
   { MarkPosition(node.Start.Line, node.Start.Column, node.End.Line, node.End.Column);
   }
   public void MarkPosition(int startLine, int startCol, int endLine, int endCol)
-  { if(TypeGenerator.Assembly.Symbols!=null && startLine!=0 && endLine!=0)
+  { if(TypeGenerator.Assembly.IsDebug && startLine!=0 && endLine!=0)
       ILG.MarkSequencePoint(TypeGenerator.Assembly.Symbols, startLine, startCol, endLine, endCol);
   }
 

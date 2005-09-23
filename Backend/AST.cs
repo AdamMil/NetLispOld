@@ -76,8 +76,10 @@ public sealed class AST
 { public static LambdaNode Create(object obj) { return (LambdaNode)Create(obj, false); }
   public static Node Create(object obj, bool interpreted)
   { Node body = Parse(obj);
-    SyntaxObject syntax = obj as SyntaxObject;
-    if(syntax!=null) body = new MarkSourceNode(syntax.File, syntax.Code, body);
+    if(Options.Debug)
+    { SyntaxObject syntax = obj as SyntaxObject;
+      if(syntax!=null) body = new MarkSourceNode(syntax.File, syntax.Code, body);
+    }
     if(!interpreted)
     { // wrapping it in a lambda node is done so we can keep the preprocessing code simple, and so that we can support
       // top-level closures. it's unwrapped later on by SnippetMaker.Generate()
@@ -2001,8 +2003,9 @@ public sealed class MarkSourceNode : DebugNode
 { public MarkSourceNode(string file, string code, Node body) { File=file; Code=code; Body=body; }
 
   public override void Emit(CodeGenerator cg, ref Type etype)
-  { cg.TypeGenerator.Assembly.Symbols =
-      cg.TypeGenerator.Assembly.Module.DefineDocument(File, Guid.Empty, Guid.Empty, Guid.Empty);
+  { if(Options.Debug && cg.TypeGenerator.Assembly.IsDebug)
+      cg.TypeGenerator.Assembly.Symbols =
+        cg.TypeGenerator.Assembly.Module.DefineDocument(File, Guid.Empty, Guid.Empty, Guid.Empty);
     // TODO: figure this out. cg.TypeGenerator.Assembly.Symbols.SetSource(System.Text.Encoding.UTF8.GetBytes(Code));
     if(Body!=null) Body.Emit(cg, ref etype);
     else if(etype!=typeof(void))

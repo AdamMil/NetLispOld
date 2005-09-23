@@ -271,8 +271,8 @@ public sealed class TypeGenerator
     return initGen;
   }
 
-  public AssemblyGenerator Assembly;
-  public TypeBuilder TypeBuilder;
+  public readonly AssemblyGenerator Assembly;
+  public readonly TypeBuilder TypeBuilder;
 
   void EmitConstantInitializer(object value)
   { CodeGenerator cg = GetInitializer();

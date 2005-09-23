@@ -262,8 +262,12 @@ public sealed class BindingSpace
   }
 
   public void Bind(string name, object value, TopLevel env)
-  { Binding bind = new Binding(name, value, env);
-    lock(Dict) Dict[name] = bind;
+  { Binding bind;
+    lock(Dict)
+    { bind = (Binding)Dict[name];
+      if(bind==null || bind.Environment!=env) Dict[name] = bind = new Binding(name, env);
+    }
+    bind.Value = value;
   }
 
   public bool Contains(string name)
