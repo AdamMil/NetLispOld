@@ -29,9 +29,8 @@ namespace NetLisp.Backend
 {
 
 public abstract class BuiltinModule : LispModule
-{ public BuiltinModule(Type type, bool importBuiltins) : base(type.FullName)
-  { if(importBuiltins) Builtins.Instance.Import(TopLevel);
-    ReflectedType.FromType(type, false).Import(TopLevel, true);
+{ public BuiltinModule(TopLevel top, Type type) : base(type.FullName, top)
+  { ReflectedType.FromType(type, false).Import(TopLevel, true);
   }
 }
 
@@ -121,12 +120,29 @@ public sealed class ModuleGenerator
       TypeGenerator tg = ag.DefineType(type.Name, typeof(BuiltinModule));
       CodeGenerator cg;
 
+      cg = tg.GetInitializer();
+      Slot staticTop = tg.DefineStaticField("s$topLevel", typeof(TopLevel));
+      Slot oldInitTop = cg.AllocLocalTemp(typeof(TopLevel));
+
+      cg.EmitFieldGet(typeof(TopLevel), "Current");
+      oldInitTop.EmitSet(cg);
+      cg.ILG.BeginExceptionBlock();
+      cg.EmitNew(typeof(TopLevel));
+      staticTop.EmitSet(cg);
+      if(!isBuiltins)
+      { cg.EmitPropGet(typeof(Builtins), "Instance");
+        staticTop.EmitGet(cg);
+        cg.EmitCall(typeof(MemberContainer), "Import", new Type[] { typeof(TopLevel) });
+      }
+      staticTop.EmitGet(cg);
+      cg.EmitFieldSet(typeof(TopLevel), "Current");
+
       cg = tg.DefineStaticMethod(MethodAttributes.Private, "Run", typeof(void),
                                  new Type[] { typeof(LocalEnvironment), typeof(TopLevel) });
-      Slot tmp=cg.AllocLocalTemp(typeof(TopLevel));
-      Slot topSlot=new ArgSlot((MethodBuilder)cg.MethodBase, 1, "topLevel", typeof(TopLevel));
+      Slot oldRunTop = cg.AllocLocalTemp(typeof(TopLevel));
+      Slot topSlot = new ArgSlot((MethodBuilder)cg.MethodBase, 1, "topLevel", typeof(TopLevel));
       cg.EmitFieldGet(typeof(TopLevel), "Current");
-      tmp.EmitSet(cg);
+      oldRunTop.EmitSet(cg);
       cg.ILG.BeginExceptionBlock();
       topSlot.EmitGet(cg);
       cg.EmitFieldSet(typeof(TopLevel), "Current");
@@ -165,28 +181,33 @@ public sealed class ModuleGenerator
         }
       }
       cg.ILG.BeginFinallyBlock();
-      tmp.EmitGet(cg);
+      oldRunTop.EmitGet(cg);
       cg.EmitFieldSet(typeof(TopLevel), "Current");
       cg.ILG.EndExceptionBlock();
       cg.EmitReturn();
-      cg.FreeLocalTemp(tmp);
+      cg.FreeLocalTemp(oldRunTop);
       cg.Finish();
 
       MethodInfo run = (MethodInfo)cg.MethodBase;
 
       cg = tg.DefineConstructor(Type.EmptyTypes);
       cg.EmitThis();
+      staticTop.EmitGet(cg);
       cg.EmitTypeOf(type);
-      cg.EmitBool(run!=null && !isBuiltins);
-      cg.EmitCall(typeof(BuiltinModule).GetConstructor(new Type[] { typeof(Type), typeof(bool) }));
-      if(run!=null)
-      { cg.ILG.Emit(OpCodes.Ldnull);
-        cg.EmitThis();
-        cg.EmitFieldGet(typeof(LispModule), "TopLevel");
-        cg.EmitCall(run);
-      }
+      cg.EmitCall(typeof(BuiltinModule).GetConstructor(new Type[] { typeof(TopLevel), typeof(Type) }));
+      cg.ILG.Emit(OpCodes.Ldnull);
+      cg.EmitThis();
+      cg.EmitFieldGet(typeof(LispModule), "TopLevel");
+      cg.EmitCall(run);
       cg.EmitReturn();
       cg.Finish();
+
+      cg = tg.GetInitializer();
+      cg.ILG.BeginFinallyBlock();
+      oldInitTop.EmitGet(cg);
+      cg.EmitFieldSet(typeof(TopLevel), "Current");
+      cg.ILG.EndExceptionBlock();
+      cg.FreeLocalTemp(oldInitTop);
 
       type = tg.FinishType();
       try { ag.Save(); } catch { }
