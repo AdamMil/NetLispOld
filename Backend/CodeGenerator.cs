@@ -125,7 +125,7 @@ public sealed class CodeGenerator
         break;
     }
   }
-    
+
   public void EmitBool(bool value) { ILG.Emit(value ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); }
 
   public void EmitCall(ConstructorInfo ci) { ILG.Emit(OpCodes.Call, ci); }
@@ -335,7 +335,7 @@ public sealed class CodeGenerator
         next.EmitGet(this);
         tail.EmitSet(this);
       }
-      
+
       head.EmitGet(this);
 
       FreeLocalTemp(head);
@@ -392,7 +392,7 @@ public sealed class CodeGenerator
   { EmitExpression(expr);
     ILG.Emit(OpCodes.Ret);
   }
-  
+
   public void EmitString(string value)
   { if(value==null) ILG.Emit(OpCodes.Ldnull);
     else ILG.Emit(OpCodes.Ldstr, value);
@@ -482,7 +482,7 @@ public sealed class CodeGenerator
   const BindingFlags SearchAll = BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance|BindingFlags.Static;
 
   ArrayList localTemps;
-  
+
   #if DEBUG
   static void CheckForTryNode(Node[] nodes)
   { foreach(Node n in nodes) if(n is TryNode) throw new ArgumentException("Node array contains a TryNode");

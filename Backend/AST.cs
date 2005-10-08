@@ -341,7 +341,7 @@ public sealed class AST
               } while(pair!=null);
             }
           }
-          
+
           return SetPos(syntax, new ThrowNode(type, objs==null ? null : (Node[])objs.ToArray(typeof(Node))));
         }
         // (.member object member-name)
@@ -415,14 +415,14 @@ public sealed class AST
       }
     }
     return (string[])names.ToArray(typeof(string));
-    
+
     error: throw Ops.SyntaxError("lambda bindings must be of the form: symbol | (symbol... [ . symbol])");
   }
 
   static Node Quote(object obj)
   { Pair pair = obj as Pair;
     if(pair==null) return new LiteralNode(obj);
-    
+
     ArrayList items = new ArrayList();
     Node dot=null;
     while(true)
@@ -436,7 +436,7 @@ public sealed class AST
     }
     return new ListNode((Node[])items.ToArray(typeof(Node)), dot);
   }
-  
+
   static Node SetPos(SyntaxObject syntax, Node node)
   { if(syntax!=null)
     { node.Start = syntax.Start;
@@ -491,7 +491,7 @@ public abstract class Node
   public TryNode InTry;
   public Position Start, End;
   public Flag Flags;
-  
+
   public static bool AreEquivalent(Type type, Type desired)
   { Conversion conv = Ops.ConvertTo(type, desired);
     return conv==Conversion.Identity || conv==Conversion.Reference;
@@ -1190,7 +1190,7 @@ public sealed class CallNode : Node
         }
       }
       catch(Exception e) { throw new ArgumentException(name+": "+e.Message); }
-      
+
       switch(name)
       { case "->string": CheckArity(1); return Ops.Str(a[0]);
         case "car": CheckArity(1); CheckType(a, 0, typeof(Pair)); return ((Pair)a[0]).Car;
@@ -1227,7 +1227,7 @@ public sealed class CallNode : Node
         default: throw new NotImplementedException("unhandled inline: "+name);
       }
     }
-    
+
     return proc.Call(a);
   }
   #endregion
@@ -1271,7 +1271,7 @@ public sealed class CallNode : Node
 
   public readonly Node Function;
   public readonly Node[] Args;
-  
+
   void CheckArity(int min) { CheckArity(min, min); }
   void CheckArity(int min, int max) { Ops.CheckArity(((VariableNode)Function).Name.String, Args.Length, min, max); }
 
@@ -1303,7 +1303,7 @@ public sealed class CallNode : Node
     return binding!=null && var.Index==binding.Index && var.String==binding.String &&
            var.Depth==binding.Depth+(func.MaxNames!=0 ? 1 : 0);
   }
-  
+
   static bool IsConstFunc(string name) { return Array.BinarySearch(constant, name)>=0; }
 }
 #endregion
@@ -2092,7 +2092,7 @@ public sealed class ThrowNode : Node
       else
       { bool hasTryNode = false;
         foreach(Node n in Objects) if(n is TryNode) { hasTryNode=true; break; }
-        
+
         if(!hasTryNode) cg.EmitObjectArray(Objects);
         else
         { Slot tmp = cg.AllocLocalTemp(typeof(ReflectedType));
@@ -2100,7 +2100,7 @@ public sealed class ThrowNode : Node
           Slot arr = cg.AllocObjectArrayWithTryNode(Objects);
           tmp.EmitGet(cg);
           arr.EmitGet(cg);
-          
+
           cg.FreeLocalTemp(tmp);
           cg.FreeLocalTemp(arr);
         }
@@ -2116,7 +2116,7 @@ public sealed class ThrowNode : Node
   }
 
   public override Type GetNodeType() { return typeof(void); }
-  
+
   public override object Evaluate()
   { if(Type==null) throw (Exception)Ops.ExceptionStack.Peek();
     throw Ops.MakeException(Ops.ExpectType(Type.Evaluate()), Objects==null ? null : MakeObjectArray(Objects));
@@ -2129,7 +2129,7 @@ public sealed class ThrowNode : Node
       if(Objects!=null) foreach(Node n in Objects) n.MarkTail(false);
     }
   }
-  
+
   public override void Walk(IWalker w)
   { if(w.Walk(this))
     { if(Type!=null)
@@ -2194,7 +2194,7 @@ public sealed class TryNode : Node
     { cg.ILG.BeginCatchBlock(typeof(Exception));
       Slot eslot=null;
       bool needRethrow=true;
-      
+
       MethodInfo expectType=typeof(Ops).GetMethod("ExpectType"), isInst=typeof(Type).GetMethod("IsInstanceOfType");
       FieldInfo rtType = typeof(ReflectedType).GetField("Type");
 
@@ -2310,7 +2310,7 @@ public sealed class TryNode : Node
       }
     if(Finally!=null) Finally.MarkTail(false);
   }
-  
+
   public override void Optimize() { IsConstant = Body.IsConstant; }
 
   public override void Walk(IWalker w)
@@ -2328,7 +2328,7 @@ public sealed class TryNode : Node
 
   public readonly Node Body, Finally;
   public readonly Except[] Excepts;
-  
+
   Label leaveLabel;
   Slot returnSlot;
 }

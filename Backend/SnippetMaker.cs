@@ -45,7 +45,7 @@ public sealed class SnippetMaker
   }
 
   public static AssemblyGenerator Assembly = new AssemblyGenerator("snippets", "snippets.dll", true);
-  
+
   static Index index = new Index();
 }
 

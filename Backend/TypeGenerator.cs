@@ -54,7 +54,7 @@ public sealed class TypeGenerator
         pb.SetCustomAttribute(
           new CustomAttributeBuilder(typeof(ParamArrayAttribute).GetConstructor(Type.EmptyTypes), Ops.EmptyArray));
     }
-    
+
     CodeGenerator cg = new CodeGenerator(this, cb, cb.GetILGenerator());
     cg.EmitThis();
     for(int i=0; i<pi.Length; i++) cg.EmitArgGet(i);
@@ -80,7 +80,7 @@ public sealed class TypeGenerator
   { MethodBuilder mb = TypeBuilder.DefineMethod(name, attrs, retType, paramTypes);
     return new CodeGenerator(this, mb, mb.GetILGenerator());
   }
-  
+
   public CodeGenerator DefineMethodOverride(string name)
   { return DefineMethodOverride(TypeBuilder.BaseType, name, false);
   }

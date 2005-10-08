@@ -397,7 +397,7 @@ public sealed class Srfi1
     }
   }
   #endregion
-  
+
   #region circular-list?
   public sealed class circularListP : Primitive
   { public circularListP() : base("circular-list?", 1, 1) { }
@@ -409,7 +409,7 @@ public sealed class Srfi1
 
     internal static bool core(Pair slow)
     { if(slow==null) return false;
-      
+
       Pair fast = slow.Cdr as Pair;
       if(fast==null) return false;
 
@@ -573,7 +573,7 @@ public sealed class Srfi1
 
       Pair fast = slow.Cdr as Pair;
       if(fast==null) return slow.Cdr==null ? Ops.FALSE : Ops.TRUE;
-    
+
       while(true)
       { if(slow==fast) return Ops.FALSE;
         slow = (Pair)slow.Cdr;
@@ -593,7 +593,7 @@ public sealed class Srfi1
     { CheckArity(args);
       return core(Name, Ops.ExpectList(args[0]), Ops.ExpectInt(args[1]));
     }
-    
+
     internal static Pair core(string name, Pair pair, int length)
     { for(int i=0; i<length; i++)
       { Pair next = pair.Cdr as Pair;
@@ -891,7 +891,7 @@ public sealed class Srfi1
         args[0] = pair.Car;
         return kons.Call(args);
       }
-      
+
       object[] args;
       object ans;
       IProcedure kons;
@@ -935,7 +935,7 @@ public sealed class Srfi1
 
       Pair head=null, tail=null;
       bool realloc = proc.NeedsFreshArgs;
-      
+
       if(!realloc) args = new object[1];
       for(int i=0; i<length; i++)
       { if(realloc) args = new object[1];
@@ -973,7 +973,7 @@ public sealed class Srfi1
   #region last
   public sealed class last : Primitive
   { public last() : base("last", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return lastPair.core(Ops.ExpectPair(args[0])).Car;
@@ -984,7 +984,7 @@ public sealed class Srfi1
   #region last-pair
   public sealed class lastPair : Primitive
   { public lastPair() : base("last-pair", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return args[0]==null ? null : core(Ops.ExpectPair(args[0]));
@@ -1008,10 +1008,10 @@ public sealed class Srfi1
     { CheckArity(args);
       Pair slow = Ops.ExpectList(args[0]);
       if(slow==null) return 0;
-      
+
       Pair fast = slow.Cdr as Pair;
       if(fast==null) return 1;
-    
+
       int length=1;
       while(true)
       { if(slow==fast) return Ops.FALSE;
@@ -1109,7 +1109,7 @@ public sealed class Srfi1
             else break;
           }
           else if(last==null) return Ops.FALSE;
-          
+
           if(realloc) nargs = new object[2];
           nargs[0]=last.Car; nargs[1]=cpair.Car;
           if(!Ops.IsTrue(test.Call(nargs))) return Ops.FALSE;
@@ -1118,7 +1118,7 @@ public sealed class Srfi1
         }
         last=cur;
       }
-      
+
       return Ops.TRUE;
     }
   }
@@ -1265,7 +1265,7 @@ public sealed class Srfi1
         args[0] = pair;
         return kons.Call(args);
       }
-      
+
       object[] args;
       object ans;
       IProcedure kons;
@@ -1533,7 +1533,7 @@ public sealed class Srfi1
     }
   }
   #endregion
-  
+
   #region take-while
   public sealed class takeWhile : Primitive
   { public takeWhile() : base("take-while", 2, 2) { }
@@ -1592,7 +1592,7 @@ public sealed class Srfi1
     { CheckArity(args);
       return new unfolder(args).Run(args[3]);
     }
-    
+
     struct unfolder
     { public unfolder(object[] args)
       { stop=Ops.ExpectProcedure(args[0]);  val=Ops.ExpectProcedure(args[1]);

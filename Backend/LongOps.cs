@@ -508,7 +508,7 @@ public sealed class LongOps
     if(shift<0) throw Ops.ValueError("negative shift count");
     return shift>63 ? 0 : Reduce(a>>shift);
   }
-  
+
   internal static object Reduce(long value) { return ((ulong)value>>32)==0 ? (int)(uint)value : (object)value; }
 }
 

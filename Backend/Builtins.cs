@@ -407,7 +407,7 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region .get-type
   public sealed class dotGetType : Primitive
   { public dotGetType() : base(".get-type", 1, 1) { }
@@ -443,7 +443,7 @@ public sealed class Builtins
       return core(name, length<=10 ? new System.Collections.Specialized.ListDictionary()
                                    : (IDictionary)new Hashtable(length), args);
     }
-    
+
     internal static IDictionary core(string name, IDictionary dict, object[] args)
     { if(args.Length==1)
       { Pair list = Ops.ExpectList(args[0]);
@@ -496,7 +496,7 @@ public sealed class Builtins
   #region .ref
   public sealed class dotRef : Primitive
   { public dotRef() : base(".ref", 0, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return new Reference(args.Length==0 ? null : args[0]);
@@ -507,7 +507,7 @@ public sealed class Builtins
   #region .ref-value
   public sealed class dotRefValue : Primitive
   { public dotRefValue() : base(".ref-value", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectRef(args[0]).Value;
@@ -518,7 +518,7 @@ public sealed class Builtins
   #region .ref-set-value!
   public sealed class dotRefSetValueN : Primitive
   { public dotRefSetValueN() : base(".ref-set-value!", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectRef(args[0]).Value=args[1];
@@ -603,7 +603,7 @@ public sealed class Builtins
   #region char?
   public sealed class charP : Primitive
   { public charP() : base("char?", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return args[0] is char ? Ops.TRUE : Ops.FALSE;
@@ -614,7 +614,7 @@ public sealed class Builtins
   #region char=?
   public sealed class charEqP : Primitive
   { public charEqP() : base("char=?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectChar(args[0])==Ops.ExpectChar(args[1]);
@@ -624,7 +624,7 @@ public sealed class Builtins
   #region char!=?
   public sealed class charNeP : Primitive
   { public charNeP() : base("char!=?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectChar(args[0])!=Ops.ExpectChar(args[1]);
@@ -634,7 +634,7 @@ public sealed class Builtins
   #region char<?
   public sealed class charLtP : Primitive
   { public charLtP() : base("char<?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectChar(args[0])<Ops.ExpectChar(args[1]);
@@ -644,7 +644,7 @@ public sealed class Builtins
   #region char<=?
   public sealed class charLeP : Primitive
   { public charLeP() : base("char<=?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectChar(args[0])<=Ops.ExpectChar(args[1]);
@@ -654,7 +654,7 @@ public sealed class Builtins
   #region char>?
   public sealed class charGtP : Primitive
   { public charGtP() : base("char>?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectChar(args[0])>Ops.ExpectChar(args[1]);
@@ -664,7 +664,7 @@ public sealed class Builtins
   #region char>=?
   public sealed class charGeP : Primitive
   { public charGeP() : base("char>=?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectChar(args[0])>=Ops.ExpectChar(args[1]);
@@ -675,7 +675,7 @@ public sealed class Builtins
   #region char-ci=?
   public sealed class charCiEqP : Primitive
   { public charCiEqP() : base("char-ci=?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.ToUpper(Ops.ExpectChar(args[0]))==char.ToUpper(Ops.ExpectChar(args[1]));
@@ -685,7 +685,7 @@ public sealed class Builtins
   #region char-ci!=?
   public sealed class charCiNeP : Primitive
   { public charCiNeP() : base("char-ci!=?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.ToUpper(Ops.ExpectChar(args[0]))!=char.ToUpper(Ops.ExpectChar(args[1]));
@@ -695,7 +695,7 @@ public sealed class Builtins
   #region char-ci<?
   public sealed class charCiLtP : Primitive
   { public charCiLtP() : base("char-ci<?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.ToUpper(Ops.ExpectChar(args[0]))<char.ToUpper(Ops.ExpectChar(args[1]));
@@ -705,7 +705,7 @@ public sealed class Builtins
   #region char-ci<=?
   public sealed class charCiLeP : Primitive
   { public charCiLeP() : base("char-ci<=?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.ToUpper(Ops.ExpectChar(args[0]))<=char.ToUpper(Ops.ExpectChar(args[1]));
@@ -715,7 +715,7 @@ public sealed class Builtins
   #region char-ci>?
   public sealed class charCiGtP : Primitive
   { public charCiGtP() : base("char-ci>?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.ToUpper(Ops.ExpectChar(args[0]))>char.ToUpper(Ops.ExpectChar(args[1]));
@@ -725,7 +725,7 @@ public sealed class Builtins
   #region char-ci>=?
   public sealed class charCiGeP : Primitive
   { public charCiGeP() : base("char-ci>=?", 2, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.ToUpper(Ops.ExpectChar(args[0]))>=char.ToUpper(Ops.ExpectChar(args[1]));
@@ -736,7 +736,7 @@ public sealed class Builtins
   #region char->integer
   public sealed class charToInteger : Primitive
   { public charToInteger() : base("char->integer", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return (int)Ops.ExpectChar(args[0]);
@@ -746,7 +746,7 @@ public sealed class Builtins
   #region integer->char
   public sealed class integerToChar : Primitive
   { public integerToChar() : base("integer->char", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return (char)Ops.ExpectInt(args[0]);
@@ -757,7 +757,7 @@ public sealed class Builtins
   #region char-upcase
   public sealed class charUpcase : Primitive
   { public charUpcase() : base("char-upcase", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.ToUpper(Ops.ExpectChar(args[0]));
@@ -767,7 +767,7 @@ public sealed class Builtins
   #region char-downcase
   public sealed class charDowncase : Primitive
   { public charDowncase() : base("char-downcase", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.ToLower(Ops.ExpectChar(args[0]));
@@ -778,7 +778,7 @@ public sealed class Builtins
   #region char-upper-case?
   public sealed class charUpperCaseP : Primitive
   { public charUpperCaseP() : base("char-upper-case?", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       char c = Ops.ExpectChar(args[0]);
@@ -789,7 +789,7 @@ public sealed class Builtins
   #region char-lower-case?
   public sealed class charLowerCaseP : Primitive
   { public charLowerCaseP() : base("char-lower-case?", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       char c = Ops.ExpectChar(args[0]);
@@ -800,7 +800,7 @@ public sealed class Builtins
   #region char-alphabetic?
   public sealed class charAlphabetic : Primitive
   { public charAlphabetic() : base("char-alphabetic?", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.IsLetter(Ops.ExpectChar(args[0]));
@@ -810,7 +810,7 @@ public sealed class Builtins
   #region char-numeric?
   public sealed class charNumeric : Primitive
   { public charNumeric() : base("char-numeric?", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.IsDigit(Ops.ExpectChar(args[0]));
@@ -820,7 +820,7 @@ public sealed class Builtins
   #region char-alphanumeric?
   public sealed class charAlphaumeric : Primitive
   { public charAlphaumeric() : base("char-alphanumeric?", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.IsLetterOrDigit(Ops.ExpectChar(args[0]));
@@ -830,7 +830,7 @@ public sealed class Builtins
   #region char-whitespace?
   public sealed class charWhitespace : Primitive
   { public charWhitespace() : base("char-whitespace?", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return char.IsWhiteSpace(Ops.ExpectChar(args[0]));
@@ -840,7 +840,7 @@ public sealed class Builtins
   #region char-punctuation?
   public sealed class charPunctuation : Primitive
   { public charPunctuation() : base("char-punctuation?", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       char c = Ops.ExpectChar(args[0]);
@@ -851,7 +851,7 @@ public sealed class Builtins
   #region char-printable?
   public sealed class charPrintable : Primitive
   { public charPrintable() : base("char-printable?", 1, 1) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       char c = Ops.ExpectChar(args[0]);
@@ -863,7 +863,7 @@ public sealed class Builtins
   #region char->digit
   public sealed class charToDigit : Primitive
   { public charToDigit() : base("char->digit", 1, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       int num = (int)Ops.ExpectChar(args[0]) - 48;
@@ -878,14 +878,14 @@ public sealed class Builtins
   #region digit->char
   public sealed class digitToChar : Primitive
   { public digitToChar() : base("digit->char", 1, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       int num = Ops.ExpectInt(args[0]);
       int radix = args.Length==2 ? Ops.ExpectInt(args[1]) : 10;
       return num<0 || num>=radix ? Ops.FALSE : convert[num];
     }
-    
+
     const string convert = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   }
   #endregion
@@ -893,12 +893,12 @@ public sealed class Builtins
   #region char->name
   public sealed class charToName : Primitive
   { public charToName() : base("char->name", 1, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return core(Ops.ExpectChar(args[0]), args.Length==2 && Ops.IsTrue(args[1]));
     }
-    
+
     internal static string core(char c, bool slashify)
     { string name;
       switch((int)c)
@@ -1037,7 +1037,7 @@ public sealed class Builtins
     public override object Call(object[] args)
     { if(args.Length==0) return null;
       if(args.Length==1) return args[0];
-      
+
       Pair head=null, prev=null;
       int i;
       for(i=0; i<args.Length-1; i++)
@@ -1207,10 +1207,10 @@ public sealed class Builtins
     { CheckArity(args);
       Pair slow = args[0] as Pair;
       if(slow==null) return Ops.FALSE;
-      
+
       Pair fast = slow.Cdr as Pair;
       if(fast==null) return slow.Cdr==null ? Ops.TRUE : Ops.FALSE;
-    
+
       while(true)
       { if(slow==fast) return Ops.FALSE;
         slow = (Pair)slow.Cdr;
@@ -1241,7 +1241,7 @@ public sealed class Builtins
   #region length
   public sealed class length : Primitive
   { public length() : base("length", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return core(Ops.ExpectList(args[0]));
@@ -1435,7 +1435,7 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region vector->list
   public sealed class vectorToList : Primitive
   { public vectorToList() : base("vector->list", 1, 3) { }
@@ -1523,7 +1523,7 @@ public sealed class Builtins
   #region complex?
   public sealed class complexP : Primitive
   { public complexP() : base("complex?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       switch(Convert.GetTypeCode(args[0]))
@@ -1573,7 +1573,7 @@ public sealed class Builtins
           goto default;
         default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
-      
+
       isint: return (iv&1)==0 && iv!=0 ? Ops.TRUE : Ops.FALSE;
     }
   }
@@ -1693,7 +1693,7 @@ public sealed class Builtins
     { CheckArity(args);
       return core(args[0]);
     }
-    
+
     internal static object core(object obj)
     { switch(Convert.GetTypeCode(obj))
       { case TypeCode.Byte:   case TypeCode.SByte:
@@ -1715,7 +1715,7 @@ public sealed class Builtins
   #region integer?
   public sealed class integerP : Primitive
   { public integerP() : base("integer?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       object obj = args[0];
@@ -1767,7 +1767,7 @@ public sealed class Builtins
   #region negative?
   public sealed class negativeP : Primitive
   { public negativeP() : base("negative?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       object obj = args[0];
@@ -1792,7 +1792,7 @@ public sealed class Builtins
   #region number?
   public sealed class numberP : Primitive
   { public numberP() : base("number?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       switch(Convert.GetTypeCode(args[0]))
@@ -1843,7 +1843,7 @@ public sealed class Builtins
           goto default;
         default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
-      
+
       isint: return (iv&1)!=0 ? Ops.TRUE : Ops.FALSE;
     }
   }
@@ -1852,7 +1852,7 @@ public sealed class Builtins
   #region zero?
   public sealed class zeroP : Primitive
   { public zeroP() : base("zero?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       object obj = args[0];
@@ -1877,11 +1877,11 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region positive?
   public sealed class positiveP : Primitive
   { public positiveP() : base("positive?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       object obj = args[0];
@@ -1909,7 +1909,7 @@ public sealed class Builtins
   #region real?
   public sealed class realP : Primitive
   { public realP() : base("real?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       object obj = args[0];
@@ -2165,12 +2165,12 @@ public sealed class Builtins
   }
   #endregion
   #endregion
-  
+
   #region Pair functions
   #region car
   public sealed class car : Primitive
   { public car() : base("car", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectPair(args[0]).Car;
@@ -2181,7 +2181,7 @@ public sealed class Builtins
   #region cdr
   public sealed class cdr : Primitive
   { public cdr() : base("cdr", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectPair(args[0]).Cdr;
@@ -2192,7 +2192,7 @@ public sealed class Builtins
   #region cons
   public sealed class cons : Primitive
   { public cons() : base("cons", 2, 2) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return new Pair(args[0], args[1]);
@@ -2202,7 +2202,7 @@ public sealed class Builtins
   #region pair?
   public sealed class pairP : Primitive
   { public pairP() : base("pair?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return args[0] is Pair ? Ops.TRUE : Ops.FALSE;
@@ -2213,7 +2213,7 @@ public sealed class Builtins
   #region set-car!
   public sealed class setCarN : Primitive
   { public setCarN() : base("set-car!", 2, 2) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectPair(args[0]).Car = args[1];
@@ -2224,7 +2224,7 @@ public sealed class Builtins
   #region set-cdr!
   public sealed class setCdrN : Primitive
   { public setCdrN() : base("set-cdr!", 2, 2) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectPair(args[0]).Cdr = args[1];
@@ -2255,7 +2255,7 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   [SymbolName("call-with-current-continuation")]
   public void callCC(IProcedure proc)
   { throw new NotImplementedException("sorry, manipulable continuations aren't implemented yet");
@@ -2300,7 +2300,7 @@ public sealed class Builtins
   #region primitive-procedure?
   public sealed class primitiveProcedureP : Primitive
   { public primitiveProcedureP() : base("primitive-procedure?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       object func = args[0];
@@ -2312,7 +2312,7 @@ public sealed class Builtins
   #region procedure?
   public sealed class procedureP : Primitive
   { public procedureP() : base("procedure?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.FromBool(args[0] is IProcedure);
@@ -2323,7 +2323,7 @@ public sealed class Builtins
   #region procedure-arity-valid?
   public sealed class procedureArityValidP : Primitive
   { public procedureArityValidP() : base("procedure-arity-valid?", 2, 2) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       IProcedure proc = Ops.ExpectProcedure(args[0]);
@@ -2336,7 +2336,7 @@ public sealed class Builtins
   #region procedure-arity
   public sealed class procedureArity : Primitive
   { public procedureArity() : base("procedure-arity", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       IProcedure proc = Ops.ExpectProcedure(args[0]);
@@ -2346,7 +2346,7 @@ public sealed class Builtins
   }
   #endregion
   #endregion
-  
+
   #region Promise functions
   #region #%delay
   public sealed class _delay : Primitive
@@ -2357,7 +2357,7 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region force
   public sealed class force : Primitive
   { public force() : base("force", 1, 1) { }
@@ -2372,7 +2372,7 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region promise?
   public sealed class promiseP : Primitive
   { public promiseP() : base("promise?", 1, 1) { }
@@ -2382,7 +2382,7 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region promise-forced?
   public sealed class promiseForced : Primitive
   { public promiseForced() : base("promise-forced?", 1, 1) { }
@@ -2392,7 +2392,7 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region promise-value
   public sealed class promiseValue : Primitive
   { public promiseValue() : base("promise-value", 1, 1) { }
@@ -2440,7 +2440,7 @@ public sealed class Builtins
   #region symbol?
   public sealed class symbolP : Primitive
   { public symbolP() : base("symbol?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return args[0] is Symbol ? Ops.TRUE : Ops.FALSE;
@@ -2451,7 +2451,7 @@ public sealed class Builtins
   #region symbol-hash
   public sealed class symbolHash : Primitive
   { public symbolHash() : base("symbol-hash", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectSymbol(args[0]).GetHashCode();
@@ -2461,7 +2461,7 @@ public sealed class Builtins
   #region symbol-hash-mod
   public sealed class symbolHashMod : Primitive
   { public symbolHashMod() : base("symbol-hash-mod", 2, 2) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectSymbol(args[0]).GetHashCode() % Ops.ExpectInt(args[1]);
@@ -2519,7 +2519,7 @@ public sealed class Builtins
   #region make-string
   public sealed class makeString : Primitive
   { public makeString() : base("make-string", 1, 2) { }
-    
+
     public override object Call(object[] args)
     { CheckArity(args);
       return new string(args.Length==2 ? Ops.ExpectChar(args[1]) : '\0', Ops.ExpectInt(args[0]));
@@ -2543,7 +2543,7 @@ public sealed class Builtins
   #region string?
   public sealed class stringP : Primitive
   { public stringP() : base("string?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return args[0] is string ? Ops.TRUE : Ops.FALSE;
@@ -2664,7 +2664,7 @@ public sealed class Builtins
   #region string-append
   public sealed class stringAppend : Primitive
   { public stringAppend() : base("string-append", 0, -1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       switch(args.Length)
@@ -2686,7 +2686,7 @@ public sealed class Builtins
   #region string-compare
   public sealed class stringCompare : Primitive
   { public stringCompare() : base("string-compare", 2, 7) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       string str1, str2;
@@ -2717,7 +2717,7 @@ public sealed class Builtins
   #region string-downcase
   public sealed class stringDowncase : Primitive
   { public stringDowncase() : base("string-downcase", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectString(args[0]).ToLower();
@@ -2727,7 +2727,7 @@ public sealed class Builtins
   #region string-upcase
   public sealed class stringUpcase : Primitive
   { public stringUpcase() : base("string-upcase", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectString(args[0]).ToUpper();
@@ -2738,7 +2738,7 @@ public sealed class Builtins
   #region string-hash
   public sealed class stringHash : Primitive
   { public stringHash() : base("string-hash", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectString(args[0]).GetHashCode();
@@ -2748,7 +2748,7 @@ public sealed class Builtins
   #region string-hash-mod
   public sealed class stringHashMod : Primitive
   { public stringHashMod() : base("string-hash-mod", 2, 2) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectString(args[0]).GetHashCode() % Ops.ExpectInt(args[1]);
@@ -2759,7 +2759,7 @@ public sealed class Builtins
   #region string-head
   public sealed class stringHead : Primitive
   { public stringHead() : base("string-head", 2, 2) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectString(args[0]).Substring(Ops.ExpectInt(args[1]));
@@ -2769,7 +2769,7 @@ public sealed class Builtins
   #region string-tail
   public sealed class stringTail : Primitive
   { public stringTail() : base("string-tail", 2, 2) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       string str = Ops.ExpectString(args[0]);
@@ -2782,7 +2782,7 @@ public sealed class Builtins
   #region string-length
   public sealed class stringLength : Primitive
   { public stringLength() : base("string-length", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectString(args[0]).Length;
@@ -2886,7 +2886,7 @@ public sealed class Builtins
   #region string-null?
   public sealed class stringNullP : Primitive
   { public stringNullP() : base("string-null?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.FromBool(Ops.ExpectString(args[0]).Length==0);
@@ -2897,7 +2897,7 @@ public sealed class Builtins
   #region string-pad-left
   public sealed class stringPadLeft : Primitive
   { public stringPadLeft() : base("string-pad-left", 2, 3) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectString(args[0]).PadLeft(Ops.ExpectInt(args[1]), args.Length==3 ? Ops.ExpectChar(args[2]) : ' ');
@@ -2907,7 +2907,7 @@ public sealed class Builtins
   #region string-pad-right
   public sealed class stringPadRight : Primitive
   { public stringPadRight() : base("string-pad-right", 2, 3) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectString(args[0]).PadRight(Ops.ExpectInt(args[1]), args.Length==3 ? Ops.ExpectChar(args[2]) : ' ');
@@ -2970,7 +2970,7 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region string-search
   public sealed class stringSearch : Primitive
   { public stringSearch() : base("string-search", 2, 4) { }
@@ -3050,14 +3050,14 @@ public sealed class Builtins
   #region string-ref
   public sealed class stringRef : Primitive
   { public stringRef() : base("string-ref", 2, 2) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.ExpectString(args[0])[Ops.ExpectInt(args[1])];
     }
   }
   #endregion
-  
+
   #region substring
   public sealed class substring : Primitive
   { public substring() : base("substring", 2, 3) { }
@@ -3212,7 +3212,7 @@ public sealed class Builtins
   }
   #endregion
   #endregion
-  
+
   #region Vector functions
   #region list->vector
   public sealed class listToVector : Primitive
@@ -3238,7 +3238,7 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region subvector
   public sealed class subvector : Primitive
   { public subvector() : base("subvector", 3, 3) { }
@@ -3253,14 +3253,14 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region vector
   public sealed class vector : Primitive
   { public vector() : base("vector", 0, -1) { }
     public override object Call(object[] args) { return args; }
   }
   #endregion
-  
+
   #region vector?
   public sealed class vectorP : Primitive
   { public vectorP() : base("vector?", 1, 1) { }
@@ -3286,7 +3286,7 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region vector-fill!
   public sealed class vectorFillN : Primitive
   { public vectorFillN() : base("vector-fill!", 2, 4) { }
@@ -3358,7 +3358,7 @@ public sealed class Builtins
     }
   }
   #endregion
-  
+
   #region vector-sort!
   public sealed class vectorSortN : Primitive
   { public vectorSortN() : base("vector-sort!", 1, 2) { }
@@ -3386,18 +3386,18 @@ public sealed class Builtins
   #region eqv?
   public sealed class eqvP : Primitive
   { public eqvP() : base("eqv?", 2, 2) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.EqvP(args[0], args[1]) ? Ops.TRUE : Ops.FALSE;
     }
   }
   #endregion
-  
+
   #region equal?
   public sealed class equalP : Primitive
   { public equalP() : base("equal?", 2, 2) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return Ops.EqualP(args[0], args[1]) ? Ops.TRUE : Ops.FALSE;
@@ -3504,7 +3504,7 @@ public sealed class Builtins
             throw new ArgumentException("Module "+modName+" does not contain a member named '"+name.Name+"'");
           TopLevel.Current.Bind(asName.Name, value);
         }
-      
+
       return null;
 
       syntaxError:
@@ -3517,7 +3517,7 @@ public sealed class Builtins
   #region not
   public sealed class not : Primitive
   { public not() : base("not", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return !Ops.IsTrue(args[0]) ? Ops.TRUE : Ops.FALSE;
@@ -3528,7 +3528,7 @@ public sealed class Builtins
   #region null?
   public sealed class nullP : Primitive
   { public nullP() : base("null?", 1, 1) { }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return args[0]==null ? Ops.TRUE : Ops.FALSE;
@@ -3539,7 +3539,7 @@ public sealed class Builtins
   #region values
   public sealed class values : Primitive
   { public values() : base("values", 1, -1) { needsFreshArgs=true; }
-  
+
     public override object Call(object[] args)
     { CheckArity(args);
       return args.Length==1 ? args[0] : new MultipleValues(args);

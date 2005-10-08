@@ -201,7 +201,7 @@ public sealed class ReflectedNamespace : MemberContainer
       lock(cache) cache[bits[0]] = top;
     }
     rns = top;
-    
+
     string ns=bits[0];
     for(int i=1; i<bits.Length; i++)
     { ns = ns+"."+bits[i];
@@ -220,7 +220,7 @@ public sealed class ReflectedNamespace : MemberContainer
 
   string name;
   Hashtable dict;
-  
+
   static Hashtable cache = new Hashtable();
 }
 #endregion
@@ -341,7 +341,7 @@ public sealed class ReflectedType : MemberContainer
   void Initialize()
   { dict = new Hashtable();
     if(Type==null) return;
-    
+
     BindingFlags flags = BindingFlags.Public|BindingFlags.Instance|BindingFlags.Static;
     if(!includeInherited) flags |= BindingFlags.DeclaredOnly;
 
@@ -449,7 +449,6 @@ public sealed class ReflectedType : MemberContainer
   }
   #endregion
 
-  
   Hashtable dict;
   bool includeInherited;
 
@@ -471,7 +470,7 @@ public sealed class ReflectedType : MemberContainer
   { return mi.IsSpecialName && (mi.Name.StartsWith("get_") || mi.Name.StartsWith("set_") ||
                                 mi.Name!="op_Implicit" || mi.Name!="op_Explicit"); // TODO: handle these ops somehow?
   }
-  
+
   static Type MostDerived(MethodInfo f1, MethodInfo f2)
   { if(f1==null) return f2.DeclaringType;
     else if(f2==null || f1.DeclaringType.IsSubclassOf(f2.DeclaringType)) return f1.DeclaringType;
@@ -552,7 +551,7 @@ public sealed class ReflectedType : MemberContainer
       if(fi.DeclaringType != typeof(object))
         cg.ILG.Emit(fi.DeclaringType.IsValueType ? OpCodes.Unbox : OpCodes.Castclass, fi.DeclaringType);
     }
-    
+
     cg.EmitArgGet(0);
     cg.EmitInt(fi.IsStatic ? 0 : 1);
     cg.ILG.Emit(OpCodes.Ldelem_Ref);
@@ -580,7 +579,7 @@ public sealed class ReflectedType : MemberContainer
     return (FieldWrapper)tg.FinishType().GetConstructor(Type.EmptyTypes).Invoke(null);
   }
   #endregion
-  
+
   #region MakeSignatureWrapper
   struct Ref
   { public Ref(int i, Slot slot) { Index=i; Slot=slot; }
@@ -656,7 +655,7 @@ public sealed class ReflectedType : MemberContainer
       cg.EmitInt(min);
       cg.EmitReturn();
       cg.Finish();
-      
+
       cg = tg.DefinePropertyOverride("MaxArgs", true);
       cg.EmitInt(max);
       cg.EmitReturn();
@@ -732,12 +731,12 @@ public sealed class ReflectedType : MemberContainer
 
       #region Call
       cg = tg.DefineMethodOverride("Call", true);
-      
+
       if(checkArity!=null)
       { cg.EmitArgGet(0);
         cg.EmitCall(checkArity);
       }
-      
+
       for(int i=0; i<min; i++) // required arguments
       { cg.EmitArgGet(0);
         cg.EmitInt(i);
@@ -794,7 +793,7 @@ public sealed class ReflectedType : MemberContainer
           cg.ILG.Emit(OpCodes.Ldlen);
           cg.EmitInt(sig.Params.Length);
           cg.ILG.Emit(OpCodes.Bne_Un, pack);
-          
+
           cg.EmitArgGet(0); // sa = args[numNP] as Array;
           cg.EmitInt(numnp);
           cg.ILG.Emit(OpCodes.Ldelem_Ref);
@@ -802,14 +801,14 @@ public sealed class ReflectedType : MemberContainer
           cg.ILG.Emit(OpCodes.Dup);
           sa.EmitSet(cg);
           cg.ILG.Emit(OpCodes.Brfalse, pack); // if(sa==null) goto pack
-          
+
           sa.EmitGet(cg); // conv = Ops.ConvertTo(sa.GetType(), ptypes[numNP]);
           cg.EmitCall(typeof(Array), "GetType");
           cg.EmitTypeOf(sig.Params[numnp]);
           cg.EmitCall(typeof(Ops), "ConvertTo", new Type[] { typeof(Type), typeof(Type) });
           cg.ILG.Emit(OpCodes.Dup); // used below
           iv.EmitSet(cg);
-          
+
           // if(conv==Identity || conv==Reference) { stack.push(castTo(ptypes[numNP], sa)); goto call; }
           Label not2=cg.ILG.DefineLabel(), is2=cg.ILG.DefineLabel();
           cg.EmitInt((int)Conversion.Identity);
@@ -832,14 +831,14 @@ public sealed class ReflectedType : MemberContainer
             cg.EmitCall(typeof(Ops), "ConvertTo", new Type[] { typeof(Type), typeof(Type) });
             cg.ILG.Emit(OpCodes.Dup); // used below
             iv.EmitSet(cg);
-            
+
             // if(conv==Identity || conv==Reference) goto pack;
             cg.EmitInt((int)Conversion.Identity);
             cg.ILG.Emit(Options.Debug ? OpCodes.Beq : OpCodes.Beq_S, pack);
             iv.EmitGet(cg);
             cg.EmitInt((int)Conversion.Reference);
             cg.ILG.Emit(Options.Debug ? OpCodes.Beq : OpCodes.Beq_S, pack);
-            
+
             sa.EmitGet(cg); // etype[] pa = new etype[sa.Length];
             cg.EmitPropGet(typeof(Array), "Length");
             cg.ILG.Emit(OpCodes.Newarr, etype);
@@ -903,7 +902,7 @@ public sealed class ReflectedType : MemberContainer
             cg.EmitArgGet(0);
             cg.ILG.Emit(OpCodes.Ldlen);
             cg.ILG.Emit(OpCodes.Beq_S, call);
-            
+
             cg.ILG.Emit(OpCodes.Dup); // dup pa
             iv.EmitGet(cg);
             cg.EmitInt(numnp);
@@ -945,7 +944,7 @@ public sealed class ReflectedType : MemberContainer
         cg.ILG.EmitCalli(OpCodes.Calli, sig.Convention, sig.Return, sig.Params, null);
         if(sig.Return==typeof(void)) cg.ILG.Emit(OpCodes.Ldnull);
         else if(sig.Return.IsValueType) cg.ILG.Emit(OpCodes.Box, sig.Return);
-        
+
         foreach(Ref r in refs)
         { Type etype = sig.Params[r.Index].GetElementType();
           cg.EmitArgGet(0);
@@ -1102,7 +1101,7 @@ public sealed class Interop
           cg.EmitReturn();
           cg.Finish();
           ConstructorInfo cons = (ConstructorInfo)cg.MethodBase;
-          
+
           cg = tg.DefineMethod("Handle", sig.Return, sig.Params);
           pslot.EmitGet(cg);
           if(sig.Params.Length==0) cg.EmitFieldGet(typeof(Ops), "EmptyArray");
@@ -1227,7 +1226,7 @@ sealed class Signature
       }
     }
   }
-  
+
   public override bool Equals(object obj)
   { Signature o = (Signature)obj;
     if(Params.Length!=o.Params.Length || ParamArray!=o.ParamArray || Return!=o.Return || Convention!=o.Convention ||

@@ -30,7 +30,7 @@ namespace NetLisp.Backend
 
 public sealed class Importer
 { Importer() { }
-  
+
   public static void Import(TopLevel top, IDictionary dict, TopLevel env,
                             string[] names, string[] asNames, string myName)
   { if(names==null)

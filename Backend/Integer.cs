@@ -99,7 +99,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
       else if(s[i]=='+') i++;
     }
     while(i<s.Length && char.IsWhiteSpace(s[i])) i++;
-    
+
     if(i==s.Length || charSet.IndexOf(c=char.ToUpper(s[i]))==-1) throw Ops.ValueError("String does not contain a valid integer");
     while(true)
     { val = val*radix + (c>'9' ? c-'A'+10 : c-'0');
@@ -127,7 +127,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
       data[1] = bits;
       data[0] = (uint)ldexp(frac-bits, 32);
     }
-    
+
     sign = (short)(d<0 ? -1 : 1);
   }
 
@@ -148,7 +148,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
     for(int i=0; i<length; i++) hash ^= data[i];
     return (int)hash;
   }
-  
+
   #region ToString
   public override string ToString() { return ToString(10); }
   public string ToString(int radix)
@@ -179,7 +179,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
   public static readonly Integer MinusOne = new Integer(-1, new uint[1]{1});
   public static readonly Integer One  = new Integer(1, new uint[1]{1});
   public static readonly Integer Zero = new Integer(0, new uint[0]);
-  
+
   #region Comparison operators
   public static bool operator==(Integer a, Integer b) { return a.CompareTo(b)==0; }
   public static bool operator==(Integer a, int b)     { return a.CompareTo(b)==0; }
@@ -241,7 +241,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
   public static bool operator>=(uint a, Integer b)    { return b.CompareTo(a)<=0; }
   public static bool operator>=(ulong a, Integer b)   { return b.CompareTo(a)<=0; }
   #endregion
-  
+
   #region Arithmetic and bitwise operators
   #region Addition
   public static Integer operator+(Integer a, Integer b)
@@ -283,7 +283,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
   public static Integer operator+(long a, Integer b)  { return new Integer(a) + b; }
   public static Integer operator+(ulong a, Integer b) { return new Integer(a) + b; }
   #endregion
-  
+
   #region Subtraction
   public static Integer operator-(Integer a, Integer b)
   { int c = a.absCompareTo(b);
@@ -342,7 +342,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
   public static Integer operator-(long a, Integer b)  { return new Integer(a) - b; }
   public static Integer operator-(ulong a, Integer b) { return new Integer(a) - b; }
   #endregion
-  
+
   #region Multiplication
   public static Integer operator*(Integer a, Integer b)
   { int nsign = a.sign*b.sign;
@@ -399,7 +399,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
   public static Integer operator/(long a, Integer b)  { return new Integer(a) / b; }
   public static Integer operator/(ulong a, Integer b) { return new Integer(a) / b; }
   #endregion
-  
+
   #region Modulus
   public static Integer operator%(Integer a, Integer b)
   { if(b.sign==0) throw new DivideByZeroException("long modulus by zero");
@@ -437,12 +437,12 @@ public struct Integer : IConvertible, IComparable, ICloneable
   public static Integer operator%(long a, Integer b)  { return new Integer(a) % b; }
   public static Integer operator%(ulong a, Integer b) { return new Integer(a) % b; }
   #endregion
-  
+
   #region Unary
   public static Integer operator-(Integer i) { return new Integer((short)-i.sign, i.data); }
   public static Integer operator~(Integer i) { return -(i+One); }
   #endregion
-  
+
   #region Bitwise And
   public static Integer operator&(Integer a, Integer b)
   { bool nega=a.sign==-1, negb=b.sign==-1;
@@ -475,7 +475,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
   public static Integer operator|(long a, Integer b)  { return new Integer(a) | b; }
   public static Integer operator|(ulong a, Integer b) { return new Integer(a) | b; }
   #endregion
-  
+
   #region Bitwise Xor
   public static Integer operator^(Integer a, Integer b)
   { bool nega=a.sign==-1, negb=b.sign==-1;
@@ -693,7 +693,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
     throw new ArgumentException();
   }
   #endregion
-  
+
   #region ICloneable Members
   public object Clone() { return new Integer(sign, (uint[])data.Clone()); }
   #endregion
@@ -966,7 +966,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
       { int j=rlen-blen, pos=rlen-1;
         uint  firstdb  = bb[blen-1];
         ulong seconddb = bb[blen-2];
-        
+
         while(j!=0)
         { ulong dividend=((ulong)rb[pos]<<32) + rb[pos-1], qhat=dividend/firstdb, rhat=dividend%firstdb;
           mloop:
@@ -1006,7 +1006,7 @@ public struct Integer : IConvertible, IComparable, ICloneable
           pos--; j--;
         }
       }
-      
+
       remainder = shift==0 ? rem : rshift(rem, rlen, shift);
       return d;
     }
