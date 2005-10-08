@@ -60,7 +60,7 @@ public sealed class Parser
   { sourceFile=source; this.data=data;
     NextToken();
   }
-  
+
   public string SourceCode { get { return data; } }
   public string SourceFile { get { return sourceFile; } }
 
@@ -132,7 +132,7 @@ returnSyntax = false; // TODO: remove this
       case Token.EOF: return EOF;
       default: throw SyntaxError("unexpected token: "+token);
     }
-    
+
     while(token==Token.LCurly) // obj{Prop a0 a1 ...} -> ((.member obj "Prop") .last a0 a1 ...)
     { NextToken();
       Expect(Token.Symbol);
@@ -311,7 +311,7 @@ returnSyntax = false; // TODO: remove this
       return new Complex(Convert.ToDouble(num),
                          Convert.ToDouble(ParseNum(m.Groups["imag"].Value, m.Groups["imagexp"].Value, radix, exact)));
     }
-    
+
     return num;
   }
 
@@ -444,12 +444,12 @@ returnSyntax = false; // TODO: remove this
   { if(token==type) { NextToken(); return true; }
     return false;
   }
-  
+
   void Unexpected(Token token) { SyntaxError("unexpected token {0}", token, sourceFile, line, column); }
   void Unexpected(Token got, Token expect)
   { SyntaxError("unexpected token {0} (expecting {1})", got, expect, sourceFile, line, column);
   }
-  
+
   string sourceFile, data;
   Token  token=Token.None, nextToken=Token.None;
   object value;

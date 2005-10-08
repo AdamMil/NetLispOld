@@ -361,7 +361,7 @@ public sealed class math
         default: throw Ops.TypeError(name+": expected a real number, but received "+Ops.TypeName(obj));
       }
     }
-    
+
     static object doubleCore(double d)
     { try { return checked((int)d); }
       catch(OverflowException)

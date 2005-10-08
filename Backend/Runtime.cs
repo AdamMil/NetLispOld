@@ -307,7 +307,7 @@ public sealed class BindingSpace
     }
     bind.Value = value;
   }
-  
+
   public readonly Hashtable Dict = new Hashtable();
 }
 #endregion
@@ -482,7 +482,7 @@ public abstract class MemberContainer
         }
         names.Add(name);
         asNames.Add(asName);
-        
+
         bindings = bindings.Cdr as Pair;
       } while(bindings!=null);
 
@@ -1217,7 +1217,7 @@ public sealed class Ops
     if(a is Complex) return ComplexOps.PowerMod((Complex)a, b, c);
     return Modulus(Power(a, b), c);
   }
-  
+
   public static string Repr(object obj)
   { switch(Convert.GetTypeCode(obj))
     { case TypeCode.Boolean: return (bool)obj ? "#t" : "#f";

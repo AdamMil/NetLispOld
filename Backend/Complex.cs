@@ -69,7 +69,7 @@ public struct Complex
 	  }
 	  return new Complex(r, i);
   }
-  
+
   public Complex Pow(int power)
   { if(power>100 || power<-100) return Pow(new Complex(power));
     else if(power>0) return powu(power);
@@ -157,7 +157,7 @@ public struct Complex
   public static bool operator!=(Complex a, Complex b) { return a.real!=b.real || a.imag!=b.imag; }
   public static bool operator!=(Complex a, double b)  { return a.real!=b || a.imag!=0; }
   public static bool operator!=(double a, Complex b)  { return a!=b.real || b.imag!=0; }
-  
+
   public static readonly Complex Zero = new Complex(0);
   public static readonly Complex I = new Complex(0, 1);
 

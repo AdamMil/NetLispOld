@@ -282,7 +282,7 @@ public sealed class IntOps
       }
       default: throw Ops.TypeError("invalid operand types for <<: '{0}' and '{1}'", Ops.TypeName(a), Ops.TypeName(b));
     }
-    
+
     if(shift<0) throw Ops.ValueError("negative shift count");
     if(shift>31) return LongOps.LeftShift(a, shift);
     int res = a << shift;
@@ -351,7 +351,7 @@ public sealed class IntOps
     if(bv==0) throw new DivideByZeroException("modulus by zero");
     return a%bv;
   }
-  
+
   public static object Multiply(int a, object b)
   { try
     { if(b is int) return checked(a*(int)b);

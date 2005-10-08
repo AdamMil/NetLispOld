@@ -219,7 +219,7 @@ public sealed class ModuleGenerator
     }
   }
   #endregion
-  
+
   #region Generate compiled file
   public static void Generate(string name, string filename, LambdaNode body, PEFileKinds fileKind)
   { System.Diagnostics.Debug.Assert(TopLevel.Current==null); // TODO: currently this can only be called once. improve that...
@@ -261,7 +261,7 @@ public sealed class ModuleGenerator
     ag.Save();
   }
   #endregion
-  
+
   static Index index = new Index();
 }
 

@@ -75,7 +75,7 @@ public sealed class EnvironmentSlot : Slot
     cg.EmitInt(pos);
     cg.ILG.Emit(OpCodes.Ldelem_Ref);
   }
-  
+
   public override void EmitGetAddr(CodeGenerator cg)
   { cg.EmitArgGet(0);
     for(int i=0; i<depth; i++) cg.EmitFieldGet(typeof(LocalEnvironment), "Parent");
@@ -156,7 +156,7 @@ public sealed class LocalSlot : Slot
   { builder = lb; 
     if(Options.Debug) lb.SetLocalSymInfo(name);
   }
-  
+
   public override Type Type { get { return builder.LocalType; } }
 
   public override void EmitGet(CodeGenerator cg) { cg.ILG.Emit(OpCodes.Ldloc, builder); }
@@ -179,7 +179,7 @@ public sealed class NamedFrameSlot : Slot
     if(Options.Debug) cg.EmitCall(typeof(Ops), "CheckBinding");
     cg.EmitFieldGet(typeof(Binding), "Value");
   }
-  
+
   public override void EmitGetAddr(CodeGenerator cg)
   { SetupBinding(cg);
     Binding.EmitGet(cg);
@@ -238,7 +238,7 @@ public sealed class ThisSlot : Slot
   public override void EmitGet(CodeGenerator cg) { cg.ILG.Emit(OpCodes.Ldarg_0); }
   public override void EmitGetAddr(CodeGenerator cg) { cg.ILG.Emit(OpCodes.Ldarga, 0); }
   public override void EmitSet(CodeGenerator cg) { cg.ILG.Emit(OpCodes.Starg, 0); }
-  
+
   Type type;
 }
 #endregion

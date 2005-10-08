@@ -73,7 +73,7 @@ public sealed class AssemblyGenerator
   public ISymbolDocumentWriter Symbols;
   public readonly string OutFileName;
   public readonly bool IsDebug;
-  
+
   static Index index = new Index();
 }
 

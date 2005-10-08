@@ -489,7 +489,7 @@ public sealed class IntegerOps
     }
     return Reduce(ret);
   }
-  
+
   internal static object Reduce(Integer ret)
   { return ret.length>1 ? ret : ret.length==0 ? 0 : (object)ret.ToInt64();
   }
